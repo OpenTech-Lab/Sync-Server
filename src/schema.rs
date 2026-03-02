@@ -48,6 +48,7 @@ diesel::table! {
         username -> Text,
         email -> Text,
         password_hash -> Text,
+        avatar_base64 -> Nullable<Text>,
         role -> Text,
         is_active -> Bool,
         created_at -> Timestamptz,

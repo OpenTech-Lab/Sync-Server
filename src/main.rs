@@ -132,6 +132,11 @@ async fn main() -> std::io::Result<()> {
                     .wrap(Governor::new(&api_governor))
                     .configure(routes::stickers::configure),
             )
+            .service(
+                web::scope("/api/profile")
+                    .wrap(Governor::new(&api_governor))
+                    .configure(routes::profile::configure),
+            )
             // ── WebSocket upgrade (auth inside handler, no HTTP rate-limit) ─
             .service(web::scope("/ws").configure(routes::ws::configure))
             // ── Federation inbox: scope("") must be LAST — empty prefix     ──

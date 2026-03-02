@@ -57,8 +57,12 @@ echo " ready."
 # Don't guess the compose project name — inspect the running api container.
 API_CONTAINER=$(docker compose ps -q api | head -1)
 
-NETWORK_NAME=$(docker inspect "$API_CONTAINER" \
-  --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+# Use the compose project label to construct the network name reliably.
+# (Iterating NetworkSettings.Networks concatenates all networks without
+# a separator, which breaks if the container is on multiple networks.)
+COMPOSE_PROJECT=$(docker inspect "$API_CONTAINER" \
+  --format '{{index .Config.Labels "com.docker.compose.project"}}')
+NETWORK_NAME="${COMPOSE_PROJECT}_default"
 
 LETSENCRYPT_VOL=$(docker volume ls --format '{{.Name}}' | grep '_letsencrypt$')
 CERTBOT_WEBROOT_VOL=$(docker volume ls --format '{{.Name}}' | grep '_certbot_webroot$')
@@ -72,6 +76,14 @@ echo "→ Stopping compose nginx (if running) to free port 80..."
 docker compose stop nginx 2>/dev/null || true
 # Clean up any leftover bootstrap container from a previous failed run
 docker rm -f nginx-bootstrap 2>/dev/null || true
+
+# Hard-verify port 80 is actually free; bail with a clear message if not.
+if ss -tlnp 2>/dev/null | grep -q ':80 ' || \
+   netstat -tlnp 2>/dev/null | grep -q ':80 '; then
+  echo ""
+  echo "ERROR: Port 80 is still in use. Run 'docker compose down' first, then re-run this script."
+  exit 1
+fi
 
 # ── 4b. Start a minimal HTTP-only nginx for the ACME challenge ────────────────
 BOOTSTRAP_CONF=$(mktemp)

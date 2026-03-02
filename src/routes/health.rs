@@ -34,19 +34,17 @@ pub async fn liveness() -> HttpResponse {
 /// GET /ready — readiness probe (200 only if the DB is reachable)
 pub async fn readiness(pool: web::Data<Pool>) -> HttpResponse {
     match pool.get() {
-        Ok(mut conn) => {
-            match diesel::sql_query("SELECT 1").execute(&mut conn) {
-                Ok(_) => HttpResponse::Ok().json(ReadinessOk {
-                    status: "ready",
-                    database: "ok",
-                }),
-                Err(e) => HttpResponse::ServiceUnavailable().json(ReadinessErr {
-                    status: "not_ready",
-                    database: "error",
-                    error: e.to_string(),
-                }),
-            }
-        }
+        Ok(mut conn) => match diesel::sql_query("SELECT 1").execute(&mut conn) {
+            Ok(_) => HttpResponse::Ok().json(ReadinessOk {
+                status: "ready",
+                database: "ok",
+            }),
+            Err(e) => HttpResponse::ServiceUnavailable().json(ReadinessErr {
+                status: "not_ready",
+                database: "error",
+                error: e.to_string(),
+            }),
+        },
         Err(e) => HttpResponse::ServiceUnavailable().json(ReadinessErr {
             status: "not_ready",
             database: "error",

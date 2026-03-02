@@ -4,15 +4,14 @@ use diesel::PgConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 
 pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
+#[allow(dead_code)]
 pub type DbConn = r2d2::PooledConnection<ConnectionManager<PgConnection>>;
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 pub fn create_pool(database_url: &str) -> Result<Pool> {
     let manager = ConnectionManager::<PgConnection>::new(database_url);
-    let pool = r2d2::Pool::builder()
-        .max_size(15)
-        .build(manager)?;
+    let pool = r2d2::Pool::builder().max_size(15).build(manager)?;
     tracing::info!("Database connection pool established (max_size=15)");
     Ok(pool)
 }

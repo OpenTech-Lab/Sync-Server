@@ -2,6 +2,7 @@ use actix_web::HttpResponse;
 use serde::Serialize;
 use thiserror::Error;
 
+#[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("Database error: {0}")]
@@ -22,6 +23,9 @@ pub enum AppError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("Internal server error")]
     Internal(#[from] anyhow::Error),
 }
@@ -41,6 +45,7 @@ impl actix_web::ResponseError for AppError {
             AppError::Unauthorized => HttpResponse::Unauthorized().json(body),
             AppError::Forbidden => HttpResponse::Forbidden().json(body),
             AppError::BadRequest(_) => HttpResponse::BadRequest().json(body),
+            AppError::Conflict(_) => HttpResponse::Conflict().json(body),
             _ => {
                 tracing::error!(error = %self, "Unhandled internal error");
                 HttpResponse::InternalServerError().json(body)

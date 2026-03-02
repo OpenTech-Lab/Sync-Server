@@ -1,0 +1,480 @@
+openapi: 3.1.0
+info:
+  title: SYNC Server API
+  version: 0.1.0
+  description: |
+    Federated, privacy-focused 1:1 chat server.
+    Access tokens are short-lived HS256 JWTs (1 h TTL).
+    Refresh tokens are 30-day opaque tokens subject to rotation and family-replay detection.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    UserPublic:
+      type: object
+      required: [id, email, role, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [user, admin]
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    TokenResponse:
+      type: object
+      required: [access_token, refresh_token, expires_in]
+      properties:
+        access_token:
+          type: string
+          description: HS256 JWT valid for `expires_in` seconds
+        refresh_token:
+          type: string
+          description: Opaque 32-byte random token (hex-encoded, SHA-256 hashed in DB)
+        expires_in:
+          type: integer
+          description: Seconds until the access token expires (3600)
+
+    Message:
+      type: object
+      required: [id, sender_id, recipient_id, content, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sender_id:
+          type: string
+          format: uuid
+        recipient_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        delivered_at:
+          type: string
+          format: date-time
+          nullable: true
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    UnreadCounts:
+      type: object
+      description: Map of partner_user_id (UUID string) → unread message count
+      additionalProperties:
+        type: integer
+        format: int64
+      example:
+        "550e8400-e29b-41d4-a716-446655440000": 3
+
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    UnprocessableEntity:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    InternalError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+
+paths:
+  /health:
+    get:
+      operationId: healthLiveness
+      summary: Liveness probe
+      security: []
+      tags: [health]
+      responses:
+        '200':
+          description: Server is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /ready:
+    get:
+      operationId: healthReadiness
+      summary: Readiness probe (checks DB + Redis)
+      security: []
+      tags: [health]
+      responses:
+        '200':
+          description: All dependencies healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+        '503':
+          description: One or more dependencies unavailable
+
+  /auth/register:
+    post:
+      operationId: authRegister
+      summary: Register a new user account
+      security: []
+      tags: [auth]
+      description: |
+        Creates a new user. Fails with 409 if the email is already registered.
+        Fails with 403 if the server's `MAX_USERS` limit has been reached.
+        Password is bcrypt-hashed (cost 12) before storage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPublic'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '403':
+          description: Server user limit reached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/login:
+    post:
+      operationId: authLogin
+      summary: Authenticate and obtain tokens
+      security: []
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /auth/refresh:
+    post:
+      operationId: authRefresh
+      summary: Rotate refresh token and get a new access token
+      security: []
+      tags: [auth]
+      description: |
+        Accepts a valid, unused refresh token and returns a new `TokenResponse`.
+        The old token is immediately invalidated (rotation).
+        If a previously-used token is presented, the entire token family is revoked
+        (replay attack detection) and 401 is returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Tokens rotated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: Token invalid, expired, revoked, or replayed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /auth/logout:
+    post:
+      operationId: authLogout
+      summary: Revoke the current refresh token family
+      tags: [auth]
+      description: |
+        Revokes all refresh tokens in the same family (all sessions derived from
+        this login). The access token remains valid until its natural expiry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '204':
+          description: Session revoked successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/messages:
+    post:
+      operationId: sendMessage
+      summary: Send a direct message
+      tags: [messages]
+      description: |
+        Persists the message and publishes a `NewMessage` event to the recipient's
+        Redis channel (`ws:user:<uuid>`). The recipient's active WebSocket session
+        will receive the event in real time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipient_id, content]
+              properties:
+                recipient_id:
+                  type: string
+                  format: uuid
+                content:
+                  type: string
+                  minLength: 1
+      responses:
+        '201':
+          description: Message created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Recipient not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/messages/unread-counts:
+    get:
+      operationId: getUnreadCounts
+      summary: Get unread message counts per conversation partner
+      tags: [messages]
+      responses:
+        '200':
+          description: Map of partner UUID → unread count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnreadCounts'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/messages/{partner_id}:
+    get:
+      operationId: getConversation
+      summary: List messages in a conversation (keyset-paginated)
+      tags: [messages]
+      description: |
+        Returns up to `limit` messages (max 100) ordered newest-first.
+        Pass `before` (a message UUID) to fetch the page preceding that message.
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: before
+          in: query
+          required: false
+          description: Message UUID cursor — return messages older than this one
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Page of messages (newest-first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/messages/{partner_id}/read:
+    post:
+      operationId: markMessagesRead
+      summary: Mark all unread messages from a partner as delivered and read
+      tags: [messages]
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Number of messages updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /ws:
+    get:
+      operationId: websocketConnect
+      summary: Upgrade to WebSocket connection
+      security: []
+      tags: [websocket]
+      description: |
+        Upgrades the HTTP connection to WebSocket. The JWT must be passed as the
+        `token` query parameter because browser WebSocket APIs cannot set custom
+        headers during the upgrade handshake.
+
+        Once connected, the server forwards any events published to
+        `ws:user:<user_id>` on Redis (e.g. incoming messages) as JSON text frames.
+
+        **Client → Server events** (send as JSON text):
+        ```json
+        { "type": "Ping" }
+        { "type": "MarkRead", "partner_id": "<uuid>" }
+        ```
+
+        **Server → Client events** (received as JSON text):
+        ```json
+        { "type": "Pong" }
+        { "type": "NewMessage", "message": { ...Message } }
+        { "type": "Error", "message": "..." }
+        ```
+      parameters:
+        - name: token
+          in: query
+          required: true
+          description: Valid JWT access token
+          schema:
+            type: string
+      responses:
+        '101':
+          description: Switching Protocols — WebSocket connection established
+        '401':
+          description: Missing or invalid JWT
+
+tags:
+  - name: health
+    description: Liveness and readiness probes
+  - name: auth
+    description: Registration, login, token refresh, and logout
+  - name: messages
+    description: Send, receive, paginate, and mark messages
+  - name: websocket
+    description: Real-time event stream over WebSocket

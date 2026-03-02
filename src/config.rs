@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use sysinfo::System;
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Config {
     pub database_url: String,
@@ -19,12 +20,9 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self> {
         Ok(Config {
-            database_url: std::env::var("DATABASE_URL")
-                .context("DATABASE_URL must be set")?,
-            redis_url: std::env::var("REDIS_URL")
-                .context("REDIS_URL must be set")?,
-            jwt_secret: std::env::var("JWT_SECRET")
-                .context("JWT_SECRET must be set")?,
+            database_url: std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
+            redis_url: std::env::var("REDIS_URL").context("REDIS_URL must be set")?,
+            jwt_secret: std::env::var("JWT_SECRET").context("JWT_SECRET must be set")?,
             jwt_access_expiry_secs: std::env::var("JWT_ACCESS_EXPIRY_SECS")
                 .unwrap_or_else(|_| "3600".to_string())
                 .parse()
@@ -33,8 +31,7 @@ impl Config {
                 .unwrap_or_else(|_| "2592000".to_string())
                 .parse()
                 .context("JWT_REFRESH_EXPIRY_SECS must be a valid number")?,
-            server_host: std::env::var("SERVER_HOST")
-                .unwrap_or_else(|_| "0.0.0.0".to_string()),
+            server_host: std::env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
             server_port: std::env::var("SERVER_PORT")
                 .unwrap_or_else(|_| "8080".to_string())
                 .parse()
@@ -43,11 +40,8 @@ impl Config {
                 .unwrap_or_else(|_| "sync-planet".to_string()),
             instance_domain: std::env::var("INSTANCE_DOMAIN")
                 .unwrap_or_else(|_| "localhost".to_string()),
-            admin_email: std::env::var("ADMIN_EMAIL")
-                .context("ADMIN_EMAIL must be set")?,
-            max_users: std::env::var("MAX_USERS")
-                .ok()
-                .and_then(|v| v.parse().ok()),
+            admin_email: std::env::var("ADMIN_EMAIL").context("ADMIN_EMAIL must be set")?,
+            max_users: std::env::var("MAX_USERS").ok().and_then(|v| v.parse().ok()),
         })
     }
 

@@ -1,10 +1,17 @@
 # ──────────────────────────────────────────────
 # Stage 1: Build the Rust binary
 # ──────────────────────────────────────────────
-FROM rust:1.85-alpine AS builder
+FROM rust:1.88-bookworm AS builder
 
 # Required for diesel/pq-sys (libpq) and ring (C toolchain)
-RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      build-essential \
+      pkg-config \
+      libssl-dev \
+      libpq-dev \
+      ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
@@ -22,18 +29,22 @@ RUN touch src/main.rs && cargo build --release
 # ──────────────────────────────────────────────
 # Stage 2: Minimal runtime image
 # ──────────────────────────────────────────────
-FROM alpine:3.21 AS runtime
+FROM debian:bookworm-slim AS runtime
 
-RUN apk add --no-cache ca-certificates libgcc
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libpq5 && \
+    rm -rf /var/lib/apt/lists/*
 
 # Non-root user for the process
-RUN addgroup -S sync && adduser -S sync -G sync
+RUN groupadd --system appuser && useradd --system --gid appuser appuser
 
 WORKDIR /app
 
 COPY --from=builder /build/target/release/sync-server /app/sync-server
 
-USER sync
+USER appuser
 
 EXPOSE 8080
 

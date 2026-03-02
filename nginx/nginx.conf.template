@@ -124,7 +124,7 @@ http {
         client_header_timeout 15s;
         limit_conn conn_limit 100;
 
-        location ~ ^/api/(auth|login|register|token) {
+        location /auth/ {
             limit_req zone=auth_limit burst=10 nodelay;
             limit_req_status 429;
             proxy_pass         http://api_backend;

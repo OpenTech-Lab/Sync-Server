@@ -18,41 +18,57 @@ function secureHeaders(response: NextResponse): NextResponse {
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
+  const basePath = request.nextUrl.basePath || "";
+  const normalizedPath =
+    basePath && path.startsWith(basePath)
+      ? path.slice(basePath.length) || "/"
+      : path;
   const hasSession = Boolean(request.cookies.get(ACCESS_COOKIE)?.value);
   const { needsSetup } = await fetchSetupStatus();
 
-  const isSetupPath = path === "/setup-admin";
-  const isSetupApiPath = path === "/api/session/setup-admin";
+  const isSetupPath = normalizedPath === "/setup-admin";
+  const isSetupApiPath = normalizedPath === "/api/session/setup-admin";
 
   if (needsSetup && !isSetupPath && !isSetupApiPath) {
     return secureHeaders(
-      NextResponse.redirect(new URL("/setup-admin", request.url), { status: 307 }),
+      NextResponse.redirect(
+        new URL(`${basePath}/setup-admin`, request.url),
+        { status: 307 },
+      ),
     );
   }
 
   if (!needsSetup && isSetupPath) {
     return secureHeaders(
-      NextResponse.redirect(new URL(hasSession ? "/dashboard" : "/login", request.url), {
+      NextResponse.redirect(
+        new URL(`${basePath}${hasSession ? "/dashboard" : "/login"}`, request.url),
+        {
+          status: 307,
+        },
+      ),
+    );
+  }
+
+  const isProtectedPath =
+    normalizedPath.startsWith("/dashboard") ||
+    normalizedPath.startsWith("/users") ||
+    normalizedPath.startsWith("/config") ||
+    normalizedPath.startsWith("/audit") ||
+    normalizedPath.startsWith("/stickers");
+
+  if (isProtectedPath && !hasSession) {
+    return secureHeaders(
+      NextResponse.redirect(new URL(`${basePath}/login`, request.url), {
         status: 307,
       }),
     );
   }
 
-  const isProtectedPath =
-    path.startsWith("/dashboard") ||
-    path.startsWith("/users") ||
-    path.startsWith("/config") ||
-    path.startsWith("/audit");
-
-  if (isProtectedPath && !hasSession) {
+  if (normalizedPath === "/login" && hasSession) {
     return secureHeaders(
-      NextResponse.redirect(new URL("/login", request.url), { status: 307 }),
-    );
-  }
-
-  if (path === "/login" && hasSession) {
-    return secureHeaders(
-      NextResponse.redirect(new URL("/dashboard", request.url), { status: 307 }),
+      NextResponse.redirect(new URL(`${basePath}/dashboard`, request.url), {
+        status: 307,
+      }),
     );
   }
 

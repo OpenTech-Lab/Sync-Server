@@ -16,7 +16,7 @@ export function LoginForm() {
     setError(null);
 
     try {
-      const response = await fetch("/api/session/login", {
+      const response = await fetch("./api/session/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

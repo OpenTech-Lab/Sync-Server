@@ -24,7 +24,7 @@ export function SetupAdminForm() {
     }
 
     try {
-      const response = await fetch("/api/session/setup-admin", {
+      const response = await fetch("./api/session/setup-admin", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

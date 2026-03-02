@@ -23,6 +23,10 @@ pub struct Config {
     pub federation_key_cache_ttl_secs: i64,
     pub federation_inbox_rps: u64,
     pub federation_inbox_burst: u32,
+    /// Resend API key. `None` → email sending is skipped with a warning.
+    pub resend_api_key: Option<String>,
+    /// From address used in password-reset emails.
+    pub resend_from_email: String,
 }
 
 impl Config {
@@ -81,6 +85,9 @@ impl Config {
                 .unwrap_or_else(|_| "40".to_string())
                 .parse()
                 .context("FEDERATION_INBOX_BURST must be a valid number")?,
+            resend_api_key: std::env::var("RESEND_API_KEY").ok(),
+            resend_from_email: std::env::var("RESEND_FROM_EMAIL")
+                .unwrap_or_else(|_| "noreply@localhost".to_string()),
         })
     }
 

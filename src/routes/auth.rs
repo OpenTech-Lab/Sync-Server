@@ -1,6 +1,8 @@
 use actix_web::{web, HttpResponse};
 use chrono::Utc;
 use diesel::prelude::*;
+use redis::AsyncCommands;
+use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -14,7 +16,7 @@ use crate::errors::AppError;
 use crate::models::refresh_token::{NewRefreshToken, RefreshToken};
 use crate::models::user::{NewUser, UserPublic};
 use crate::schema::refresh_tokens::dsl as rt_dsl;
-use crate::services::user_service;
+use crate::services::{email_service, user_service};
 
 // ── Request / Response DTOs ──────────────────────────────────────────────────
 
@@ -211,11 +213,215 @@ pub async fn logout(
     Ok(HttpResponse::NoContent().finish())
 }
 
+// ── Forgot / reset password ───────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ForgotPasswordRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordForm {
+    pub token: String,
+    pub new_password: String,
+}
+
+/// POST /auth/forgot-password
+///
+/// Always returns 200 regardless of whether the email is registered (prevents
+/// user enumeration). Generates a 32-byte random token, stores it in Redis
+/// with a 15-minute TTL, then sends a reset link via Resend.
+pub async fn forgot_password(
+    pool: web::Data<Pool>,
+    redis: web::Data<redis::Client>,
+    config: web::Data<Config>,
+    body: web::Json<ForgotPasswordRequest>,
+) -> Result<HttpResponse, AppError> {
+    const MSG: &str = "If that email is registered, a reset link was sent.";
+
+    let email = body.email.trim().to_lowercase();
+
+    // Look up user silently — return the generic message even if not found.
+    let user = user_service::find_by_email(&pool, &email)?;
+    let Some(user) = user else {
+        return Ok(HttpResponse::Ok().json(serde_json::json!({ "message": MSG })));
+    };
+
+    // Generate a 32-byte random token → hex string (64 chars).
+    let rng = ring::rand::SystemRandom::new();
+    let mut raw = [0u8; 32];
+    rng.fill(&mut raw)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("RNG failed")))?;
+    let token = hex::encode(raw);
+
+    // Store reset:{token} → user_id in Redis with 15-minute TTL.
+    let redis_key = format!("reset:{}", token);
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {}", e)))?;
+    conn.set_ex::<_, _, ()>(&redis_key, user.id.to_string(), 900)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis set: {}", e)))?;
+
+    // Build the reset URL pointing to this server's GET handler.
+    let reset_url = format!(
+        "http{}://{}/auth/reset-password?token={}",
+        if config.enforce_https { "s" } else { "" },
+        config.instance_domain,
+        token
+    );
+
+    // Send email (silently skipped when RESEND_API_KEY is not set).
+    email_service::send_password_reset(
+        config.resend_api_key.as_deref(),
+        &config.resend_from_email,
+        &email,
+        &reset_url,
+    )
+    .await?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "message": MSG })))
+}
+
+/// GET /auth/reset-password?token=...
+///
+/// Returns a minimal server-rendered HTML form the user fills in their browser.
+pub async fn reset_password_form(
+    query: web::Query<std::collections::HashMap<String, String>>,
+) -> HttpResponse {
+    let token = query.get("token").cloned().unwrap_or_default();
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Reset your password – Sync</title>
+  <style>
+    body{{font-family:system-ui,sans-serif;max-width:400px;margin:60px auto;padding:0 20px;color:#111}}
+    h1{{font-size:1.4rem;margin-bottom:4px}}
+    p{{color:#555;margin-top:4px;font-size:.9rem}}
+    label{{display:block;margin:16px 0 4px;font-size:.9rem;font-weight:600}}
+    input{{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #ccc;border-radius:8px;font-size:1rem}}
+    button{{margin-top:20px;width:100%;padding:12px;background:#4F46E5;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer}}
+    button:hover{{background:#4338CA}}
+    .err{{color:#dc2626;font-size:.875rem;margin-top:8px}}
+  </style>
+</head>
+<body>
+  <h1>Reset your password</h1>
+  <p>Enter a new password for your Sync account.</p>
+  <form method="POST" action="/auth/reset-password">
+    <input type="hidden" name="token" value="{token}">
+    <label for="pw">New password (min 8 characters)</label>
+    <input id="pw" name="new_password" type="password" required minlength="8" autocomplete="new-password">
+    <label for="pw2">Confirm password</label>
+    <input id="pw2" name="confirm" type="password" required minlength="8" autocomplete="new-password">
+    <button type="submit">Set new password</button>
+  </form>
+  <script>
+    document.querySelector('form').addEventListener('submit',function(e){{
+      var pw=document.getElementById('pw').value;
+      var c=document.getElementById('pw2').value;
+      if(pw!==c){{e.preventDefault();var d=document.querySelector('.err');if(!d){{d=document.createElement('p');d.className='err';this.appendChild(d);}}d.textContent='Passwords do not match.';}}
+    }}.bind(document.querySelector('form')));
+  </script>
+</body>
+</html>"#,
+        token = token
+    );
+
+    HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(html)
+}
+
+/// POST /auth/reset-password
+///
+/// Accepts `application/x-www-form-urlencoded` (from the browser form) or
+/// `application/json`. Validates the token, updates the password, deletes
+/// the Redis key (single-use), and returns an HTML success page or JSON.
+pub async fn reset_password(
+    pool: web::Data<Pool>,
+    redis: web::Data<redis::Client>,
+    form: web::Form<ResetPasswordForm>,
+) -> Result<HttpResponse, AppError> {
+    let token = form.token.trim();
+    let new_password = form.new_password.trim();
+
+    if new_password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "Password must be at least 8 characters".into(),
+        ));
+    }
+
+    // Look up user_id from Redis.
+    let redis_key = format!("reset:{}", token);
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {}", e)))?;
+
+    let user_id_str: Option<String> = conn
+        .get(&redis_key)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis get: {}", e)))?;
+
+    let user_id_str =
+        user_id_str.ok_or_else(|| AppError::BadRequest("Invalid or expired token".into()))?;
+
+    let user_id = Uuid::parse_str(&user_id_str)
+        .map_err(|_| AppError::BadRequest("Invalid or expired token".into()))?;
+
+    // Hash new password and update DB.
+    let pw_hash = hash_password(new_password.to_string()).await?;
+    let mut db_conn = pool.get()?;
+    diesel::update(crate::schema::users::table.find(user_id))
+        .set(crate::schema::users::password_hash.eq(&pw_hash))
+        .execute(&mut db_conn)?;
+
+    // Delete the Redis key (single-use token).
+    conn.del::<_, ()>(&redis_key)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis del: {}", e)))?;
+
+    tracing::info!(%user_id, "Password reset completed");
+
+    let html = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Password updated – Sync</title>
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:400px;margin:60px auto;padding:0 20px;color:#111;text-align:center}
+    .icon{font-size:3rem;margin-bottom:8px}
+    h1{font-size:1.4rem}
+    p{color:#555;font-size:.9rem}
+  </style>
+</head>
+<body>
+  <div class="icon">✅</div>
+  <h1>Password updated</h1>
+  <p>Your password has been changed. You can now sign in to the Sync mobile app with your new password.</p>
+</body>
+</html>"#;
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(html))
+}
+
 /// Register all auth routes under a given service config.
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/register", web::post().to(register))
         .route("/login", web::post().to(login))
         .route("/me", web::get().to(me))
         .route("/refresh", web::post().to(refresh))
-        .route("/logout", web::post().to(logout));
+        .route("/logout", web::post().to(logout))
+        .route("/forgot-password", web::post().to(forgot_password))
+        .route("/reset-password", web::get().to(reset_password_form))
+        .route("/reset-password", web::post().to(reset_password));
 }

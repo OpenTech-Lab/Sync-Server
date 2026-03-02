@@ -1,6 +1,6 @@
 # Rust
 target/
-Cargo.lock
+# Cargo.lock is intentionally tracked for binary crates (reproducible builds)
 
 # Database
 *.db

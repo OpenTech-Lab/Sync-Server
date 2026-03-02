@@ -2,10 +2,12 @@ use chrono::Utc;
 use diesel::prelude::*;
 use uuid::Uuid;
 
+use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::user::{NewUser, User};
 use crate::schema::users::dsl::*;
+use crate::services::admin_service;
 
 /// Look up a user by email. Returns `None` if not found.
 pub fn find_by_email(pool: &Pool, user_email: &str) -> Result<Option<User>, AppError> {
@@ -57,6 +59,10 @@ pub fn create_user(
             ) => AppError::Conflict("Email or username already taken".into()),
             other => AppError::Database(other),
         })
+}
+
+pub fn resolved_max_users(pool: &Pool, config: &Config) -> Result<Option<u32>, AppError> {
+    admin_service::effective_max_users(pool, config)
 }
 
 /// Update `last_seen_at` for a user to now.

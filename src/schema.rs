@@ -4,6 +4,29 @@
 diesel::table! {
     use diesel::sql_types::*;
 
+    admin_settings (key) {
+        key -> Text,
+        value -> Text,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    admin_audit_logs (id) {
+        id -> Uuid,
+        actor_user_id -> Nullable<Uuid>,
+        action -> Text,
+        target -> Nullable<Text>,
+        details -> Jsonb,
+        created_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
     users (id) {
         id -> Uuid,
         username -> Text,
@@ -107,8 +130,11 @@ diesel::table! {
 
 diesel::joinable!(refresh_tokens -> users (user_id));
 diesel::joinable!(messages -> users (sender_id));
+diesel::joinable!(admin_audit_logs -> users (actor_user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    admin_settings,
+    admin_audit_logs,
     users,
     refresh_tokens,
     messages,

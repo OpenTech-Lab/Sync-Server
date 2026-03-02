@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::auth::claims::Claims;
 use crate::auth::password::{hash_password, verify_password};
 use crate::auth::tokens::{generate_refresh_token, hash_token, issue_access_token};
+use crate::auth::AuthUser;
 use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
@@ -104,8 +105,15 @@ pub async fn register(
         role: "user".to_string(),
     };
 
-    let user = user_service::create_user(&pool, new_user, config.max_users)?;
+    let max_users = user_service::resolved_max_users(&pool, &config)?;
+    let user = user_service::create_user(&pool, new_user, max_users)?;
     Ok(HttpResponse::Created().json(UserPublic::from(user)))
+}
+
+/// GET /auth/me → 200 UserPublic
+pub async fn me(pool: web::Data<Pool>, auth: AuthUser) -> Result<HttpResponse, AppError> {
+    let user = user_service::find_by_id(&pool, auth.0.user_id()?)?.ok_or(AppError::Unauthorized)?;
+    Ok(HttpResponse::Ok().json(UserPublic::from(user)))
 }
 
 /// POST /auth/login → 200 TokenResponse
@@ -207,6 +215,7 @@ pub async fn logout(
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/register", web::post().to(register))
         .route("/login", web::post().to(login))
+        .route("/me", web::get().to(me))
         .route("/refresh", web::post().to(refresh))
         .route("/logout", web::post().to(logout));
 }

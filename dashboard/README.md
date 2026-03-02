@@ -1,26 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## Sync Admin Dashboard
 
-## Getting Started
+Operational Next.js dashboard for Sync server administration.
 
-First, run the development server:
+### Features
+- Admin login/session flow backed by `sync-server` auth (`/auth/login`, `/auth/me`, `/auth/logout`)
+- Dashboard overview for system/user/federation queue health
+- User management (list/search + suspend/activate)
+- Config management (`max_users`, notification webhook URL)
+- Audit log viewer for admin actions
+
+### Environment
+
+Create `.env.local` in this directory as needed:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Base URL for the Rust API used by dashboard route handlers
+SYNC_SERVER_URL=http://localhost:8080
+
+# Optional override for local e2e
+# DASHBOARD_BASE_URL=http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Development
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Install dependencies and run:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install
+npm run dev
+```
 
-## Learn More
+Open `http://localhost:3000`.
+
+### Quality checks
+
+```bash
+npm run lint
+npm run build
+npm run test
+npm run test:e2e
+```
+
+### Notes
+- Admin APIs are exposed by the Rust service under `/api/admin/*`.
+- Session cookies are `httpOnly` and `SameSite=Strict`.
+- Request hardening and security headers are enforced in `proxy.ts`.
 
 To learn more about Next.js, take a look at the following resources:
 

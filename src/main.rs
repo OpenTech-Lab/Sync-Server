@@ -110,6 +110,11 @@ async fn main() -> std::io::Result<()> {
                     .wrap(Governor::new(&api_governor))
                     .configure(routes::messages::configure),
             )
+            .service(
+                web::scope("/api/admin")
+                    .wrap(Governor::new(&api_governor))
+                    .configure(routes::admin::configure),
+            )
             // ── WebSocket upgrade (auth inside handler, no HTTP rate-limit) ─
             .service(web::scope("/ws").configure(routes::ws::configure))
     })

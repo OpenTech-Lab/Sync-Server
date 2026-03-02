@@ -332,17 +332,19 @@ async fn federation_send_delivers_to_mock_remote_inbox_and_records_outbox_succes
         let received_count = Arc::clone(&received_count_for_handler);
         App::new().route(
             "/inbox",
-            web::post().to(move |req: actix_web::HttpRequest, payload: web::Json<Value>| {
-                let received_count = Arc::clone(&received_count);
-                async move {
-                    assert!(req.headers().contains_key("signature"));
-                    assert!(req.headers().contains_key("digest"));
-                    assert!(req.headers().contains_key("date"));
-                    assert_eq!(payload["type"], "Create");
-                    received_count.fetch_add(1, Ordering::Relaxed);
-                    HttpResponse::Accepted().finish()
-                }
-            }),
+            web::post().to(
+                move |req: actix_web::HttpRequest, payload: web::Json<Value>| {
+                    let received_count = Arc::clone(&received_count);
+                    async move {
+                        assert!(req.headers().contains_key("signature"));
+                        assert!(req.headers().contains_key("digest"));
+                        assert!(req.headers().contains_key("date"));
+                        assert_eq!(payload["type"], "Create");
+                        received_count.fetch_add(1, Ordering::Relaxed);
+                        HttpResponse::Accepted().finish()
+                    }
+                },
+            ),
         )
     })
     .listen(listener)

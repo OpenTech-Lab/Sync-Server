@@ -67,7 +67,13 @@ echo "→ Docker network:       $NETWORK_NAME"
 echo "→ letsencrypt volume:   $LETSENCRYPT_VOL"
 echo "→ certbot_webroot vol:  $CERTBOT_WEBROOT_VOL"
 
-# ── 4. Start a minimal HTTP-only nginx for the ACME challenge ─────────────────
+# ── 4. Free port 80 before bootstrap nginx ────────────────────────────────────
+echo "→ Stopping compose nginx (if running) to free port 80..."
+docker compose stop nginx 2>/dev/null || true
+# Clean up any leftover bootstrap container from a previous failed run
+docker rm -f nginx-bootstrap 2>/dev/null || true
+
+# ── 4b. Start a minimal HTTP-only nginx for the ACME challenge ────────────────
 BOOTSTRAP_CONF=$(mktemp)
 cat > "$BOOTSTRAP_CONF" << NGINXEOF
 events { worker_connections 1024; }

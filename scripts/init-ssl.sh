@@ -29,8 +29,6 @@ fi
 
 cd "$SERVER_DIR"
 
-COMPOSE_PROJECT="$(basename "$SERVER_DIR")"
-
 echo "→ Domain:        $INSTANCE_DOMAIN"
 echo "→ Admin domain:  $ADMIN_DOMAIN"
 echo "→ Email:         $ADMIN_EMAIL"
@@ -55,9 +53,21 @@ until docker compose exec -T api wget -qO- http://localhost:8080/ready &>/dev/nu
 done
 echo " ready."
 
-# ── 3. Start a minimal HTTP-only nginx for the ACME challenge ─────────────────
-# Full nginx.conf references letsencrypt certs that don't exist yet → fails.
-# Use a bootstrap config that only does HTTP + ACME challenge, no SSL.
+# ── 3. Discover the actual Docker network and volume names ────────────────────
+# Don't guess the compose project name — inspect the running api container.
+API_CONTAINER=$(docker compose ps -q api | head -1)
+
+NETWORK_NAME=$(docker inspect "$API_CONTAINER" \
+  --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+
+LETSENCRYPT_VOL=$(docker volume ls --format '{{.Name}}' | grep '_letsencrypt$')
+CERTBOT_WEBROOT_VOL=$(docker volume ls --format '{{.Name}}' | grep '_certbot_webroot$')
+
+echo "→ Docker network:       $NETWORK_NAME"
+echo "→ letsencrypt volume:   $LETSENCRYPT_VOL"
+echo "→ certbot_webroot vol:  $CERTBOT_WEBROOT_VOL"
+
+# ── 4. Start a minimal HTTP-only nginx for the ACME challenge ─────────────────
 BOOTSTRAP_CONF=$(mktemp)
 cat > "$BOOTSTRAP_CONF" << NGINXEOF
 events { worker_connections 1024; }
@@ -72,18 +82,18 @@ http {
 NGINXEOF
 
 docker run -d --name nginx-bootstrap \
-  --network "${COMPOSE_PROJECT}_default" \
+  --network "$NETWORK_NAME" \
   -p 80:80 \
   -v "$BOOTSTRAP_CONF":/etc/nginx/nginx.conf:ro \
-  -v "${COMPOSE_PROJECT}_certbot_webroot":/var/www/certbot \
+  -v "$CERTBOT_WEBROOT_VOL":/var/www/certbot \
   nginx:1.27-alpine
 
-# ── 4. Issue certificate ──────────────────────────────────────────────────────
+# ── 5. Issue certificate ──────────────────────────────────────────────────────
 echo "→ Requesting Let's Encrypt certificate..."
 docker run --rm \
-  --network "${COMPOSE_PROJECT}_default" \
-  -v "${COMPOSE_PROJECT}_letsencrypt":/etc/letsencrypt \
-  -v "${COMPOSE_PROJECT}_certbot_webroot":/var/www/certbot \
+  --network "$NETWORK_NAME" \
+  -v "$LETSENCRYPT_VOL":/etc/letsencrypt \
+  -v "$CERTBOT_WEBROOT_VOL":/var/www/certbot \
   certbot/certbot certonly \
     --webroot \
     --webroot-path /var/www/certbot \
@@ -93,7 +103,7 @@ docker run --rm \
     -d "$INSTANCE_DOMAIN" \
     -d "$ADMIN_DOMAIN"
 
-# ── 5. Switch to full stack ───────────────────────────────────────────────────
+# ── 6. Switch to full stack ───────────────────────────────────────────────────
 echo "→ Removing bootstrap nginx..."
 docker stop nginx-bootstrap && docker rm nginx-bootstrap
 rm -f "$BOOTSTRAP_CONF"

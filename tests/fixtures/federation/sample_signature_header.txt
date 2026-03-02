@@ -1,0 +1,1 @@
+keyId="https://remote.example/actors/alice#main-key",algorithm="ed25519",headers="(request-target) host date digest",signature="BASE64_SIGNATURE"

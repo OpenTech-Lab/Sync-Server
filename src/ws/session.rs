@@ -17,7 +17,9 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
 pub enum ServerEvent {
     Pong,
     #[allow(dead_code)]
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// Events received from the WebSocket client.

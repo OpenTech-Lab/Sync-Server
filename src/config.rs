@@ -15,6 +15,12 @@ pub struct Config {
     pub instance_domain: String,
     pub admin_email: String,
     pub max_users: Option<u32>,
+    pub federation_denylist: Vec<String>,
+    pub federation_signature_window_secs: i64,
+    pub federation_max_delivery_attempts: i32,
+    pub federation_key_cache_ttl_secs: i64,
+    pub federation_inbox_rps: u64,
+    pub federation_inbox_burst: u32,
 }
 
 impl Config {
@@ -42,6 +48,33 @@ impl Config {
                 .unwrap_or_else(|_| "localhost".to_string()),
             admin_email: std::env::var("ADMIN_EMAIL").context("ADMIN_EMAIL must be set")?,
             max_users: std::env::var("MAX_USERS").ok().and_then(|v| v.parse().ok()),
+            federation_denylist: std::env::var("FEDERATION_DENYLIST")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(ToString::to_string)
+                .collect(),
+            federation_signature_window_secs: std::env::var("FEDERATION_SIGNATURE_WINDOW_SECS")
+                .unwrap_or_else(|_| "300".to_string())
+                .parse()
+                .context("FEDERATION_SIGNATURE_WINDOW_SECS must be a valid number")?,
+            federation_max_delivery_attempts: std::env::var("FEDERATION_MAX_DELIVERY_ATTEMPTS")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .context("FEDERATION_MAX_DELIVERY_ATTEMPTS must be a valid number")?,
+            federation_key_cache_ttl_secs: std::env::var("FEDERATION_KEY_CACHE_TTL_SECS")
+                .unwrap_or_else(|_| "300".to_string())
+                .parse()
+                .context("FEDERATION_KEY_CACHE_TTL_SECS must be a valid number")?,
+            federation_inbox_rps: std::env::var("FEDERATION_INBOX_RPS")
+                .unwrap_or_else(|_| "20".to_string())
+                .parse()
+                .context("FEDERATION_INBOX_RPS must be a valid number")?,
+            federation_inbox_burst: std::env::var("FEDERATION_INBOX_BURST")
+                .unwrap_or_else(|_| "40".to_string())
+                .parse()
+                .context("FEDERATION_INBOX_BURST must be a valid number")?,
         })
     }
 

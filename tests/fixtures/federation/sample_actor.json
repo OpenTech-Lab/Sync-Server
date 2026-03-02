@@ -1,0 +1,15 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    "https://w3id.org/security/v1"
+  ],
+  "id": "https://remote.example/actors/alice",
+  "type": "Person",
+  "preferredUsername": "alice",
+  "inbox": "https://remote.example/actors/alice/inbox",
+  "publicKey": {
+    "id": "https://remote.example/actors/alice#main-key",
+    "owner": "https://remote.example/actors/alice",
+    "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAexampleexampleexampleexampleexample==\n-----END PUBLIC KEY-----"
+  }
+}

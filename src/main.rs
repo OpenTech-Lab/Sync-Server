@@ -71,6 +71,13 @@ async fn main() -> std::io::Result<()> {
         .finish()
         .expect("Invalid API governor config");
 
+    // /users/*/inbox: federated inbound traffic, limited per source IP
+    let federation_inbox_governor = GovernorConfigBuilder::default()
+        .requests_per_second(config.federation_inbox_rps)
+        .burst_size(config.federation_inbox_burst)
+        .finish()
+        .expect("Invalid federation inbox governor config");
+
     let pool_data = web::Data::new(pool);
     let config_data = web::Data::new(config);
     let redis_data = web::Data::new(redis);
@@ -84,6 +91,13 @@ async fn main() -> std::io::Result<()> {
             // ── Health checks (unauthenticated, no rate-limiting) ──────────
             .route("/health", web::get().to(routes::health::liveness))
             .route("/ready", web::get().to(routes::health::readiness))
+            // ── Federation routes (ActivityPub / WebFinger) ────────────────
+            .configure(routes::federation::configure_public)
+            .service(
+                web::scope("")
+                    .wrap(Governor::new(&federation_inbox_governor))
+                    .configure(routes::federation::configure_inbox),
+            )
             // ── Auth routes: 5 req/s, burst 10 ────────────────────────────
             .service(
                 web::scope("/auth")

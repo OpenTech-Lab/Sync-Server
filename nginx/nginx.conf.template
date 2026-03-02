@@ -64,7 +64,16 @@ http {
     server {
         listen 80 default_server;
         server_name _;
-        return 444;
+
+        # Container-local health probe target used by docker healthcheck.
+        location = /health {
+            access_log off;
+            return 200 "ok\n";
+        }
+
+        location / {
+            return 444;
+        }
     }
 
     server {

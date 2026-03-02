@@ -31,6 +31,9 @@ async fn main() -> std::io::Result<()> {
 
     // Load configuration from environment
     let config = Config::from_env().expect("Failed to load server configuration");
+    config
+        .validate_security_defaults()
+        .expect("Security baseline validation failed");
     let host = config.server_host.clone();
     let port = config.server_port;
 

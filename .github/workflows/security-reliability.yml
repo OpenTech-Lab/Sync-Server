@@ -1,0 +1,133 @@
+name: Security & Reliability
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+
+jobs:
+  dependency-scan:
+    name: Dependency scans
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.88
+
+      - name: Cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: server
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/dashboard/package-lock.json
+
+      - name: Dashboard npm audit
+        working-directory: server/dashboard
+        run: |
+          npm ci
+          npm audit --audit-level=high
+
+  container-scan:
+    name: Container vulnerability scans
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build server image
+        run: docker build -t sync-server:scan ./server
+
+      - name: Build dashboard image
+        run: docker build -t sync-dashboard:scan ./server/dashboard
+
+      - name: Scan server image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: sync-server:scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Scan dashboard image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: sync-dashboard:scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+  load-baseline:
+    name: Load baseline smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: sync_test
+          POSTGRES_USER: sync
+          POSTGRES_PASSWORD: testpassword
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: postgres://sync:testpassword@localhost:5432/sync_test
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-test-secret-not-for-production-and-very-long
+      INSTANCE_NAME: ci-test
+      INSTANCE_DOMAIN: localhost
+      APP_ENV: development
+      ENFORCE_HTTPS: false
+      ADMIN_EMAIL: admin@example.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.88
+
+      - name: Start server
+        run: cargo run &
+
+      - name: Wait for health endpoint
+        run: |
+          for i in {1..40}; do
+            if curl -fsS http://localhost:8080/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server did not become healthy in time"
+          exit 1
+
+      - name: Run load baseline
+        run: bash scripts/load_baseline.sh -u http://localhost:8080 -n 300 -c 20

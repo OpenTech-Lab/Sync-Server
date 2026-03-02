@@ -18,6 +18,14 @@ This repo focuses on the server-side: Rust-based API, Next.js dashboard for admi
 - **Authentication and Security**: JWT-based auth for API and dashboard access.
 - **Easy Self-Hosting**: Deploy with Docker Compose on any compatible hardware for communities or personal use.
 
+## Security & Reliability Runbooks (Phase 6)
+
+- Threat model: `docs/phase6-threat-model.md`
+- Backup/restore drill: `docs/backup-restore-drill.md`
+- Load baseline procedure: `docs/load-baseline.md`
+- Encryption guarantees verification: `docs/encryption-guarantees.md`
+- Local scan script: `scripts/security_scan.sh`
+
 ## Architecture
 
 - **Backend**: Rust (using Actix Web or Rocket for the API server). Handles ActivityPub federation, secure message routing, and integrations.

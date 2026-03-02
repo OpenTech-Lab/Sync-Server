@@ -4,6 +4,8 @@ use sysinfo::System;
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub app_env: String,
+    pub enforce_https: bool,
     pub database_url: String,
     pub redis_url: String,
     pub jwt_secret: String,
@@ -26,6 +28,10 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self> {
         Ok(Config {
+            app_env: std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string()),
+            enforce_https: std::env::var("ENFORCE_HTTPS")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+                .unwrap_or(false),
             database_url: std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
             redis_url: std::env::var("REDIS_URL").context("REDIS_URL must be set")?,
             jwt_secret: std::env::var("JWT_SECRET").context("JWT_SECRET must be set")?,
@@ -76,6 +82,30 @@ impl Config {
                 .parse()
                 .context("FEDERATION_INBOX_BURST must be a valid number")?,
         })
+    }
+
+    pub fn validate_security_defaults(&self) -> Result<()> {
+        if self.app_env.eq_ignore_ascii_case("production") {
+            if !self.enforce_https {
+                return Err(anyhow::anyhow!(
+                    "ENFORCE_HTTPS=true is required when APP_ENV=production"
+                ));
+            }
+
+            if self.jwt_secret.len() < 32 || self.jwt_secret.contains("change-me") {
+                return Err(anyhow::anyhow!(
+                    "JWT_SECRET must be a strong non-default value in production"
+                ));
+            }
+
+            if self.instance_domain.eq_ignore_ascii_case("localhost") {
+                return Err(anyhow::anyhow!(
+                    "INSTANCE_DOMAIN must be a public domain in production"
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Log host hardware specs and the suggested user cap based on available resources.

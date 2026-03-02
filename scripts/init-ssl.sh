@@ -62,8 +62,8 @@ COMPOSE_PROJECT=$(docker inspect "$API_CONTAINER" \
   --format '{{index .Config.Labels "com.docker.compose.project"}}')
 NETWORK_NAME="${COMPOSE_PROJECT}_default"
 
-LETSENCRYPT_VOL=$(docker volume ls --format '{{.Name}}' | grep '_letsencrypt$')
-CERTBOT_WEBROOT_VOL=$(docker volume ls --format '{{.Name}}' | grep '_certbot_webroot$')
+LETSENCRYPT_VOL="${COMPOSE_PROJECT}_letsencrypt"
+CERTBOT_WEBROOT_VOL="${COMPOSE_PROJECT}_certbot_webroot"
 
 echo "→ Docker network:       $NETWORK_NAME"
 echo "→ letsencrypt volume:   $LETSENCRYPT_VOL"

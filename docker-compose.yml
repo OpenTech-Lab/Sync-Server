@@ -62,7 +62,6 @@ services:
     environment:
       # Set these in your .env file – no hardcoding needed
       INSTANCE_DOMAIN: ${INSTANCE_DOMAIN}
-      ADMIN_DOMAIN: ${ADMIN_DOMAIN}
     volumes:
       - ./nginx/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
       # Dummy self-signed cert – only used for the default_server IP-block
@@ -71,10 +70,10 @@ services:
       - letsencrypt:/etc/letsencrypt:ro
       # Webroot for ACME HTTP challenge
       - certbot_webroot:/var/www/certbot:ro
-    # envsubst replaces only ${INSTANCE_DOMAIN} and ${ADMIN_DOMAIN};
+    # envsubst replaces only ${INSTANCE_DOMAIN};
     # nginx's own $variables (no braces) are left untouched.
     command: >
-      /bin/sh -c "envsubst '$$INSTANCE_DOMAIN $$ADMIN_DOMAIN'
+      /bin/sh -c "envsubst '$$INSTANCE_DOMAIN'
         < /etc/nginx/nginx.conf.template
         > /etc/nginx/nginx.conf
         && nginx -g 'daemon off;'"

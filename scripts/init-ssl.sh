@@ -24,14 +24,12 @@ else
 fi
 
 : "${INSTANCE_DOMAIN:?Set INSTANCE_DOMAIN in .env}"
-: "${ADMIN_DOMAIN:?Set ADMIN_DOMAIN in .env}"
 : "${ADMIN_EMAIL:?Set ADMIN_EMAIL in .env}"
 
 cd "$SERVER_DIR"
 
-echo "→ Domain:        $INSTANCE_DOMAIN"
-echo "→ Admin domain:  $ADMIN_DOMAIN"
-echo "→ Email:         $ADMIN_EMAIL"
+echo "→ Domain:  $INSTANCE_DOMAIN"
+echo "→ Email:   $ADMIN_EMAIL"
 
 # ── 1. Generate dummy self-signed cert for the IP-block default_server ───────
 echo ""
@@ -92,7 +90,7 @@ events { worker_connections 1024; }
 http {
     server {
         listen 80;
-        server_name $INSTANCE_DOMAIN $ADMIN_DOMAIN;
+        server_name $INSTANCE_DOMAIN;
         location /.well-known/acme-challenge/ { root /var/www/certbot; }
         location / { return 200 "bootstrapping"; }
     }
@@ -118,8 +116,7 @@ docker run --rm \
     --email "$ADMIN_EMAIL" \
     --agree-tos \
     --no-eff-email \
-    -d "$INSTANCE_DOMAIN" \
-    -d "$ADMIN_DOMAIN"
+    -d "$INSTANCE_DOMAIN"
 
 # ── 6. Switch to full stack ───────────────────────────────────────────────────
 echo "→ Removing bootstrap nginx..."
@@ -132,6 +129,6 @@ docker compose up -d
 echo ""
 echo "✓ Done! SSL is active."
 echo "  https://$INSTANCE_DOMAIN"
-echo "  https://$ADMIN_DOMAIN"
+echo "  https://$INSTANCE_DOMAIN/admin"
 echo ""
 echo "Certs auto-renew every 12 h via the certbot service."

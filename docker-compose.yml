@@ -50,6 +50,7 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: http://api:8080
+      SYNC_SERVER_URL: http://api:8080
     depends_on:
       api:
         condition: service_healthy

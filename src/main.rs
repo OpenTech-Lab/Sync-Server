@@ -8,8 +8,9 @@ mod schema;
 mod services;
 mod ws;
 
+use actix_cors::Cors;
 use actix_governor::{Governor, GovernorConfigBuilder};
-use actix_web::{web, App, HttpServer};
+use actix_web::{http::header, web, App, HttpServer};
 use tracing_actix_web::TracingLogger;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -86,7 +87,20 @@ async fn main() -> std::io::Result<()> {
     let redis_data = web::Data::new(redis);
 
     HttpServer::new(move || {
+        // Allow any localhost origin (Flutter web dev) plus configured origins.
+        // In production, restrict allowed_origin to your actual domain.
+        let cors = Cors::default()
+            .allow_any_origin()
+            .allowed_methods(vec!["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+            .allowed_headers(vec![
+                header::AUTHORIZATION,
+                header::CONTENT_TYPE,
+                header::ACCEPT,
+            ])
+            .max_age(3600);
+
         App::new()
+            .wrap(cors)
             .wrap(TracingLogger::default())
             .app_data(pool_data.clone())
             .app_data(config_data.clone())
@@ -96,11 +110,6 @@ async fn main() -> std::io::Result<()> {
             .route("/ready", web::get().to(routes::health::readiness))
             // ── Federation routes (ActivityPub / WebFinger) ────────────────
             .configure(routes::federation::configure_public)
-            .service(
-                web::scope("")
-                    .wrap(Governor::new(&federation_inbox_governor))
-                    .configure(routes::federation::configure_inbox),
-            )
             // ── Auth routes: 5 req/s, burst 10 ────────────────────────────
             .service(
                 web::scope("/auth")
@@ -125,6 +134,14 @@ async fn main() -> std::io::Result<()> {
             )
             // ── WebSocket upgrade (auth inside handler, no HTTP rate-limit) ─
             .service(web::scope("/ws").configure(routes::ws::configure))
+            // ── Federation inbox: scope("") must be LAST — empty prefix     ──
+            // ── matches any URL in Actix-web, so all named scopes above     ──
+            // ── must be registered first so they win on their own paths.    ──
+            .service(
+                web::scope("")
+                    .wrap(Governor::new(&federation_inbox_governor))
+                    .configure(routes::federation::configure_inbox),
+            )
     })
     .bind((host.as_str(), port))?
     .run()

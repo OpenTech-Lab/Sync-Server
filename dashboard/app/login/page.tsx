@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import Image from "next/image";
 
 import { ACCESS_COOKIE } from "@/lib/server-api";
 
@@ -14,6 +15,16 @@ export default async function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/20 p-6">
       <div className="w-full max-w-md rounded-xl border bg-background p-6 shadow-sm">
+        <div className="mb-4 flex items-center justify-center">
+          <Image
+            src="/logo.png"
+            alt="Sync logo"
+            width={56}
+            height={56}
+            priority
+            className="rounded-md"
+          />
+        </div>
         <h1 className="text-xl font-semibold">Admin sign in</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Sign in with an admin account to access the Sync dashboard.

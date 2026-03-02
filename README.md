@@ -7,6 +7,8 @@ Sync Server is the backend component of the open-source, privacy-focused Sync ch
 
 This repo focuses on the server-side: Rust-based API, Next.js dashboard for administration, and easy deployment via Docker Compose. For the mobile client, see the companion repo: [sync-mobile](https://github.com/OpenTech-Lab/sync-mobile).
 
+![Sync](docs/images/sync-banner.png)
+
 ## How to use
 [FINISH THIS BLOCK]
 

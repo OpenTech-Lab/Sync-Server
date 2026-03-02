@@ -1,21 +1,20 @@
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import Image from "next/image";
+import { redirect } from "next/navigation";
 
 import { fetchSetupStatus } from "@/lib/setup-status";
 import { ACCESS_COOKIE } from "@/lib/server-api";
 
-import { LoginForm } from "./ui/login-form";
+import { SetupAdminForm } from "./ui/setup-admin-form";
 
-export default async function LoginPage() {
+export default async function SetupAdminPage() {
   const { needsSetup } = await fetchSetupStatus();
-  if (needsSetup) {
-    redirect("/setup-admin");
-  }
-
-  const jar = await cookies();
-  if (jar.get(ACCESS_COOKIE)?.value) {
-    redirect("/dashboard");
+  if (!needsSetup) {
+    const jar = await cookies();
+    if (jar.get(ACCESS_COOKIE)?.value) {
+      redirect("/dashboard");
+    }
+    redirect("/login");
   }
 
   return (
@@ -31,11 +30,11 @@ export default async function LoginPage() {
             className="rounded-md"
           />
         </div>
-        <h1 className="text-xl font-semibold">Admin sign in</h1>
+        <h1 className="text-xl font-semibold">Create admin account</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Sign in with an admin account to access the Sync dashboard.
+          First-time setup: create the initial admin account for this Sync server.
         </p>
-        <LoginForm />
+        <SetupAdminForm />
       </div>
     </div>
   );

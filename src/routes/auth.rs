@@ -16,6 +16,7 @@ use crate::errors::AppError;
 use crate::models::refresh_token::{NewRefreshToken, RefreshToken};
 use crate::models::user::{NewUser, UserPublic};
 use crate::schema::refresh_tokens::dsl as rt_dsl;
+use crate::schema::users::dsl as user_dsl;
 use crate::services::{email_service, user_service};
 
 // ── Request / Response DTOs ──────────────────────────────────────────────────
@@ -38,12 +39,24 @@ pub struct RefreshRequest {
     pub refresh_token: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SetupAdminRequest {
+    pub username: String,
+    pub email: String,
+    pub password: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: String,
     /// Access token lifetime in seconds.
     pub expires_in: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetupStatusResponse {
+    pub needs_setup: bool,
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -116,6 +129,60 @@ pub async fn register(
 pub async fn me(pool: web::Data<Pool>, auth: AuthUser) -> Result<HttpResponse, AppError> {
     let user = user_service::find_by_id(&pool, auth.0.user_id()?)?.ok_or(AppError::Unauthorized)?;
     Ok(HttpResponse::Ok().json(UserPublic::from(user)))
+}
+
+/// GET /auth/setup-status → 200 { needs_setup: boolean }
+pub async fn setup_status(pool: web::Data<Pool>) -> Result<HttpResponse, AppError> {
+    let mut conn = pool.get()?;
+    let admin_count: i64 = user_dsl::users
+        .filter(user_dsl::role.eq("admin"))
+        .count()
+        .get_result(&mut conn)?;
+
+    Ok(HttpResponse::Ok().json(SetupStatusResponse {
+        needs_setup: admin_count == 0,
+    }))
+}
+
+/// POST /auth/setup-admin → 201 UserPublic
+///
+/// Bootstraps the very first admin account. Once any admin exists, this route
+/// returns 409 and can no longer be used.
+pub async fn setup_admin(
+    pool: web::Data<Pool>,
+    body: web::Json<SetupAdminRequest>,
+) -> Result<HttpResponse, AppError> {
+    let username = body.username.trim();
+    let email = body.email.trim().to_lowercase();
+    let password = body.password.as_str();
+
+    if username.is_empty() || email.is_empty() || password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "username, email required; password must be ≥8 chars".into(),
+        ));
+    }
+
+    let mut conn = pool.get()?;
+    let admin_count: i64 = user_dsl::users
+        .filter(user_dsl::role.eq("admin"))
+        .count()
+        .get_result(&mut conn)?;
+
+    if admin_count > 0 {
+        return Err(AppError::Conflict("Admin account is already configured".into()));
+    }
+
+    let pw_hash = hash_password(password.to_string()).await?;
+    let new_user = NewUser {
+        id: Uuid::new_v4(),
+        username: username.to_string(),
+        email,
+        password_hash: pw_hash,
+        role: "admin".to_string(),
+    };
+
+    let user = user_service::create_user(&pool, new_user, None)?;
+    Ok(HttpResponse::Created().json(UserPublic::from(user)))
 }
 
 /// POST /auth/login → 200 TokenResponse
@@ -416,7 +483,9 @@ pub async fn reset_password(
 
 /// Register all auth routes under a given service config.
 pub fn configure(cfg: &mut web::ServiceConfig) {
-    cfg.route("/register", web::post().to(register))
+    cfg.route("/setup-status", web::get().to(setup_status))
+        .route("/setup-admin", web::post().to(setup_admin))
+        .route("/register", web::post().to(register))
         .route("/login", web::post().to(login))
         .route("/me", web::get().to(me))
         .route("/refresh", web::post().to(refresh))

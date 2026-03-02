@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+import { fetchSetupStatus } from "./lib/setup-status";
 import { ACCESS_COOKIE } from "@/lib/server-api";
 
 function secureHeaders(response: NextResponse): NextResponse {
@@ -15,9 +16,28 @@ function secureHeaders(response: NextResponse): NextResponse {
   return response;
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const hasSession = Boolean(request.cookies.get(ACCESS_COOKIE)?.value);
+  const { needsSetup } = await fetchSetupStatus();
+
+  const isSetupPath = path === "/setup-admin";
+  const isSetupApiPath = path === "/api/session/setup-admin";
+
+  if (needsSetup && !isSetupPath && !isSetupApiPath) {
+    return secureHeaders(
+      NextResponse.redirect(new URL("/setup-admin", request.url), { status: 307 }),
+    );
+  }
+
+  if (!needsSetup && isSetupPath) {
+    return secureHeaders(
+      NextResponse.redirect(new URL(hasSession ? "/dashboard" : "/login", request.url), {
+        status: 307,
+      }),
+    );
+  }
+
   const isProtectedPath =
     path.startsWith("/dashboard") ||
     path.startsWith("/users") ||

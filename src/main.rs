@@ -118,6 +118,11 @@ async fn main() -> std::io::Result<()> {
                     .wrap(Governor::new(&api_governor))
                     .configure(routes::admin::configure),
             )
+            .service(
+                web::scope("/api/stickers")
+                    .wrap(Governor::new(&api_governor))
+                    .configure(routes::stickers::configure),
+            )
             // ── WebSocket upgrade (auth inside handler, no HTTP rate-limit) ─
             .service(web::scope("/ws").configure(routes::ws::configure))
     })

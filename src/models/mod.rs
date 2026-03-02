@@ -2,6 +2,7 @@ pub mod admin;
 pub mod federation;
 pub mod message;
 pub mod refresh_token;
+pub mod sticker;
 pub mod user;
 
 #[allow(unused_imports)]
@@ -16,5 +17,7 @@ pub use federation::{
 pub use message::{Message, NewMessage};
 #[allow(unused_imports)]
 pub use refresh_token::{NewRefreshToken, RefreshToken};
+#[allow(unused_imports)]
+pub use sticker::{NewSticker, Sticker, StickerDetail, StickerListItem};
 #[allow(unused_imports)]
 pub use user::{NewUser, User, UserPublic};

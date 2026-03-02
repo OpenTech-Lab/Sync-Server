@@ -14,6 +14,22 @@ diesel::table! {
 diesel::table! {
     use diesel::sql_types::*;
 
+    stickers (id) {
+        id -> Uuid,
+        uploader_id -> Uuid,
+        name -> Text,
+        mime_type -> Text,
+        content_base64 -> Text,
+        size_bytes -> Int4,
+        status -> Text,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
     admin_audit_logs (id) {
         id -> Uuid,
         actor_user_id -> Nullable<Uuid>,
@@ -131,6 +147,7 @@ diesel::table! {
 diesel::joinable!(refresh_tokens -> users (user_id));
 diesel::joinable!(messages -> users (sender_id));
 diesel::joinable!(admin_audit_logs -> users (actor_user_id));
+diesel::joinable!(stickers -> users (uploader_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     admin_settings,
@@ -142,4 +159,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     federation_inbox_activities,
     federation_deliveries,
     federation_remote_messages,
+    stickers,
 );

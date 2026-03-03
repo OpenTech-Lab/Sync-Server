@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod device_push_token;
 pub mod federation;
 pub mod message;
 pub mod refresh_token;
@@ -7,6 +8,8 @@ pub mod user;
 
 #[allow(unused_imports)]
 pub use admin::{AdminAuditLog, AdminSetting, NewAdminAuditLog, NewAdminSetting};
+#[allow(unused_imports)]
+pub use device_push_token::{DevicePushToken, NewDevicePushToken};
 #[allow(unused_imports)]
 pub use federation::{
     FederationActorKey, FederationDelivery, FederationInboxActivity, FederationRemoteMessage,

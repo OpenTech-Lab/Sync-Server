@@ -36,9 +36,7 @@ fn validate_avatar_base64(avatar_base64: &str) -> Result<(), AppError> {
         .map_err(|_| AppError::BadRequest("avatar_base64 must be valid base64".into()))?;
 
     if decoded.len() > AVATAR_MAX_BYTES {
-        return Err(AppError::BadRequest(
-            "avatar image must be <= 256KB".into(),
-        ));
+        return Err(AppError::BadRequest("avatar image must be <= 256KB".into()));
     }
 
     Ok(())

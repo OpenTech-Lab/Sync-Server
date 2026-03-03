@@ -89,6 +89,20 @@ diesel::table! {
 diesel::table! {
     use diesel::sql_types::*;
 
+    device_push_tokens (id) {
+        id -> Uuid,
+        user_id -> Uuid,
+        platform -> Text,
+        token -> Text,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+        last_seen_at -> Nullable<Timestamptz>,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
     federation_actor_keys (id) {
         id -> Uuid,
         actor_username -> Text,
@@ -149,11 +163,13 @@ diesel::joinable!(refresh_tokens -> users (user_id));
 diesel::joinable!(messages -> users (sender_id));
 diesel::joinable!(admin_audit_logs -> users (actor_user_id));
 diesel::joinable!(stickers -> users (uploader_id));
+diesel::joinable!(device_push_tokens -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     admin_settings,
     admin_audit_logs,
     users,
+    device_push_tokens,
     refresh_tokens,
     messages,
     federation_actor_keys,

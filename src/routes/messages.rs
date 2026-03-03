@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::auth::AuthUser;
 use crate::db::Pool;
 use crate::errors::AppError;
-use crate::services::{message_service, redis_pubsub};
+use crate::services::{message_service, push_dispatch_service, redis_pubsub};
 
 // ── Request DTOs ─────────────────────────────────────────────────────────────
 
@@ -54,6 +54,27 @@ pub async fn send_message(
         let _ =
             redis_pubsub::publish(&mut conn, &redis_pubsub::user_channel(sender_id), &event).await;
     }
+
+    // Push dispatch is best-effort and asynchronous; REST write succeeds even
+    // if webhook delivery fails.
+    let push_pool = pool.get_ref().clone();
+    let push_sender_id = sender_id;
+    let push_recipient_id = body.recipient_id;
+    let push_message_id = message.id;
+    let push_content = message.content.clone();
+    actix_web::rt::spawn(async move {
+        if let Err(error) = push_dispatch_service::dispatch_new_message(
+            &push_pool,
+            push_recipient_id,
+            push_sender_id,
+            push_message_id,
+            &push_content,
+        )
+        .await
+        {
+            tracing::warn!(error = %error, "Push dispatch failed");
+        }
+    });
 
     Ok(HttpResponse::Created().json(message))
 }

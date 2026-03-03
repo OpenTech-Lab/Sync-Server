@@ -169,7 +169,9 @@ pub async fn setup_admin(
         .get_result(&mut conn)?;
 
     if admin_count > 0 {
-        return Err(AppError::Conflict("Admin account is already configured".into()));
+        return Err(AppError::Conflict(
+            "Admin account is already configured".into(),
+        ));
     }
 
     let pw_hash = hash_password(password.to_string()).await?;

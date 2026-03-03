@@ -4,5 +4,6 @@ pub mod federation;
 pub mod health;
 pub mod messages;
 pub mod profile;
+pub mod push;
 pub mod stickers;
 pub mod ws;

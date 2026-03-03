@@ -14,6 +14,7 @@ struct LivenessResponse {
     instance_name: String,
     instance_domain: String,
     instance_description: Option<String>,
+    instance_image_base64: Option<String>,
     country_code: Option<String>,
     country_name: Option<String>,
 }
@@ -49,6 +50,12 @@ pub async fn liveness(
             .flatten()
             .map(|s| s.value)
             .filter(|v| !v.trim().is_empty());
+    let planet_image_base64 =
+        admin_service::get_setting(&pool, admin_service::SETTING_PLANET_IMAGE_BASE64)
+            .ok()
+            .flatten()
+            .map(|s| s.value)
+            .filter(|v| !v.trim().is_empty());
 
     HttpResponse::Ok().json(LivenessResponse {
         status: "ok",
@@ -56,6 +63,7 @@ pub async fn liveness(
         instance_name: planet_name,
         instance_domain: cfg.instance_domain.clone(),
         instance_description: planet_description,
+        instance_image_base64: planet_image_base64,
         country_code: geo.country_code.clone(),
         country_name: geo.country_name.clone(),
     })

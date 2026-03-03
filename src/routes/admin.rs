@@ -1,4 +1,5 @@
 use actix_web::{web, HttpResponse};
+use base64::Engine;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -24,6 +25,39 @@ pub struct UpdateConfigRequest {
     pub notification_webhook_url: Option<String>,
     pub planet_name: Option<String>,
     pub planet_description: Option<String>,
+    pub planet_image_base64: Option<String>,
+}
+
+fn validate_planet_image_base64(data_url: &str) -> Result<(), AppError> {
+    let trimmed = data_url.trim();
+    if trimmed.len() > 400_000 {
+        return Err(AppError::BadRequest(
+            "planet_image_base64 is too large (max ~400KB encoded)".into(),
+        ));
+    }
+
+    let prefix_ok = trimmed.starts_with("data:image/png;base64,")
+        || trimmed.starts_with("data:image/jpeg;base64,")
+        || trimmed.starts_with("data:image/webp;base64,");
+    if !prefix_ok {
+        return Err(AppError::BadRequest(
+            "planet_image_base64 must be a data URL (png/jpeg/webp)".into(),
+        ));
+    }
+
+    let (_, base64_payload) = trimmed
+        .split_once(',')
+        .ok_or_else(|| AppError::BadRequest("planet_image_base64 data URL is malformed".into()))?;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(base64_payload)
+        .map_err(|_| AppError::BadRequest("planet_image_base64 is not valid base64".into()))?;
+    if decoded.len() > 256 * 1024 {
+        return Err(AppError::BadRequest(
+            "planet_image_base64 decoded payload must be <= 256KB".into(),
+        ));
+    }
+
+    Ok(())
 }
 
 pub async fn overview(pool: web::Data<Pool>, _admin: AdminUser) -> Result<HttpResponse, AppError> {
@@ -143,6 +177,18 @@ pub async fn update_config(
         admin_service::clear_setting(&pool, admin_service::SETTING_PLANET_DESCRIPTION)?;
     }
 
+    if let Some(image) = body.planet_image_base64.as_ref() {
+        let trimmed = image.trim();
+        if trimmed.is_empty() {
+            admin_service::clear_setting(&pool, admin_service::SETTING_PLANET_IMAGE_BASE64)?;
+        } else {
+            validate_planet_image_base64(trimmed)?;
+            admin_service::set_setting(&pool, admin_service::SETTING_PLANET_IMAGE_BASE64, trimmed)?;
+        }
+    } else {
+        admin_service::clear_setting(&pool, admin_service::SETTING_PLANET_IMAGE_BASE64)?;
+    }
+
     admin_service::append_audit_log(
         &pool,
         Some(admin.0.user_id()?),
@@ -162,6 +208,11 @@ pub async fn update_config(
                 .unwrap_or(false),
             "planet_description_set": body
                 .planet_description
+                .as_ref()
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false),
+            "planet_image_set": body
+                .planet_image_base64
                 .as_ref()
                 .map(|v| !v.trim().is_empty())
                 .unwrap_or(false),

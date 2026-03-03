@@ -206,6 +206,9 @@ paths:
                   instance_description:
                     type: string
                     nullable: true
+                  instance_image_base64:
+                    type: string
+                    nullable: true
                   country_code:
                     type: string
                     nullable: true

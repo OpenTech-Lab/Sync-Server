@@ -9,6 +9,7 @@ type AdminConfig = {
   notification_webhook_url: string | null;
   planet_name: string | null;
   planet_description: string | null;
+  planet_image_base64: string | null;
 };
 
 export default async function ConfigPage() {
@@ -33,6 +34,7 @@ export default async function ConfigPage() {
         notificationWebhookUrl={config.notification_webhook_url}
         planetName={config.planet_name}
         planetDescription={config.planet_description}
+        planetImageBase64={config.planet_image_base64}
       />
     </div>
   );

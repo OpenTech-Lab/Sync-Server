@@ -1,5 +1,6 @@
 use chrono::{Duration, Utc};
 use diesel::prelude::*;
+use reqwest::Url;
 use uuid::Uuid;
 
 use crate::db::Pool;
@@ -8,12 +9,14 @@ use crate::models::federation::{
     FederationActorKey, FederationDelivery, NewFederationActorKey, NewFederationDelivery,
     NewFederationInboxActivity, NewFederationRemoteMessage,
 };
+use crate::models::message::Message;
 use crate::models::user::User;
 use crate::schema::federation_actor_keys::dsl as key_dsl;
 use crate::schema::federation_deliveries::dsl as delivery_dsl;
 use crate::schema::federation_inbox_activities::dsl as inbox_dsl;
 use crate::schema::federation_remote_messages::dsl as remote_msg_dsl;
 use crate::schema::users::dsl as user_dsl;
+use crate::services::{message_service, user_service};
 
 pub fn ensure_actor_key(
     pool: &Pool,
@@ -216,10 +219,10 @@ pub fn map_create_note_to_local_message(
     activity_actor: &str,
     recipient_username: &str,
     payload: &serde_json::Value,
-) -> Result<bool, AppError> {
+) -> Result<Option<Message>, AppError> {
     let object = match payload.get("object") {
         Some(v) => v,
-        None => return Ok(false),
+        None => return Ok(None),
     };
 
     let object_type = object
@@ -227,7 +230,7 @@ pub fn map_create_note_to_local_message(
         .and_then(|v| v.as_str())
         .unwrap_or_default();
     if object_type != "Note" {
-        return Ok(false);
+        return Ok(None);
     }
 
     let content = object
@@ -236,7 +239,7 @@ pub fn map_create_note_to_local_message(
         .map(str::trim)
         .unwrap_or_default();
     if content.is_empty() {
-        return Ok(false);
+        return Ok(None);
     }
 
     let object_id = object
@@ -258,7 +261,42 @@ pub fn map_create_note_to_local_message(
         .do_nothing()
         .execute(&mut conn)?;
 
-    Ok(inserted > 0)
+    if inserted == 0 {
+        return Ok(None);
+    }
+
+    let recipient = user_dsl::users
+        .filter(user_dsl::username.eq(recipient_username))
+        .select(User::as_select())
+        .first::<User>(&mut conn)
+        .optional()?
+        .ok_or(AppError::NotFound)?;
+
+    let (remote_user_id, remote_server_url) = parse_remote_actor_identity(activity_actor)?;
+    let shadow =
+        user_service::ensure_federated_shadow_user(pool, &remote_user_id, &remote_server_url)?;
+    let local_message =
+        message_service::send_message(pool, shadow.id, recipient.id, content.to_string())?;
+
+    Ok(Some(local_message))
+}
+
+fn parse_remote_actor_identity(actor_url: &str) -> Result<(String, String), AppError> {
+    let parsed = Url::parse(actor_url)
+        .map_err(|e| AppError::BadRequest(format!("Invalid actor url: {e}")))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AppError::BadRequest("Remote actor URL missing host".into()))?;
+
+    let remote_user_id = parsed
+        .path_segments()
+        .and_then(|segments| segments.last())
+        .map(|segment| segment.trim())
+        .filter(|segment| !segment.is_empty())
+        .ok_or_else(|| AppError::BadRequest("Remote actor URL missing username path".into()))?
+        .to_lowercase();
+
+    Ok((remote_user_id, format!("{}://{}", parsed.scheme(), host)))
 }
 
 pub fn parse_resource(resource: &str, expected_domain: &str) -> Result<String, AppError> {

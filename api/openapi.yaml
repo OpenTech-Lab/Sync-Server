@@ -84,6 +84,53 @@ components:
           type: string
           format: date-time
 
+    SendMessageRequest:
+      type: object
+      required: [recipient_id, content]
+      properties:
+        recipient_id:
+          type: string
+          description: |
+            Local conversation partner UUID, or remote partner user ID when
+            `recipient_server_url` is provided.
+        recipient_server_url:
+          type: string
+          format: uri
+          nullable: true
+          description: |
+            Required for cross-server send to a user on another planet.
+            Message path: device A -> server A -> target server -> target device.
+        content:
+          type: string
+          minLength: 1
+
+    ResolveContactRequest:
+      type: object
+      required: [recipient_id, recipient_server_url]
+      properties:
+        recipient_id:
+          type: string
+          description: Target user ID on the destination server.
+        recipient_server_url:
+          type: string
+          format: uri
+
+    ResolveContactResponse:
+      type: object
+      required: [partner_id, recipient_id, recipient_server_url, display_handle]
+      properties:
+        partner_id:
+          type: string
+          format: uuid
+          description: Local partner UUID to use for `/api/messages/{partner_id}` conversation APIs.
+        recipient_id:
+          type: string
+        recipient_server_url:
+          type: string
+          format: uri
+        display_handle:
+          type: string
+
     UnreadCounts:
       type: object
       description: Map of partner_user_id (UUID string) → unread message count
@@ -311,23 +358,17 @@ paths:
       summary: Send a direct message
       tags: [messages]
       description: |
-        Persists the message and publishes a `NewMessage` event to the recipient's
-        Redis channel (`ws:user:<uuid>`). The recipient's active WebSocket session
-        will receive the event in real time.
+        Persists the message to the sender's local server first.
+
+        - Local target: server delivers directly to recipient device.
+        - Cross-server target (when `recipient_server_url` is provided):
+          server A relays to server B, and server B delivers to the recipient device.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [recipient_id, content]
-              properties:
-                recipient_id:
-                  type: string
-                  format: uuid
-                content:
-                  type: string
-                  minLength: 1
+              $ref: '#/components/schemas/SendMessageRequest'
       responses:
         '201':
           description: Message created
@@ -345,6 +386,37 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/messages/resolve-contact:
+    post:
+      operationId: resolveContact
+      summary: Resolve friend target into a local partner conversation ID
+      tags: [messages]
+      description: |
+        Use this before starting a cross-server chat. Client provides
+        `recipient_id` and `recipient_server_url`; server responds with a local
+        `partner_id` UUID usable with conversation endpoints.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveContactRequest'
+      responses:
+        '200':
+          description: Contact resolved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolveContactResponse'
+        '400':
+          description: Invalid target ID or server URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /api/messages/unread-counts:
     get:

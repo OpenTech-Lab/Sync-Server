@@ -61,6 +61,17 @@ pub struct SetupStatusResponse {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+fn is_valid_username(value: &str) -> bool {
+    let normalized = value.trim();
+    let len = normalized.chars().count();
+    if !(3..=32).contains(&len) {
+        return false;
+    }
+    normalized
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-')
+}
+
 /// Issue a fresh access + refresh token pair, storing the refresh token in DB.
 fn mint_tokens(
     conn: &mut crate::db::DbConn,
@@ -107,6 +118,11 @@ pub async fn register(
     if body.username.trim().is_empty() || body.email.trim().is_empty() || body.password.len() < 8 {
         return Err(AppError::BadRequest(
             "username, email required; password must be ≥8 chars".into(),
+        ));
+    }
+    if !is_valid_username(&body.username) {
+        return Err(AppError::BadRequest(
+            "username must be 3-32 chars and only contain a-zA-Z0-9._-".into(),
         ));
     }
 
@@ -159,6 +175,11 @@ pub async fn setup_admin(
     if username.is_empty() || email.is_empty() || password.len() < 8 {
         return Err(AppError::BadRequest(
             "username, email required; password must be ≥8 chars".into(),
+        ));
+    }
+    if !is_valid_username(username) {
+        return Err(AppError::BadRequest(
+            "username must be 3-32 chars and only contain a-zA-Z0-9._-".into(),
         ));
     }
 

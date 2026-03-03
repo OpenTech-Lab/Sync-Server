@@ -14,7 +14,7 @@ use crate::auth::AuthUser;
 use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
-use crate::services::federation_service;
+use crate::services::{federation_service, push_dispatch_service, redis_pubsub};
 
 #[derive(Debug, Deserialize)]
 pub struct WebFingerQuery {
@@ -63,6 +63,24 @@ fn actor_url(domain: &str, username: &str) -> String {
 
 fn key_id(domain: &str, username: &str) -> String {
     format!("{}#main-key", actor_url(domain, username))
+}
+
+fn build_remote_inbox_url(
+    remote_server_url: &str,
+    remote_user_id: &str,
+) -> Result<String, AppError> {
+    let mut parsed = reqwest::Url::parse(remote_server_url.trim())
+        .map_err(|e| AppError::BadRequest(format!("Invalid recipient_server_url: {e}")))?;
+    let normalized_user = remote_user_id.trim().to_lowercase();
+    if normalized_user.is_empty() {
+        return Err(AppError::BadRequest("recipient_id cannot be empty".into()));
+    }
+
+    let path = parsed.path().trim_end_matches('/');
+    parsed.set_path(&format!("{path}/users/{normalized_user}/inbox"));
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    Ok(parsed.to_string())
 }
 
 fn encode_raw_pem(label: &str, bytes: &[u8]) -> String {
@@ -384,6 +402,7 @@ pub async fn inbox(
     req: HttpRequest,
     cfg: web::Data<Config>,
     pool: web::Data<Pool>,
+    redis: web::Data<redis::Client>,
     username: web::Path<String>,
     body: web::Bytes,
 ) -> Result<HttpResponse, AppError> {
@@ -473,13 +492,44 @@ pub async fn inbox(
     }
 
     if activity_type == "Create" {
-        let _ = federation_service::map_create_note_to_local_message(
+        let maybe_message = federation_service::map_create_note_to_local_message(
             &pool,
             &activity_id,
             &activity_actor,
             &username,
             &payload,
         )?;
+
+        if let Some(message) = maybe_message {
+            let event = serde_json::json!({ "type": "new_message", "message": &message });
+            if let Ok(mut conn) = redis_pubsub::get_async_conn(&redis).await {
+                let _ = redis_pubsub::publish(
+                    &mut conn,
+                    &redis_pubsub::user_channel(message.recipient_id),
+                    &event,
+                )
+                .await;
+            }
+
+            let push_pool = pool.get_ref().clone();
+            let push_sender_id = message.sender_id;
+            let push_recipient_id = message.recipient_id;
+            let push_message_id = message.id;
+            let push_content = message.content.clone();
+            actix_web::rt::spawn(async move {
+                if let Err(error) = push_dispatch_service::dispatch_new_message(
+                    &push_pool,
+                    push_recipient_id,
+                    push_sender_id,
+                    push_message_id,
+                    &push_content,
+                )
+                .await
+                {
+                    tracing::warn!(error = %error, "Push dispatch failed for inbound federation message");
+                }
+            });
+        }
     }
 
     Ok(HttpResponse::Accepted().json(json!({
@@ -680,6 +730,108 @@ pub async fn send_to_remote(
         "activity_id": activity_id,
         "results": results,
     })))
+}
+
+pub async fn deliver_direct_message_to_remote(
+    cfg: &Config,
+    pool: &Pool,
+    sender_id: uuid::Uuid,
+    recipient_id: &str,
+    recipient_server_url: &str,
+    content: &str,
+) -> Result<(), AppError> {
+    let mut conn = pool.get()?;
+    use crate::schema::users::dsl as user_dsl;
+    use diesel::prelude::*;
+
+    let sender_username = user_dsl::users
+        .filter(user_dsl::id.eq(sender_id))
+        .select(user_dsl::username)
+        .first::<String>(&mut conn)?;
+
+    let key = ensure_actor_key_material(pool, cfg, &sender_username)?;
+    let destination = build_remote_inbox_url(recipient_server_url, recipient_id)?;
+    let destination_host = reqwest::Url::parse(&destination)
+        .ok()
+        .and_then(|u| u.host_str().map(ToString::to_string))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let activity_id = format!(
+        "{}/activities/{}",
+        actor_url(&cfg.instance_domain, &sender_username),
+        uuid::Uuid::new_v4()
+    );
+    let sender_actor = actor_url(&cfg.instance_domain, &sender_username);
+    let payload = json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": activity_id,
+        "type": "Create",
+        "actor": sender_actor,
+        "object": {
+            "id": format!("{}/objects/{}", actor_url(&cfg.instance_domain, &sender_username), uuid::Uuid::new_v4()),
+            "type": "Note",
+            "content": content,
+        },
+        "to": [destination.clone()],
+    });
+    let payload_bytes = serde_json::to_vec(&payload)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to serialize activity: {e}")))?;
+
+    let delivery = federation_service::upsert_delivery_pending(
+        pool,
+        &activity_id,
+        &sender_username,
+        &destination,
+    )?;
+
+    let started = std::time::Instant::now();
+    match post_activity_signed(
+        &destination,
+        &key.key_id,
+        &key.private_key_pkcs8,
+        &payload_bytes,
+    )
+    .await
+    {
+        Ok(status) if status.is_success() => {
+            federation_service::mark_delivery_success(pool, delivery.id)?;
+            tracing::info!(
+                destination = %destination,
+                destination_host = %destination_host,
+                status = %status.as_u16(),
+                retry_count = delivery.attempts + 1,
+                latency_ms = started.elapsed().as_millis(),
+                "federation delivery succeeded"
+            );
+            Ok(())
+        }
+        Ok(status) => {
+            let status_u16 = status.as_u16();
+            let permanent = federation_service::permanent_failure_reason(status_u16).is_some();
+            federation_service::mark_delivery_failure(
+                pool,
+                delivery.id,
+                &format!("remote status {status_u16}"),
+                if permanent {
+                    1
+                } else {
+                    cfg.federation_max_delivery_attempts
+                },
+            )?;
+            Err(AppError::BadRequest(format!(
+                "Remote server rejected message with status {status_u16}"
+            )))
+        }
+        Err(err) => {
+            federation_service::mark_delivery_failure(
+                pool,
+                delivery.id,
+                &format!("transport error: {err}"),
+                cfg.federation_max_delivery_attempts,
+            )?;
+            Err(err)
+        }
+    }
 }
 
 pub async fn retry_due_deliveries(

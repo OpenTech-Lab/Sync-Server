@@ -3,15 +3,19 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
+use crate::routes::federation;
+use crate::services::user_service;
 use crate::services::{message_service, push_dispatch_service, redis_pubsub};
 
 // ── Request DTOs ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
-    pub recipient_id: Uuid,
+    pub recipient_id: String,
+    pub recipient_server_url: Option<String>,
     pub content: String,
 }
 
@@ -21,45 +25,81 @@ pub struct ConversationQuery {
     pub limit: Option<u8>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ResolveContactRequest {
+    pub recipient_id: String,
+    pub recipient_server_url: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ResolveContactResponse {
+    pub partner_id: Uuid,
+    pub recipient_id: String,
+    pub recipient_server_url: String,
+    pub display_handle: String,
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
-/// POST /api/messages → 201 Message
-pub async fn send_message(
-    pool: web::Data<Pool>,
-    redis: web::Data<redis::Client>,
-    auth: AuthUser,
-    body: web::Json<SendMessageRequest>,
-) -> Result<HttpResponse, AppError> {
-    let sender_id = auth.0.user_id()?;
+fn instance_host(instance_domain: &str) -> String {
+    if let Ok(parsed) = reqwest::Url::parse(instance_domain) {
+        if let Some(host) = parsed.host_str() {
+            return host.to_lowercase();
+        }
+    }
+    instance_domain
+        .split(':')
+        .next()
+        .unwrap_or(instance_domain)
+        .to_lowercase()
+}
 
-    if body.content.trim().is_empty() {
+fn normalize_server_url(raw: &str) -> Result<reqwest::Url, AppError> {
+    let parsed = reqwest::Url::parse(raw.trim())
+        .map_err(|e| AppError::BadRequest(format!("Invalid recipient_server_url: {e}")))?;
+    if parsed.host_str().is_none() {
         return Err(AppError::BadRequest(
-            "Message content cannot be empty".into(),
+            "recipient_server_url must include host".into(),
         ));
     }
+    Ok(parsed)
+}
 
-    let message =
-        message_service::send_message(&pool, sender_id, body.recipient_id, body.content.clone())?;
+fn canonical_server_url(url: &reqwest::Url) -> String {
+    match url.port() {
+        Some(port) => format!(
+            "{}://{}:{port}",
+            url.scheme(),
+            url.host_str().unwrap_or_default()
+        ),
+        None => format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default()),
+    }
+}
 
-    // Publish to both users' channels for real-time delivery (best-effort).
-    let event = serde_json::json!({ "type": "new_message", "message": &message });
-
-    if let Ok(mut conn) = redis_pubsub::get_async_conn(&redis).await {
-        let _ = redis_pubsub::publish(
-            &mut conn,
-            &redis_pubsub::user_channel(body.recipient_id),
-            &event,
-        )
-        .await;
+async fn publish_new_message_event(
+    redis: &redis::Client,
+    sender_id: Uuid,
+    recipient_id: Uuid,
+    message: &crate::models::message::Message,
+) {
+    let event = serde_json::json!({ "type": "new_message", "message": message });
+    if let Ok(mut conn) = redis_pubsub::get_async_conn(redis).await {
+        let _ = redis_pubsub::publish(&mut conn, &redis_pubsub::user_channel(recipient_id), &event)
+            .await;
         let _ =
             redis_pubsub::publish(&mut conn, &redis_pubsub::user_channel(sender_id), &event).await;
     }
+}
 
-    // Push dispatch is best-effort and asynchronous; REST write succeeds even
-    // if webhook delivery fails.
-    let push_pool = pool.get_ref().clone();
-    let push_sender_id = sender_id;
-    let push_recipient_id = body.recipient_id;
+fn parse_local_uuid(raw: &str) -> Result<Uuid, AppError> {
+    Uuid::parse_str(raw.trim())
+        .map_err(|_| AppError::BadRequest("recipient_id must be a UUID for local chats".into()))
+}
+
+async fn dispatch_push_for_message(pool: &Pool, message: &crate::models::message::Message) {
+    let push_pool = pool.clone();
+    let push_sender_id = message.sender_id;
+    let push_recipient_id = message.recipient_id;
     let push_message_id = message.id;
     let push_content = message.content.clone();
     actix_web::rt::spawn(async move {
@@ -75,6 +115,119 @@ pub async fn send_message(
             tracing::warn!(error = %error, "Push dispatch failed");
         }
     });
+}
+
+pub async fn resolve_contact(
+    cfg: web::Data<Config>,
+    pool: web::Data<Pool>,
+    auth: AuthUser,
+    body: web::Json<ResolveContactRequest>,
+) -> Result<HttpResponse, AppError> {
+    let _ = auth.0.user_id()?;
+
+    let recipient_id = body.recipient_id.trim().to_lowercase();
+    if recipient_id.is_empty() {
+        return Err(AppError::BadRequest("recipient_id cannot be empty".into()));
+    }
+
+    let server_url = normalize_server_url(&body.recipient_server_url)?;
+    let canonical = canonical_server_url(&server_url);
+    let local_instance_host = instance_host(&cfg.instance_domain);
+    let target_host = server_url.host_str().unwrap_or_default().to_lowercase();
+
+    if target_host == local_instance_host {
+        let local_id = parse_local_uuid(&recipient_id)?;
+        let user = user_service::find_by_id(&pool, local_id)?.ok_or(AppError::NotFound)?;
+        return Ok(HttpResponse::Ok().json(ResolveContactResponse {
+            partner_id: user.id,
+            recipient_id,
+            recipient_server_url: canonical,
+            display_handle: user.username,
+        }));
+    }
+
+    let shadow = user_service::ensure_federated_shadow_user(&pool, &recipient_id, &canonical)?;
+    Ok(HttpResponse::Ok().json(ResolveContactResponse {
+        partner_id: shadow.id,
+        recipient_id: recipient_id.clone(),
+        recipient_server_url: canonical,
+        display_handle: format!("{}@{}", recipient_id, target_host),
+    }))
+}
+
+/// POST /api/messages → 201 Message
+pub async fn send_message(
+    cfg: web::Data<Config>,
+    pool: web::Data<Pool>,
+    redis: web::Data<redis::Client>,
+    auth: AuthUser,
+    body: web::Json<SendMessageRequest>,
+) -> Result<HttpResponse, AppError> {
+    let sender_id = auth.0.user_id()?;
+
+    if body.content.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "Message content cannot be empty".into(),
+        ));
+    }
+
+    let content = body.content.trim().to_string();
+    let local_instance_host = instance_host(&cfg.instance_domain);
+    let explicit_remote_target = match body.recipient_server_url.as_ref() {
+        Some(raw) if !raw.trim().is_empty() => {
+            let parsed = normalize_server_url(raw)?;
+            let host = parsed.host_str().unwrap_or_default().to_lowercase();
+            Some((canonical_server_url(&parsed), host))
+        }
+        _ => None,
+    };
+
+    let recipient_id_raw = body.recipient_id.trim().to_lowercase();
+    if recipient_id_raw.is_empty() {
+        return Err(AppError::BadRequest("recipient_id cannot be empty".into()));
+    }
+
+    let recipient_user = if let Some((remote_server_url, remote_host)) = explicit_remote_target {
+        if remote_host == local_instance_host {
+            let local_id = parse_local_uuid(&recipient_id_raw)?;
+            user_service::find_by_id(&pool, local_id)?.ok_or(AppError::NotFound)?
+        } else {
+            user_service::ensure_federated_shadow_user(
+                &pool,
+                &recipient_id_raw,
+                &remote_server_url,
+            )?
+        }
+    } else {
+        let local_id = parse_local_uuid(&recipient_id_raw)?;
+        user_service::find_by_id(&pool, local_id)?.ok_or(AppError::NotFound)?
+    };
+
+    let message = message_service::send_message(&pool, sender_id, recipient_user.id, content)?;
+    publish_new_message_event(&redis, sender_id, recipient_user.id, &message).await;
+
+    let federated_target = user_service::federated_identity_for_user(&recipient_user);
+    if let Some(target) = federated_target {
+        let server_url = body
+            .recipient_server_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("https://{}", target.remote_host));
+
+        federation::deliver_direct_message_to_remote(
+            &cfg,
+            &pool,
+            sender_id,
+            &target.remote_user_id,
+            &server_url,
+            &message.content,
+        )
+        .await?;
+    } else {
+        dispatch_push_for_message(pool.get_ref(), &message).await;
+    }
 
     Ok(HttpResponse::Created().json(message))
 }
@@ -123,6 +276,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg
         // POST /api/messages — registered on the scope root
         .route("", web::post().to(send_message))
+        .route("/resolve-contact", web::post().to(resolve_contact))
         // Literal segment must come before the path-param catch-all
         .route("/unread-counts", web::get().to(unread_counts))
         .route("/{partner_id}", web::get().to(get_conversation))

@@ -45,11 +45,6 @@ mkdir -p "$VERSION_DIR"
 cd "$REPO_ROOT"
 git rev-parse --is-inside-work-tree >/dev/null
 
-if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-  echo "Error: tag $TAG already exists locally." >&2
-  exit 1
-fi
-
 CURRENT_VERSION="$(awk '
   BEGIN{in_pkg=0}
   /^\[package\]$/ {in_pkg=1; next}
@@ -72,17 +67,14 @@ if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
   exit 1
 fi
 
-version_to_int() {
-  local version="$1"
-  local major minor patch
-  IFS='.' read -r major minor patch <<<"$version"
-  printf '%d%03d%03d\n' "$major" "$minor" "$patch"
-}
-
-CURRENT_NUM="$(version_to_int "$CURRENT_VERSION")"
-NEW_NUM="$(version_to_int "$NEW_VERSION")"
-if (( NEW_NUM <= CURRENT_NUM )); then
+LATEST="$(printf '%s\n%s\n' "$CURRENT_VERSION" "$NEW_VERSION" | sort -V | tail -n1)"
+if [[ "$LATEST" != "$NEW_VERSION" || "$NEW_VERSION" == "$CURRENT_VERSION" ]]; then
   echo "Error: new version ($NEW_VERSION) must be greater than current version ($CURRENT_VERSION)." >&2
+  exit 1
+fi
+
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+  echo "Error: tag $TAG already exists locally." >&2
   exit 1
 fi
 

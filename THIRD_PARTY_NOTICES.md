@@ -4,7 +4,7 @@
 
 This project uses an IP-to-country GeoIP database file at:
 
-- `server/data/ip-to-country.mmdb`
+- `data/ip-to-country.mmdb`
 
 License:
 

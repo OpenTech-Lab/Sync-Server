@@ -9,16 +9,11 @@ pub struct PlanetGeoInfo {
     pub country_name: Option<String>,
 }
 
+// iplocate ip-to-country DB uses a flat schema (CC BY-SA 4.0)
 #[derive(Debug, Deserialize)]
 struct MmdbCountryRecord {
-    country: Option<MmdbCountry>,
-    registered_country: Option<MmdbCountry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MmdbCountry {
-    iso_code: Option<String>,
-    names: Option<std::collections::HashMap<String, String>>,
+    country_code: Option<String>,
+    country_name: Option<String>,
 }
 
 fn is_local_ip(ip: IpAddr) -> bool {
@@ -49,15 +44,8 @@ impl PlanetGeoInfo {
                 continue;
             };
 
-            let country = record.country.or(record.registered_country);
-            let country_code = country
-                .as_ref()
-                .and_then(|c| c.iso_code.clone())
-                .map(|v| v.to_uppercase());
-            let country_name = country
-                .as_ref()
-                .and_then(|c| c.names.as_ref())
-                .and_then(|names| names.get("en").cloned());
+            let country_code = record.country_code.map(|v| v.to_uppercase());
+            let country_name = record.country_name;
 
             if country_code.is_some() || country_name.is_some() {
                 return Self {

@@ -67,6 +67,9 @@ futures-util = "0.3"
 # Host spec detection
 sysinfo = "0.32"
 
+# GeoIP country lookup
+maxminddb = "0.24"
+
 [dev-dependencies]
 actix-web = { version = "4", features = ["macros"] }
 

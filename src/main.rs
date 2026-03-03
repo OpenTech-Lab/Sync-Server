@@ -15,6 +15,7 @@ use tracing_actix_web::TracingLogger;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::Config;
+use services::geoip_service::PlanetGeoInfo;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -85,6 +86,10 @@ async fn main() -> std::io::Result<()> {
     let pool_data = web::Data::new(pool);
     let config_data = web::Data::new(config);
     let redis_data = web::Data::new(redis);
+    let geo_info_data = web::Data::new(PlanetGeoInfo::detect(
+        &config_data.instance_domain,
+        std::path::Path::new("data/ip-to-country.mmdb"),
+    ));
 
     HttpServer::new(move || {
         // Allow any localhost origin (Flutter web dev) plus configured origins.
@@ -105,6 +110,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(pool_data.clone())
             .app_data(config_data.clone())
             .app_data(redis_data.clone())
+            .app_data(geo_info_data.clone())
             // ── Health checks (unauthenticated, no rate-limiting) ──────────
             .route("/health", web::get().to(routes::health::liveness))
             .route("/ready", web::get().to(routes::health::readiness))

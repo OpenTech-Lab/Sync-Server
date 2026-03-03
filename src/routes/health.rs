@@ -2,12 +2,18 @@ use actix_web::{web, HttpResponse};
 use diesel::prelude::*;
 use serde::Serialize;
 
+use crate::config::Config;
 use crate::db::Pool;
+use crate::services::geoip_service::PlanetGeoInfo;
 
 #[derive(Serialize)]
 struct LivenessResponse {
     status: &'static str,
     version: &'static str,
+    instance_name: String,
+    instance_domain: String,
+    country_code: Option<String>,
+    country_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -24,10 +30,14 @@ struct ReadinessErr {
 }
 
 /// GET /health — liveness probe (always 200 if the process is up)
-pub async fn liveness() -> HttpResponse {
+pub async fn liveness(cfg: web::Data<Config>, geo: web::Data<PlanetGeoInfo>) -> HttpResponse {
     HttpResponse::Ok().json(LivenessResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
+        instance_name: cfg.instance_name.clone(),
+        instance_domain: cfg.instance_domain.clone(),
+        country_code: geo.country_code.clone(),
+        country_name: geo.country_name.clone(),
     })
 }
 

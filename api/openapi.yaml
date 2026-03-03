@@ -197,6 +197,18 @@ paths:
                   status:
                     type: string
                     example: ok
+                  version:
+                    type: string
+                  instance_name:
+                    type: string
+                  instance_domain:
+                    type: string
+                  country_code:
+                    type: string
+                    nullable: true
+                  country_name:
+                    type: string
+                    nullable: true
 
   /ready:
     get:

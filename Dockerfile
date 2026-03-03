@@ -44,6 +44,7 @@ RUN groupadd --system appuser && useradd --system --gid appuser appuser
 WORKDIR /app
 
 COPY --from=builder /build/target/release/sync-server /app/sync-server
+COPY data /app/data
 
 USER appuser
 

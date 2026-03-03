@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: bump-version.sh x.y.z
+
+Updates server version, writes release note, commits, tags, and pushes.
+Example:
+  ./scripts/bump-version.sh 0.2.0
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ $# -ne 1 ]]; then
+  usage
+  exit 1
+fi
+
+NEW_VERSION="$1"
+if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: version must match x.y.z (example: 1.4.2)." >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CARGO_TOML="$REPO_ROOT/Cargo.toml"
+CARGO_LOCK="$REPO_ROOT/Cargo.lock"
+VERSION_DIR="$SCRIPT_DIR/version"
+TAG="v$NEW_VERSION"
+REMOTE="${REMOTE:-origin}"
+
+if [[ ! -f "$CARGO_TOML" ]]; then
+  echo "Error: Cargo.toml not found at $CARGO_TOML" >&2
+  exit 1
+fi
+
+mkdir -p "$VERSION_DIR"
+
+cd "$REPO_ROOT"
+git rev-parse --is-inside-work-tree >/dev/null
+
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+  echo "Error: tag $TAG already exists locally." >&2
+  exit 1
+fi
+
+CURRENT_VERSION="$(awk '
+  BEGIN{in_pkg=0}
+  /^\[package\]$/ {in_pkg=1; next}
+  /^\[/ && $0 !~ /^\[package\]$/ {in_pkg=0}
+  in_pkg && /^version[[:space:]]*=/ {
+    gsub(/^version[[:space:]]*=[[:space:]]*"/, "", $0)
+    gsub(/".*$/, "", $0)
+    print $0
+    exit
+  }
+' "$CARGO_TOML")"
+
+if [[ -z "$CURRENT_VERSION" ]]; then
+  echo "Error: failed to read current package version from Cargo.toml" >&2
+  exit 1
+fi
+
+if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
+  echo "Error: new version is the same as current version ($CURRENT_VERSION)." >&2
+  exit 1
+fi
+
+version_to_int() {
+  local version="$1"
+  local major minor patch
+  IFS='.' read -r major minor patch <<<"$version"
+  printf '%d%03d%03d\n' "$major" "$minor" "$patch"
+}
+
+CURRENT_NUM="$(version_to_int "$CURRENT_VERSION")"
+NEW_NUM="$(version_to_int "$NEW_VERSION")"
+if (( NEW_NUM <= CURRENT_NUM )); then
+  echo "Error: new version ($NEW_VERSION) must be greater than current version ($CURRENT_VERSION)." >&2
+  exit 1
+fi
+
+tmp_toml="$(mktemp)"
+if ! awk -v ver="$NEW_VERSION" '
+  BEGIN{in_pkg=0; done=0}
+  /^\[package\]$/ {in_pkg=1; print; next}
+  /^\[/ && $0 !~ /^\[package\]$/ {in_pkg=0}
+  in_pkg && !done && /^version[[:space:]]*=/ {
+    print "version = \"" ver "\""
+    done=1
+    next
+  }
+  {print}
+  END {
+    if (!done) {
+      exit 42
+    }
+  }
+' "$CARGO_TOML" >"$tmp_toml"; then
+  rm -f "$tmp_toml"
+  echo "Error: failed to update version in Cargo.toml" >&2
+  exit 1
+fi
+mv "$tmp_toml" "$CARGO_TOML"
+
+if [[ -f "$CARGO_LOCK" ]]; then
+  tmp_lock="$(mktemp)"
+  if ! awk -v ver="$NEW_VERSION" '
+    BEGIN{in_target=0; updated=0}
+    /^\[\[package\]\]$/ {in_target=0}
+    /^name = "sync-server"$/ {in_target=1}
+    in_target && /^version = "/ && !updated {
+      print "version = \"" ver "\""
+      in_target=0
+      updated=1
+      next
+    }
+    {print}
+    END {
+      if (!updated) {
+        exit 43
+      }
+    }
+  ' "$CARGO_LOCK" > "$tmp_lock"; then
+    rm -f "$tmp_lock"
+    echo "Error: failed to update sync-server version in Cargo.lock" >&2
+    exit 1
+  fi
+  mv "$tmp_lock" "$CARGO_LOCK"
+fi
+
+RELEASE_NOTE="$VERSION_DIR/$NEW_VERSION.md"
+if [[ -f "$RELEASE_NOTE" ]]; then
+  echo "Error: release note already exists: $RELEASE_NOTE" >&2
+  exit 1
+fi
+
+cat >"$RELEASE_NOTE" <<EOF
+# Sync Server $NEW_VERSION
+
+- Released on: $(date -u +"%Y-%m-%d")
+- Previous version: $CURRENT_VERSION
+
+## Changes
+- TODO: summarize notable updates.
+EOF
+
+git add -A
+
+if git diff --cached --quiet; then
+  echo "Error: no changes to commit." >&2
+  exit 1
+fi
+
+git commit -m "chore(release): $TAG"
+git tag -a "$TAG" -m "Release $TAG"
+git push "$REMOTE" HEAD
+git push "$REMOTE" "$TAG"
+
+echo "Release complete: $TAG"

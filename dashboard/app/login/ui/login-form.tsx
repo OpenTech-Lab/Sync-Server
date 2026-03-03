@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 export function LoginForm() {
@@ -67,6 +68,14 @@ export function LoginForm() {
           value={password}
         />
       </label>
+      <div className="text-right">
+        <Link
+          className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+          href="/forgot-password"
+        >
+          Forgot password?
+        </Link>
+      </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <button
         className="w-full rounded-md bg-primary px-3 py-2 text-primary-foreground disabled:opacity-70"

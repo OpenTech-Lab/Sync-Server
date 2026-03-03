@@ -7,6 +7,8 @@ type AdminConfig = {
   max_users_override: number | null;
   effective_max_users: number | null;
   notification_webhook_url: string | null;
+  planet_name: string | null;
+  planet_description: string | null;
 };
 
 export default async function ConfigPage() {
@@ -18,7 +20,7 @@ export default async function ConfigPage() {
       <div>
         <h1 className="text-xl font-semibold">Config</h1>
         <p className="text-sm text-muted-foreground">
-          Manage max users and notification webhook settings.
+          Manage planet profile and instance configuration.
         </p>
       </div>
 
@@ -29,6 +31,8 @@ export default async function ConfigPage() {
       <ConfigForm
         maxUsersOverride={config.max_users_override}
         notificationWebhookUrl={config.notification_webhook_url}
+        planetName={config.planet_name}
+        planetDescription={config.planet_description}
       />
     </div>
   );

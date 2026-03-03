@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::db::Pool;
+use crate::services::admin_service;
 use crate::services::geoip_service::PlanetGeoInfo;
 
 #[derive(Serialize)]
@@ -12,6 +13,7 @@ struct LivenessResponse {
     version: &'static str,
     instance_name: String,
     instance_domain: String,
+    instance_description: Option<String>,
     country_code: Option<String>,
     country_name: Option<String>,
 }
@@ -30,12 +32,30 @@ struct ReadinessErr {
 }
 
 /// GET /health — liveness probe (always 200 if the process is up)
-pub async fn liveness(cfg: web::Data<Config>, geo: web::Data<PlanetGeoInfo>) -> HttpResponse {
+pub async fn liveness(
+    cfg: web::Data<Config>,
+    geo: web::Data<PlanetGeoInfo>,
+    pool: web::Data<Pool>,
+) -> HttpResponse {
+    let planet_name = admin_service::get_setting(&pool, admin_service::SETTING_PLANET_NAME)
+        .ok()
+        .flatten()
+        .map(|s| s.value)
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| cfg.instance_name.clone());
+    let planet_description =
+        admin_service::get_setting(&pool, admin_service::SETTING_PLANET_DESCRIPTION)
+            .ok()
+            .flatten()
+            .map(|s| s.value)
+            .filter(|v| !v.trim().is_empty());
+
     HttpResponse::Ok().json(LivenessResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
-        instance_name: cfg.instance_name.clone(),
+        instance_name: planet_name,
         instance_domain: cfg.instance_domain.clone(),
+        instance_description: planet_description,
         country_code: geo.country_code.clone(),
         country_name: geo.country_name.clone(),
     })

@@ -203,6 +203,9 @@ paths:
                     type: string
                   instance_domain:
                     type: string
+                  instance_description:
+                    type: string
+                    nullable: true
                   country_code:
                     type: string
                     nullable: true

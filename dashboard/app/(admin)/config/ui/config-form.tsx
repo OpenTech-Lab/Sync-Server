@@ -6,15 +6,23 @@ import { useRouter } from "next/navigation";
 export function ConfigForm({
   maxUsersOverride,
   notificationWebhookUrl,
+  planetName,
+  planetDescription,
 }: {
   maxUsersOverride: number | null;
   notificationWebhookUrl: string | null;
+  planetName: string | null;
+  planetDescription: string | null;
 }) {
   const router = useRouter();
   const [maxUsers, setMaxUsers] = useState(
     maxUsersOverride ? String(maxUsersOverride) : "",
   );
   const [webhookUrl, setWebhookUrl] = useState(notificationWebhookUrl ?? "");
+  const [nextPlanetName, setNextPlanetName] = useState(planetName ?? "");
+  const [nextPlanetDescription, setNextPlanetDescription] = useState(
+    planetDescription ?? "",
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,6 +34,8 @@ export function ConfigForm({
     const payload = {
       max_users: maxUsers.trim() ? Number(maxUsers.trim()) : null,
       notification_webhook_url: webhookUrl.trim() || null,
+      planet_name: nextPlanetName.trim() || null,
+      planet_description: nextPlanetDescription.trim() || null,
     };
 
     const response = await fetch("/api/admin/config", {
@@ -60,6 +70,28 @@ export function ConfigForm({
           placeholder="Leave blank for env/default"
           type="number"
           value={maxUsers}
+        />
+      </label>
+
+      <label className="block text-sm">
+        <span className="mb-1 block text-muted-foreground">Planet name</span>
+        <input
+          className="w-full rounded-md border px-3 py-2"
+          onChange={(event) => setNextPlanetName(event.target.value)}
+          placeholder="My Planet"
+          type="text"
+          value={nextPlanetName}
+        />
+      </label>
+
+      <label className="block text-sm">
+        <span className="mb-1 block text-muted-foreground">Planet description</span>
+        <textarea
+          className="w-full rounded-md border px-3 py-2"
+          onChange={(event) => setNextPlanetDescription(event.target.value)}
+          placeholder="A short description shown on onboarding"
+          rows={3}
+          value={nextPlanetDescription}
         />
       </label>
 

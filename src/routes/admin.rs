@@ -22,6 +22,8 @@ pub struct AuditQuery {
 pub struct UpdateConfigRequest {
     pub max_users: Option<u32>,
     pub notification_webhook_url: Option<String>,
+    pub planet_name: Option<String>,
+    pub planet_description: Option<String>,
 }
 
 pub async fn overview(pool: web::Data<Pool>, _admin: AdminUser) -> Result<HttpResponse, AppError> {
@@ -119,6 +121,28 @@ pub async fn update_config(
         admin_service::clear_setting(&pool, admin_service::SETTING_WEBHOOK_URL)?;
     }
 
+    if let Some(name) = body.planet_name.as_ref() {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            admin_service::clear_setting(&pool, admin_service::SETTING_PLANET_NAME)?;
+        } else {
+            admin_service::set_setting(&pool, admin_service::SETTING_PLANET_NAME, trimmed)?;
+        }
+    } else {
+        admin_service::clear_setting(&pool, admin_service::SETTING_PLANET_NAME)?;
+    }
+
+    if let Some(description) = body.planet_description.as_ref() {
+        let trimmed = description.trim();
+        if trimmed.is_empty() {
+            admin_service::clear_setting(&pool, admin_service::SETTING_PLANET_DESCRIPTION)?;
+        } else {
+            admin_service::set_setting(&pool, admin_service::SETTING_PLANET_DESCRIPTION, trimmed)?;
+        }
+    } else {
+        admin_service::clear_setting(&pool, admin_service::SETTING_PLANET_DESCRIPTION)?;
+    }
+
     admin_service::append_audit_log(
         &pool,
         Some(admin.0.user_id()?),
@@ -130,7 +154,17 @@ pub async fn update_config(
                 .notification_webhook_url
                 .as_ref()
                 .map(|v| !v.trim().is_empty())
-                .unwrap_or(false)
+                .unwrap_or(false),
+            "planet_name_set": body
+                .planet_name
+                .as_ref()
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false),
+            "planet_description_set": body
+                .planet_description
+                .as_ref()
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false),
         }),
     )?;
 

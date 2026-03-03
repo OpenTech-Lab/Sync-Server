@@ -14,6 +14,8 @@ use crate::schema::users::dsl as user_dsl;
 
 pub const SETTING_MAX_USERS: &str = "max_users";
 pub const SETTING_WEBHOOK_URL: &str = "notification_webhook_url";
+pub const SETTING_PLANET_NAME: &str = "planet_name";
+pub const SETTING_PLANET_DESCRIPTION: &str = "planet_description";
 
 #[derive(Debug, serde::Serialize)]
 pub struct AdminOverview {
@@ -31,6 +33,8 @@ pub struct AdminConfigView {
     pub max_users_override: Option<u32>,
     pub effective_max_users: Option<u32>,
     pub notification_webhook_url: Option<String>,
+    pub planet_name: Option<String>,
+    pub planet_description: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -180,11 +184,15 @@ pub fn read_admin_config(pool: &Pool, config: &Config) -> Result<AdminConfigView
     let max_users_override =
         get_setting(pool, SETTING_MAX_USERS)?.and_then(|s| s.value.parse::<u32>().ok());
     let notification_webhook_url = get_setting(pool, SETTING_WEBHOOK_URL)?.map(|s| s.value);
+    let planet_name = get_setting(pool, SETTING_PLANET_NAME)?.map(|s| s.value);
+    let planet_description = get_setting(pool, SETTING_PLANET_DESCRIPTION)?.map(|s| s.value);
 
     Ok(AdminConfigView {
         max_users_override,
         effective_max_users: max_users_override.or(config.max_users),
         notification_webhook_url,
+        planet_name,
+        planet_description,
     })
 }
 

@@ -1,5 +1,7 @@
 use actix_web::{web, HttpResponse};
+use base64::Engine;
 use diesel::prelude::*;
+use serde::Deserialize;
 use serde::Serialize;
 
 use crate::config::Config;
@@ -14,7 +16,7 @@ struct LivenessResponse {
     instance_name: String,
     instance_domain: String,
     instance_description: Option<String>,
-    instance_image_base64: Option<String>,
+    instance_image_url: Option<String>,
     country_code: Option<String>,
     country_name: Option<String>,
 }
@@ -50,12 +52,12 @@ pub async fn liveness(
             .flatten()
             .map(|s| s.value)
             .filter(|v| !v.trim().is_empty());
-    let planet_image_base64 =
+    let has_planet_image =
         admin_service::get_setting(&pool, admin_service::SETTING_PLANET_IMAGE_BASE64)
             .ok()
             .flatten()
-            .map(|s| s.value)
-            .filter(|v| !v.trim().is_empty());
+            .map(|s| !s.value.trim().is_empty())
+            .unwrap_or(false);
 
     HttpResponse::Ok().json(LivenessResponse {
         status: "ok",
@@ -63,10 +65,65 @@ pub async fn liveness(
         instance_name: planet_name,
         instance_domain: cfg.instance_domain.clone(),
         instance_description: planet_description,
-        instance_image_base64: planet_image_base64,
+        instance_image_url: has_planet_image.then_some("/planet-image".to_string()),
         country_code: geo.country_code.clone(),
         country_name: geo.country_name.clone(),
     })
+}
+
+#[derive(Deserialize)]
+struct ParsedDataUrl {
+    content_type: String,
+    payload_base64: String,
+}
+
+fn parse_image_data_url(raw: &str) -> Option<ParsedDataUrl> {
+    let trimmed = raw.trim();
+    let payload = if let Some(value) = trimmed.strip_prefix("data:image/jpeg;base64,") {
+        ParsedDataUrl {
+            content_type: "image/jpeg".to_string(),
+            payload_base64: value.to_string(),
+        }
+    } else if let Some(value) = trimmed.strip_prefix("data:image/png;base64,") {
+        ParsedDataUrl {
+            content_type: "image/png".to_string(),
+            payload_base64: value.to_string(),
+        }
+    } else if let Some(value) = trimmed.strip_prefix("data:image/webp;base64,") {
+        ParsedDataUrl {
+            content_type: "image/webp".to_string(),
+            payload_base64: value.to_string(),
+        }
+    } else {
+        return None;
+    };
+    Some(payload)
+}
+
+/// GET /planet-image — public planet image for onboarding cards
+pub async fn planet_image(pool: web::Data<Pool>) -> HttpResponse {
+    let Some(image_setting) =
+        admin_service::get_setting(&pool, admin_service::SETTING_PLANET_IMAGE_BASE64)
+            .ok()
+            .flatten()
+            .map(|s| s.value)
+            .filter(|v| !v.trim().is_empty())
+    else {
+        return HttpResponse::NotFound().finish();
+    };
+
+    let Some(parsed) = parse_image_data_url(&image_setting) else {
+        return HttpResponse::NotFound().finish();
+    };
+
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(parsed.payload_base64) else {
+        return HttpResponse::NotFound().finish();
+    };
+
+    HttpResponse::Ok()
+        .insert_header(("Cache-Control", "public, max-age=300"))
+        .content_type(parsed.content_type)
+        .body(bytes)
 }
 
 /// GET /ready — readiness probe (200 only if the DB is reachable)

@@ -12,6 +12,7 @@ pub struct PlanetGeoInfo {
 #[derive(Debug, Deserialize)]
 struct MmdbCountryRecord {
     country: Option<MmdbCountry>,
+    registered_country: Option<MmdbCountry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,11 +31,8 @@ fn is_local_ip(ip: IpAddr) -> bool {
 impl PlanetGeoInfo {
     pub fn detect(instance_domain: &str, mmdb_path: &Path) -> Self {
         let host = normalize_host(instance_domain);
-        let Some(ip) = resolve_host_ip(&host) else {
-            return Self::default();
-        };
-
-        if is_local_ip(ip) {
+        let ips = resolve_host_ips(&host);
+        if ips.is_empty() {
             return Self::default();
         }
 
@@ -42,24 +40,34 @@ impl PlanetGeoInfo {
             return Self::default();
         };
 
-        let Ok(record) = reader.lookup::<MmdbCountryRecord>(ip) else {
-            return Self::default();
-        };
+        for ip in ips {
+            if is_local_ip(ip) {
+                continue;
+            }
 
-        let country = record.country;
-        let country_code = country
-            .as_ref()
-            .and_then(|c| c.iso_code.clone())
-            .map(|v| v.to_uppercase());
-        let country_name = country
-            .as_ref()
-            .and_then(|c| c.names.as_ref())
-            .and_then(|names| names.get("en").cloned());
+            let Ok(record) = reader.lookup::<MmdbCountryRecord>(ip) else {
+                continue;
+            };
 
-        Self {
-            country_code,
-            country_name,
+            let country = record.country.or(record.registered_country);
+            let country_code = country
+                .as_ref()
+                .and_then(|c| c.iso_code.clone())
+                .map(|v| v.to_uppercase());
+            let country_name = country
+                .as_ref()
+                .and_then(|c| c.names.as_ref())
+                .and_then(|names| names.get("en").cloned());
+
+            if country_code.is_some() || country_name.is_some() {
+                return Self {
+                    country_code,
+                    country_name,
+                };
+            }
         }
+
+        Self::default()
     }
 }
 
@@ -77,16 +85,26 @@ fn normalize_host(instance_domain: &str) -> String {
         .to_string()
 }
 
-fn resolve_host_ip(host: &str) -> Option<IpAddr> {
+fn resolve_host_ips(host: &str) -> Vec<IpAddr> {
     if host.is_empty() {
-        return None;
+        return Vec::new();
     }
     if let Ok(ip) = host.parse::<IpAddr>() {
-        return Some(ip);
+        return vec![ip];
     }
-    (host, 0)
+
+    let mut ips = (host, 0)
         .to_socket_addrs()
-        .ok()?
-        .find(|addr| matches!(addr.ip(), IpAddr::V4(_) | IpAddr::V6(_)))
-        .map(|addr| addr.ip())
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|addr| match addr.ip() {
+            IpAddr::V4(v4) => Some(IpAddr::V4(v4)),
+            IpAddr::V6(v6) => Some(IpAddr::V6(v6)),
+        })
+        .collect::<Vec<_>>();
+    // Prefer IPv4 first, then IPv6. Some free GeoIP DBs can be sparse for IPv6.
+    ips.sort_by_key(|ip| if matches!(ip, IpAddr::V4(_)) { 0 } else { 1 });
+    ips.dedup();
+    ips
 }

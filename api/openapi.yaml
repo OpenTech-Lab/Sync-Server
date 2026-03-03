@@ -206,7 +206,7 @@ paths:
                   instance_description:
                     type: string
                     nullable: true
-                  instance_image_base64:
+                  instance_image_url:
                     type: string
                     nullable: true
                   country_code:
@@ -215,6 +215,31 @@ paths:
                   country_name:
                     type: string
                     nullable: true
+
+  /planet-image:
+    get:
+      operationId: healthPlanetImage
+      summary: Public planet image for onboarding
+      security: []
+      tags: [health]
+      responses:
+        '200':
+          description: Planet image bytes
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Planet image is not configured
 
   /ready:
     get:

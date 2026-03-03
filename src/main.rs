@@ -115,6 +115,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(geo_info_data.clone())
             // ── Health checks (unauthenticated, no rate-limiting) ──────────
             .route("/health", web::get().to(routes::health::liveness))
+            .route("/planet-image", web::get().to(routes::health::planet_image))
             .route("/ready", web::get().to(routes::health::readiness))
             // ── Federation routes (ActivityPub / WebFinger) ────────────────
             .configure(routes::federation::configure_public)

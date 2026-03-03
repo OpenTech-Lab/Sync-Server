@@ -42,8 +42,8 @@ export default async function AuditPage() {
                 <td className="px-3 py-2 font-medium">{log.action}</td>
                 <td className="px-3 py-2">{log.target ?? "-"}</td>
                 <td className="px-3 py-2 text-muted-foreground">
-                  <pre className="whitespace-pre-wrap break-words text-xs">
-                    {JSON.stringify(log.details)}
+                  <pre className="max-w-xl whitespace-pre-wrap break-words text-xs">
+                    {JSON.stringify(log.details, null, 2)}
                   </pre>
                 </td>
               </tr>

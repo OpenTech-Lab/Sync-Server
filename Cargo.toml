@@ -70,6 +70,9 @@ sysinfo = "0.32"
 # GeoIP country lookup
 maxminddb = "0.24"
 
+# Image decode/resize/compress for admin planet image uploads
+image = "0.25"
+
 [dev-dependencies]
 actix-web = { version = "4", features = ["macros"] }
 

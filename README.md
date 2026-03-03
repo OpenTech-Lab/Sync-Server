@@ -10,7 +10,85 @@ This repo focuses on the server-side: Rust-based API, Next.js dashboard for admi
 ![Sync](docs/images/sync-banner.png)
 
 ## How to use
-[FINISH THIS BLOCK]
+### 1. Prerequisites
+- Docker Engine + Docker Compose plugin
+- Git
+- (Production) A public domain pointing to your server
+
+### 2. Clone and prepare env
+```bash
+git clone https://github.com/OpenTech-Lab/sync-server.git
+cd sync-server
+cp .env.example .env
+```
+
+Edit `.env` at minimum:
+- `POSTGRES_PASSWORD` (any strong value)
+- `JWT_SECRET` (generate: `openssl rand -hex 32`)
+- `INSTANCE_NAME`
+- `ADMIN_EMAIL`
+- `INSTANCE_DOMAIN`
+  - local/dev HTTP: set to `localhost`
+  - production HTTPS/federation: set to your real public domain
+
+Optional:
+- `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (leave empty in local dev; password-reset emails are skipped)
+
+### 3. Start stack (local/dev)
+```bash
+docker compose up -d
+docker compose ps
+```
+
+Health checks:
+```bash
+curl http://localhost/health
+curl http://localhost/ready
+```
+
+Access:
+- API via nginx: `http://localhost/api/...`
+- Dashboard/Auth: `http://localhost/login` (after login: `/dashboard`)
+
+### 4. Initialize HTTPS
+#### 4.1 Localhost HTTPS (development)
+Set `INSTANCE_DOMAIN=localhost` in `.env`, then run:
+```bash
+bash scripts/init-ssl-dev.sh
+```
+
+Open:
+- `https://localhost`
+- `https://localhost/login`
+
+#### 4.2 Production domain HTTPS (Let's Encrypt)
+When `INSTANCE_DOMAIN` is a real domain with DNS A/AAAA pointing to this host:
+```bash
+bash scripts/init-ssl.sh
+```
+
+Then access:
+- `https://<INSTANCE_DOMAIN>`
+- `https://<INSTANCE_DOMAIN>/login`
+
+### 5. Common operations
+```bash
+# View logs
+docker compose logs -f api
+docker compose logs -f dashboard
+docker compose logs -f nginx
+
+# Restart services
+docker compose restart api dashboard nginx
+
+# Stop stack
+docker compose down
+```
+
+### Notes
+- `scripts/init-ssl-dev.sh` is for local dev (`INSTANCE_DOMAIN=localhost`).
+- `scripts/init-ssl.sh` is for real domains with Let's Encrypt.
+- If `mkcert` is unavailable, `init-ssl-dev.sh` falls back to self-signed `openssl` certs (browser warning expected).
 
 ## Contributing
 

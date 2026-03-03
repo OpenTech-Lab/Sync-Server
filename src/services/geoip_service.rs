@@ -20,12 +20,23 @@ struct MmdbCountry {
     names: Option<std::collections::HashMap<String, String>>,
 }
 
+fn is_local_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_loopback(),
+    }
+}
+
 impl PlanetGeoInfo {
     pub fn detect(instance_domain: &str, mmdb_path: &Path) -> Self {
         let host = normalize_host(instance_domain);
         let Some(ip) = resolve_host_ip(&host) else {
             return Self::default();
         };
+
+        if is_local_ip(ip) {
+            return Self::default();
+        }
 
         let Ok(reader) = Reader::open_readfile(mmdb_path) else {
             return Self::default();

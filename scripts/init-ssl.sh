@@ -129,6 +129,6 @@ docker compose up -d
 echo ""
 echo "✓ Done! SSL is active."
 echo "  https://$INSTANCE_DOMAIN"
-echo "  https://$INSTANCE_DOMAIN/admin"
+echo "  https://$INSTANCE_DOMAIN/login"
 echo ""
 echo "Certs auto-renew every 12 h via the certbot service."

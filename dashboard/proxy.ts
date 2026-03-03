@@ -18,11 +18,8 @@ function secureHeaders(response: NextResponse): NextResponse {
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  const basePath = request.nextUrl.basePath || "";
-  const normalizedPath =
-    basePath && path.startsWith(basePath)
-      ? path.slice(basePath.length) || "/"
-      : path;
+  const basePath = "";
+  const normalizedPath = path;
   const hasSession = Boolean(request.cookies.get(ACCESS_COOKIE)?.value);
   const { needsSetup } = await fetchSetupStatus();
 

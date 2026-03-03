@@ -82,8 +82,8 @@ export function ConfigForm({
       return;
     }
 
-    if (file.size > 256 * 1024) {
-      setUploadError("Image must be 256KB or smaller.");
+    if (file.size > 20 * 1024 * 1024) {
+      setUploadError("Image must be 20MB or smaller.");
       event.target.value = "";
       return;
     }
@@ -181,7 +181,7 @@ export function ConfigForm({
           ) : null}
         </div>
         <p className="text-xs text-muted-foreground">
-          PNG/JPEG/WebP, up to 256KB.
+          PNG/JPEG/WebP, up to 20MB (compressed automatically after upload).
         </p>
         {uploadError ? <p className="text-sm text-destructive">{uploadError}</p> : null}
       </div>

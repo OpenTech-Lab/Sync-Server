@@ -107,6 +107,8 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(cors)
             .wrap(TracingLogger::default())
+            // Allow larger JSON payloads for admin image upload data URLs.
+            .app_data(web::JsonConfig::default().limit(35 * 1024 * 1024))
             .app_data(pool_data.clone())
             .app_data(config_data.clone())
             .app_data(redis_data.clone())

@@ -1,5 +1,8 @@
 use actix_web::{web, HttpResponse};
 use base64::Engine;
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
+use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -28,36 +31,124 @@ pub struct UpdateConfigRequest {
     pub planet_image_base64: Option<String>,
 }
 
-fn validate_planet_image_base64(data_url: &str) -> Result<(), AppError> {
+const MAX_INPUT_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+const MAX_INPUT_IMAGE_ENCODED_CHARS: usize = 28_000_000;
+const MAX_OUTPUT_IMAGE_BYTES: usize = 512 * 1024;
+const MAX_OUTPUT_DIMENSION: u32 = 1024;
+const MIN_OUTPUT_DIMENSION: u32 = 128;
+
+fn parse_supported_image_data_url(data_url: &str) -> Result<(ImageFormat, &str), AppError> {
+    if let Some(payload) = data_url.strip_prefix("data:image/png;base64,") {
+        return Ok((ImageFormat::Png, payload));
+    }
+    if let Some(payload) = data_url.strip_prefix("data:image/jpeg;base64,") {
+        return Ok((ImageFormat::Jpeg, payload));
+    }
+    if let Some(payload) = data_url.strip_prefix("data:image/webp;base64,") {
+        return Ok((ImageFormat::WebP, payload));
+    }
+    Err(AppError::BadRequest(
+        "planet_image_base64 must be a data URL (png/jpeg/webp)".into(),
+    ))
+}
+
+fn flatten_with_white_background(img: &DynamicImage) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut rgb = ImageBuffer::new(width, height);
+
+    for y in 0..height {
+        for x in 0..width {
+            let px = rgba.get_pixel(x, y);
+            let alpha = px[3] as u16;
+            let inv_alpha = 255u16.saturating_sub(alpha);
+
+            let r = ((px[0] as u16 * alpha) + (255u16 * inv_alpha)) / 255u16;
+            let g = ((px[1] as u16 * alpha) + (255u16 * inv_alpha)) / 255u16;
+            let b = ((px[2] as u16 * alpha) + (255u16 * inv_alpha)) / 255u16;
+            rgb.put_pixel(x, y, Rgb([r as u8, g as u8, b as u8]));
+        }
+    }
+
+    rgb
+}
+
+fn encode_jpeg_bytes(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, AppError> {
+    let rgb = flatten_with_white_background(img);
+    let (width, height) = rgb.dimensions();
+    let mut out = Vec::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut out, quality);
+    encoder
+        .encode(&rgb, width, height, image::ExtendedColorType::Rgb8)
+        .map_err(|_| AppError::BadRequest("planet_image_base64 could not be encoded".into()))?;
+    Ok(out)
+}
+
+fn compress_planet_image_to_data_url(data_url: &str) -> Result<String, AppError> {
     let trimmed = data_url.trim();
-    if trimmed.len() > 400_000 {
+    if trimmed.len() > MAX_INPUT_IMAGE_ENCODED_CHARS {
         return Err(AppError::BadRequest(
-            "planet_image_base64 is too large (max ~400KB encoded)".into(),
+            "planet_image_base64 is too large (max 20MB)".into(),
         ));
     }
 
-    let prefix_ok = trimmed.starts_with("data:image/png;base64,")
-        || trimmed.starts_with("data:image/jpeg;base64,")
-        || trimmed.starts_with("data:image/webp;base64,");
-    if !prefix_ok {
-        return Err(AppError::BadRequest(
-            "planet_image_base64 must be a data URL (png/jpeg/webp)".into(),
-        ));
-    }
-
-    let (_, base64_payload) = trimmed
-        .split_once(',')
-        .ok_or_else(|| AppError::BadRequest("planet_image_base64 data URL is malformed".into()))?;
+    let (source_format, base64_payload) = parse_supported_image_data_url(trimmed)?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(base64_payload)
         .map_err(|_| AppError::BadRequest("planet_image_base64 is not valid base64".into()))?;
-    if decoded.len() > 256 * 1024 {
+    if decoded.len() > MAX_INPUT_IMAGE_BYTES {
         return Err(AppError::BadRequest(
-            "planet_image_base64 decoded payload must be <= 256KB".into(),
+            "planet_image_base64 decoded payload must be <= 20MB".into(),
         ));
     }
 
-    Ok(())
+    let decoded_image =
+        image::load_from_memory_with_format(&decoded, source_format).map_err(|_| {
+            AppError::BadRequest("planet_image_base64 could not be decoded as an image".into())
+        })?;
+
+    let mut working = if decoded_image.width().max(decoded_image.height()) > MAX_OUTPUT_DIMENSION {
+        decoded_image.resize(
+            MAX_OUTPUT_DIMENSION,
+            MAX_OUTPUT_DIMENSION,
+            FilterType::Lanczos3,
+        )
+    } else {
+        decoded_image
+    };
+    let quality_steps = [85u8, 75u8, 65u8, 55u8, 45u8];
+    let mut best: Option<Vec<u8>> = None;
+
+    for _ in 0..4 {
+        for quality in quality_steps {
+            let encoded = encode_jpeg_bytes(&working, quality)?;
+            if encoded.len() <= MAX_OUTPUT_IMAGE_BYTES {
+                return Ok(format!(
+                    "data:image/jpeg;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(encoded)
+                ));
+            }
+            match &best {
+                Some(existing) if existing.len() <= encoded.len() => {}
+                _ => best = Some(encoded),
+            }
+        }
+
+        let next_width = (working.width() * 3 / 4).max(MIN_OUTPUT_DIMENSION);
+        let next_height = (working.height() * 3 / 4).max(MIN_OUTPUT_DIMENSION);
+        if next_width == working.width() && next_height == working.height() {
+            break;
+        }
+        working = working.resize(next_width, next_height, FilterType::Triangle);
+    }
+
+    let fallback = best.ok_or_else(|| {
+        AppError::BadRequest("planet_image_base64 could not be compressed".into())
+    })?;
+    Ok(format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(fallback)
+    ))
 }
 
 pub async fn overview(pool: web::Data<Pool>, _admin: AdminUser) -> Result<HttpResponse, AppError> {
@@ -182,8 +273,12 @@ pub async fn update_config(
         if trimmed.is_empty() {
             admin_service::clear_setting(&pool, admin_service::SETTING_PLANET_IMAGE_BASE64)?;
         } else {
-            validate_planet_image_base64(trimmed)?;
-            admin_service::set_setting(&pool, admin_service::SETTING_PLANET_IMAGE_BASE64, trimmed)?;
+            let normalized = compress_planet_image_to_data_url(trimmed)?;
+            admin_service::set_setting(
+                &pool,
+                admin_service::SETTING_PLANET_IMAGE_BASE64,
+                &normalized,
+            )?;
         }
     } else {
         admin_service::clear_setting(&pool, admin_service::SETTING_PLANET_IMAGE_BASE64)?;

@@ -150,6 +150,31 @@ http {
             proxy_send_timeout 3600s;
         }
 
+        # Dashboard Next.js route handlers (session + admin proxy APIs)
+        location ^~ /api/session/ {
+            limit_conn conn_limit 20;
+            limit_req  zone=api_limit burst=30 nodelay;
+            proxy_pass         http://dashboard_backend;
+            proxy_http_version 1.1;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+            proxy_set_header   Connection        "";
+        }
+
+        location ^~ /api/admin/ {
+            limit_conn conn_limit 20;
+            limit_req  zone=api_limit burst=30 nodelay;
+            proxy_pass         http://dashboard_backend;
+            proxy_http_version 1.1;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+            proxy_set_header   Connection        "";
+        }
+
         location /api/ {
             limit_req zone=api_limit burst=60 nodelay;
             limit_req_status 429;
@@ -172,8 +197,12 @@ http {
             access_log off;
         }
 
-        # ── Admin dashboard ───────────────────────────────────────────────────
-        location /admin {
+        # ── Dashboard and auth pages (root paths) ───────────────────────────
+        location = /admin {
+            return 302 /login;
+        }
+
+        location / {
             limit_conn conn_limit 20;
             limit_req  zone=api_limit burst=30 nodelay;
             proxy_pass         http://dashboard_backend;

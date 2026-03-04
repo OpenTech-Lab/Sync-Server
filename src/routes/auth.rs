@@ -5,6 +5,8 @@ use redis::AsyncCommands;
 use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
 use crate::auth::claims::Claims;
@@ -91,7 +93,7 @@ pub struct QrLoginStatusResponse {
     pub expires_in: Option<u64>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct QrLoginSessionRecord {
     secret: String,
     status: String,
@@ -104,6 +106,9 @@ const QR_LOGIN_TTL_SECS: u64 = 180;
 const QR_LOGIN_STATUS_PENDING: &str = "pending";
 const QR_LOGIN_STATUS_APPROVED: &str = "approved";
 const QR_LOGIN_STATUS_EXPIRED: &str = "expired";
+
+static QR_LOGIN_FALLBACK_STORE: OnceLock<Mutex<HashMap<String, (QrLoginSessionRecord, i64)>>> =
+    OnceLock::new();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -122,21 +127,52 @@ fn qr_login_redis_key(session_id: &str) -> String {
     format!("qr_login:{}", session_id)
 }
 
+fn qr_login_fallback_store() -> &'static Mutex<HashMap<String, (QrLoginSessionRecord, i64)>> {
+    QR_LOGIN_FALLBACK_STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn fallback_save_qr_login_record(session_id: &str, record: &QrLoginSessionRecord, ttl_secs: u64) {
+    let expires_at = Utc::now().timestamp() + ttl_secs as i64;
+    if let Ok(mut map) = qr_login_fallback_store().lock() {
+        map.insert(session_id.to_string(), (record.clone(), expires_at));
+    }
+}
+
+fn fallback_load_qr_login_record(session_id: &str) -> Option<QrLoginSessionRecord> {
+    let Ok(mut map) = qr_login_fallback_store().lock() else {
+        return None;
+    };
+    let Some((record, expires_at)) = map.get(session_id).cloned() else {
+        return None;
+    };
+    if Utc::now().timestamp() > expires_at {
+        map.remove(session_id);
+        return None;
+    }
+    Some(record)
+}
+
+fn fallback_delete_qr_login_record(session_id: &str) {
+    if let Ok(mut map) = qr_login_fallback_store().lock() {
+        map.remove(session_id);
+    }
+}
+
 async fn load_qr_login_record(
     redis: &redis::Client,
     session_id: &str,
 ) -> Result<Option<QrLoginSessionRecord>, AppError> {
-    let mut conn = redis
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {}", e)))?;
+    let mut conn = match redis.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(_) => return Ok(fallback_load_qr_login_record(session_id)),
+    };
     let key = qr_login_redis_key(session_id);
-    let raw: Option<String> = conn
-        .get(&key)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis get: {}", e)))?;
+    let raw: Option<String> = match conn.get(&key).await {
+        Ok(raw) => raw,
+        Err(_) => return Ok(fallback_load_qr_login_record(session_id)),
+    };
     let Some(raw) = raw else {
-        return Ok(None);
+        return Ok(fallback_load_qr_login_record(session_id));
     };
     let parsed = serde_json::from_str::<QrLoginSessionRecord>(&raw)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis JSON parse: {}", e)))?;
@@ -151,14 +187,32 @@ async fn save_qr_login_record(
 ) -> Result<(), AppError> {
     let raw = serde_json::to_string(record)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis JSON encode: {}", e)))?;
-    let mut conn = redis
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {}", e)))?;
+    let mut conn = match redis.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(_) => {
+            fallback_save_qr_login_record(session_id, record, ttl_secs);
+            return Ok(());
+        }
+    };
     let key = qr_login_redis_key(session_id);
-    conn.set_ex::<_, _, ()>(&key, raw, ttl_secs)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis set: {}", e)))?;
+    if conn.set_ex::<_, _, ()>(&key, raw, ttl_secs).await.is_err() {
+        fallback_save_qr_login_record(session_id, record, ttl_secs);
+    }
+    Ok(())
+}
+
+async fn delete_qr_login_record(redis: &redis::Client, session_id: &str) -> Result<(), AppError> {
+    let mut conn = match redis.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(_) => {
+            fallback_delete_qr_login_record(session_id);
+            return Ok(());
+        }
+    };
+    let key = qr_login_redis_key(session_id);
+    if conn.del::<_, ()>(&key).await.is_err() {
+        fallback_delete_qr_login_record(session_id);
+    }
     Ok(())
 }
 
@@ -386,14 +440,7 @@ pub async fn poll_qr_login_session(
     }
 
     if record.status == QR_LOGIN_STATUS_APPROVED {
-        let mut conn = redis
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {}", e)))?;
-        let key = qr_login_redis_key(session_id);
-        conn.del::<_, ()>(&key)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis del: {}", e)))?;
+        delete_qr_login_record(&redis, session_id).await?;
     }
 
     Ok(HttpResponse::Ok().json(QrLoginStatusResponse {

@@ -3,11 +3,12 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bump-version.sh x.y.z
+Usage: bump-version.sh [x.y.z]
 
 Updates server version, writes release note, commits, tags, and pushes.
 Example:
   ./scripts/bump-version.sh 0.2.0
+  ./scripts/bump-version.sh   # auto bump patch from latest version
 EOF
 }
 
@@ -16,16 +17,12 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -ne 1 ]]; then
+if [[ $# -gt 1 ]]; then
   usage
   exit 1
 fi
 
-NEW_VERSION="$1"
-if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "Error: version must match x.y.z (example: 1.4.2)." >&2
-  exit 1
-fi
+NEW_VERSION="${1:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -62,14 +59,24 @@ if [[ -z "$CURRENT_VERSION" ]]; then
   exit 1
 fi
 
-if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
-  echo "Error: new version is the same as current version ($CURRENT_VERSION)." >&2
+LATEST_VERSION="$CURRENT_VERSION"
+LATEST_TAG_VERSION="$(git -C "$REPO_ROOT" tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | sort -V | tail -n1)"
+if [[ -n "$LATEST_TAG_VERSION" ]]; then
+  LATEST_VERSION="$(printf '%s\n%s\n' "$LATEST_VERSION" "$LATEST_TAG_VERSION" | sort -V | tail -n1)"
+fi
+
+if [[ -z "$NEW_VERSION" ]]; then
+  IFS='.' read -r latest_major latest_minor latest_patch <<< "$LATEST_VERSION"
+  NEW_VERSION="${latest_major}.${latest_minor}.$((latest_patch + 1))"
+  echo "No version supplied. Auto bumping patch: $LATEST_VERSION -> $NEW_VERSION"
+elif [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: version must match x.y.z (example: 1.4.2)." >&2
   exit 1
 fi
 
-LATEST="$(printf '%s\n%s\n' "$CURRENT_VERSION" "$NEW_VERSION" | sort -V | tail -n1)"
-if [[ "$LATEST" != "$NEW_VERSION" || "$NEW_VERSION" == "$CURRENT_VERSION" ]]; then
-  echo "Error: new version ($NEW_VERSION) must be greater than current version ($CURRENT_VERSION)." >&2
+LATEST="$(printf '%s\n%s\n' "$LATEST_VERSION" "$NEW_VERSION" | sort -V | tail -n1)"
+if [[ "$LATEST" != "$NEW_VERSION" || "$NEW_VERSION" == "$LATEST_VERSION" ]]; then
+  echo "Error: new version ($NEW_VERSION) must be greater than latest version ($LATEST_VERSION)." >&2
   exit 1
 fi
 

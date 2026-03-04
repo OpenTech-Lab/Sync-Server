@@ -27,6 +27,16 @@ pub struct Config {
     pub resend_api_key: Option<String>,
     /// From address used in password-reset emails.
     pub resend_from_email: String,
+    /// Apple Developer Team ID for APNs token-based auth.
+    pub apns_team_id: Option<String>,
+    /// Apple Key ID for APNs token-based auth.
+    pub apns_key_id: Option<String>,
+    /// iOS app bundle identifier used as APNs topic.
+    pub apns_bundle_id: Option<String>,
+    /// APNs private key (.p8) contents (raw PEM, \n-escaped PEM, or base64-encoded PEM).
+    pub apns_private_key_p8: Option<String>,
+    /// Use APNs sandbox endpoint (development builds).
+    pub apns_use_sandbox: bool,
 }
 
 impl Config {
@@ -88,6 +98,21 @@ impl Config {
             resend_api_key: std::env::var("RESEND_API_KEY").ok(),
             resend_from_email: std::env::var("RESEND_FROM_EMAIL")
                 .unwrap_or_else(|_| "noreply@localhost".to_string()),
+            apns_team_id: std::env::var("APNS_TEAM_ID")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
+            apns_key_id: std::env::var("APNS_KEY_ID")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
+            apns_bundle_id: std::env::var("APNS_BUNDLE_ID")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
+            apns_private_key_p8: std::env::var("APNS_PRIVATE_KEY_P8")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
+            apns_use_sandbox: std::env::var("APNS_USE_SANDBOX")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+                .unwrap_or(false),
         })
     }
 

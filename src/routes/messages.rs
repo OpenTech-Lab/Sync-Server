@@ -96,8 +96,13 @@ fn parse_local_uuid(raw: &str) -> Result<Uuid, AppError> {
         .map_err(|_| AppError::BadRequest("recipient_id must be a UUID for local chats".into()))
 }
 
-async fn dispatch_push_for_message(pool: &Pool, message: &crate::models::message::Message) {
+async fn dispatch_push_for_message(
+    pool: &Pool,
+    cfg: &Config,
+    message: &crate::models::message::Message,
+) {
     let push_pool = pool.clone();
+    let push_cfg = cfg.clone();
     let push_sender_id = message.sender_id;
     let push_recipient_id = message.recipient_id;
     let push_message_id = message.id;
@@ -105,6 +110,7 @@ async fn dispatch_push_for_message(pool: &Pool, message: &crate::models::message
     actix_web::rt::spawn(async move {
         if let Err(error) = push_dispatch_service::dispatch_new_message(
             &push_pool,
+            &push_cfg,
             push_recipient_id,
             push_sender_id,
             push_message_id,
@@ -226,7 +232,7 @@ pub async fn send_message(
         )
         .await?;
     } else {
-        dispatch_push_for_message(pool.get_ref(), &message).await;
+        dispatch_push_for_message(pool.get_ref(), cfg.get_ref(), &message).await;
     }
 
     Ok(HttpResponse::Created().json(message))

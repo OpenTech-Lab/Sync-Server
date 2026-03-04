@@ -33,6 +33,12 @@ Edit `.env` at minimum:
 
 Optional:
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (leave empty in local dev; password-reset emails are skipped)
+- APNs direct push (iOS background notifications):
+  - `APNS_TEAM_ID`
+  - `APNS_KEY_ID`
+  - `APNS_BUNDLE_ID` (must match iOS app bundle id)
+  - `APNS_PRIVATE_KEY_P8` (raw PEM with `\n` escapes or base64-encoded PEM)
+  - `APNS_USE_SANDBOX=true` for dev builds, `false` for production/TestFlight
 
 ### 3. Start stack (local/dev)
 ```bash
@@ -89,6 +95,7 @@ docker compose down
 - `scripts/init-ssl-dev.sh` is for local dev (`INSTANCE_DOMAIN=localhost`).
 - `scripts/init-ssl.sh` is for real domains with Let's Encrypt.
 - If `mkcert` is unavailable, `init-ssl-dev.sh` falls back to self-signed `openssl` certs (browser warning expected).
+- For iOS push while app is backgrounded/killed, APNs credentials must be configured and iOS Push Notifications capability must be enabled for the app id/profile.
 
 ## Contributing
 

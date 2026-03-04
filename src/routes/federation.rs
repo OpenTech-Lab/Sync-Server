@@ -512,6 +512,7 @@ pub async fn inbox(
             }
 
             let push_pool = pool.get_ref().clone();
+            let push_cfg = cfg.get_ref().clone();
             let push_sender_id = message.sender_id;
             let push_recipient_id = message.recipient_id;
             let push_message_id = message.id;
@@ -519,6 +520,7 @@ pub async fn inbox(
             actix_web::rt::spawn(async move {
                 if let Err(error) = push_dispatch_service::dispatch_new_message(
                     &push_pool,
+                    &push_cfg,
                     push_recipient_id,
                     push_sender_id,
                     push_message_id,

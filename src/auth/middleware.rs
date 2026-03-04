@@ -1,8 +1,10 @@
 use actix_web::{web, FromRequest, HttpRequest};
-use futures_util::future::{ready, Ready};
+use futures_util::future::LocalBoxFuture;
 
 use crate::config::Config;
+use crate::db::Pool;
 use crate::errors::AppError;
+use crate::services::user_service;
 
 use super::claims::Claims;
 use super::tokens::verify_access_token;
@@ -34,25 +36,46 @@ fn extract_claims(req: &HttpRequest) -> Result<Claims, AppError> {
 
 impl FromRequest for AuthUser {
     type Error = AppError;
-    type Future = Ready<Result<AuthUser, AppError>>;
+    type Future = LocalBoxFuture<'static, Result<AuthUser, AppError>>;
 
     fn from_request(req: &HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
-        ready(extract_claims(req).map(AuthUser))
+        let claims = extract_claims(req);
+        let pool = req.app_data::<web::Data<Pool>>().cloned();
+        Box::pin(async move {
+            let claims = claims?;
+            let user_id = claims.user_id().map_err(|_| AppError::Unauthorized)?;
+            let pool = pool.ok_or(AppError::Unauthorized)?;
+            let user = user_service::find_by_id(&pool, user_id)?;
+            match user {
+                Some(u) if u.is_active => Ok(AuthUser(claims)),
+                _ => Err(AppError::Unauthorized),
+            }
+        })
     }
 }
 
 impl FromRequest for AdminUser {
     type Error = AppError;
-    type Future = Ready<Result<AdminUser, AppError>>;
+    type Future = LocalBoxFuture<'static, Result<AdminUser, AppError>>;
 
     fn from_request(req: &HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
-        let result = extract_claims(req).and_then(|claims| {
-            if claims.role == "admin" {
-                Ok(AdminUser(claims))
-            } else {
-                Err(AppError::Forbidden)
+        let claims = extract_claims(req);
+        let pool = req.app_data::<web::Data<Pool>>().cloned();
+        Box::pin(async move {
+            let claims = claims?;
+            let user_id = claims.user_id().map_err(|_| AppError::Unauthorized)?;
+            let pool = pool.ok_or(AppError::Unauthorized)?;
+            let user = user_service::find_by_id(&pool, user_id)?;
+            match user {
+                Some(u) if u.is_active => {
+                    if claims.role == "admin" {
+                        Ok(AdminUser(claims))
+                    } else {
+                        Err(AppError::Forbidden)
+                    }
+                }
+                _ => Err(AppError::Unauthorized),
             }
-        });
-        ready(result)
+        })
     }
 }

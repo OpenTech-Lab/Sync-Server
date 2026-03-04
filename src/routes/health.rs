@@ -1,5 +1,6 @@
 use actix_web::{web, HttpResponse};
 use base64::Engine;
+use chrono::{DateTime, Utc};
 use diesel::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -22,6 +23,7 @@ struct LivenessResponse {
     linked_planets: Vec<String>,
     country_code: Option<String>,
     country_name: Option<String>,
+    server_created_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize)]
@@ -57,10 +59,15 @@ pub async fn liveness(
                 linked_planets: vec![],
                 country_code: geo.country_code.clone(),
                 country_name: geo.country_name.clone(),
+                server_created_at: None,
             })
         }
     };
     let member_count = user_dsl::users.count().get_result(&mut conn).unwrap_or(0);
+    let server_created_at = user_dsl::users
+        .select(diesel::dsl::min(user_dsl::created_at))
+        .get_result::<Option<DateTime<Utc>>>(&mut conn)
+        .unwrap_or(None);
 
     let planet_name = admin_service::get_setting(&pool, admin_service::SETTING_PLANET_NAME)
         .ok()
@@ -93,6 +100,7 @@ pub async fn liveness(
         linked_planets,
         country_code: geo.country_code.clone(),
         country_name: geo.country_name.clone(),
+        server_created_at,
     })
 }
 

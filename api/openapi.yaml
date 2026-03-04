@@ -215,6 +215,10 @@ paths:
                   country_name:
                     type: string
                     nullable: true
+                  server_created_at:
+                    type: string
+                    format: date-time
+                    nullable: true
 
   /planet-image:
     get:

@@ -1,3 +1,9 @@
+import {
+  Card,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
 
@@ -19,12 +25,14 @@ export default async function PlanetNewsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Planet News</h1>
-        <p className="text-sm text-muted-foreground">
-          Publish markdown news posts for mobile users in the Planet tab.
-        </p>
-      </div>
+      <Card className="py-0">
+        <CardHeader>
+          <CardTitle className="text-2xl">Planet News</CardTitle>
+          <CardDescription>
+            Publish markdown news posts for mobile users in the Planet tab.
+          </CardDescription>
+        </CardHeader>
+      </Card>
       <PlanetNewsForm initialNews={news} />
     </div>
   );

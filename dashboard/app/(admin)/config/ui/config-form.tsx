@@ -4,6 +4,19 @@ import Image from "next/image";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+
 export function ConfigForm({
   maxUsersOverride,
   notificationWebhookUrl,
@@ -122,113 +135,124 @@ export function ConfigForm({
   }
 
   return (
-    <form className="space-y-4 rounded-lg border bg-background p-4" onSubmit={onSubmit}>
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Max users override</span>
-        <input
-          className="w-full rounded-md border px-3 py-2"
-          min={1}
-          onChange={(event) => setMaxUsers(event.target.value)}
-          placeholder="Leave blank for env/default"
-          type="number"
-          value={maxUsers}
-        />
-      </label>
+    <Card className="py-0">
+      <CardHeader>
+        <CardTitle>Settings</CardTitle>
+        <CardDescription>
+          Update instance limits, planet profile, and notification integration.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="space-y-5" onSubmit={onSubmit}>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="max-users-override">Max users override</Label>
+              <Input
+                id="max-users-override"
+                min={1}
+                onChange={(event) => setMaxUsers(event.target.value)}
+                placeholder="Leave blank for env/default"
+                type="number"
+                value={maxUsers}
+              />
+            </div>
 
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Planet name</span>
-        <input
-          className="w-full rounded-md border px-3 py-2"
-          onChange={(event) => setNextPlanetName(event.target.value)}
-          placeholder="My Planet"
-          type="text"
-          value={nextPlanetName}
-        />
-      </label>
+            <div className="space-y-2">
+              <Label htmlFor="webhook-url">Notification webhook URL</Label>
+              <Input
+                id="webhook-url"
+                onChange={(event) => setWebhookUrl(event.target.value)}
+                placeholder="https://..."
+                type="url"
+                value={webhookUrl}
+              />
+            </div>
+          </div>
 
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Planet description</span>
-        <textarea
-          className="w-full rounded-md border px-3 py-2"
-          onChange={(event) => setNextPlanetDescription(event.target.value)}
-          placeholder="A short description shown on onboarding"
-          rows={3}
-          value={nextPlanetDescription}
-        />
-      </label>
-
-      <div className="space-y-2 text-sm">
-        <span className="block text-muted-foreground">Planet image</span>
-        {nextPlanetImageBase64 ? (
-          <div className="rounded-md border p-2">
-            <Image
-              alt="Planet preview"
-              className="h-32 w-32 rounded-md object-cover"
-              height={128}
-              src={nextPlanetImageBase64}
-              unoptimized
-              width={128}
+          <div className="space-y-2">
+            <Label htmlFor="planet-name">Planet name</Label>
+            <Input
+              id="planet-name"
+              onChange={(event) => setNextPlanetName(event.target.value)}
+              placeholder="My Planet"
+              type="text"
+              value={nextPlanetName}
             />
           </div>
-        ) : null}
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            accept="image/png,image/jpeg,image/webp"
-            className="block w-full max-w-sm rounded-md border px-3 py-2 text-sm"
-            onChange={onImageSelected}
-            ref={imageInputRef}
-            type="file"
-          />
-          {nextPlanetImageBase64 ? (
-            <button
-              className="rounded-md border px-3 py-2 text-xs"
-              onClick={clearImage}
-              type="button"
-            >
-              Remove image
-            </button>
+
+          <div className="space-y-2">
+            <Label htmlFor="planet-description">Planet description</Label>
+            <Textarea
+              id="planet-description"
+              onChange={(event) => setNextPlanetDescription(event.target.value)}
+              placeholder="A short description shown on onboarding"
+              rows={3}
+              value={nextPlanetDescription}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="planet-image">Planet image</Label>
+            {nextPlanetImageBase64 ? (
+              <div className="w-fit rounded-md border p-2">
+                <Image
+                  alt="Planet preview"
+                  className="h-32 w-32 rounded-md object-cover"
+                  height={128}
+                  src={nextPlanetImageBase64}
+                  unoptimized
+                  width={128}
+                />
+              </div>
+            ) : null}
+            <Input
+              accept="image/png,image/jpeg,image/webp"
+              id="planet-image"
+              onChange={onImageSelected}
+              ref={imageInputRef}
+              type="file"
+            />
+            <p className="text-xs text-muted-foreground">
+              PNG/JPEG/WebP, up to 20MB (compressed automatically after upload).
+            </p>
+            {nextPlanetImageBase64 ? (
+              <Button onClick={clearImage} type="button" variant="outline">
+                Remove image
+              </Button>
+            ) : null}
+            {uploadError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{uploadError}</AlertDescription>
+              </Alert>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="linked-planets">Connected planet servers</Label>
+            <Textarea
+              className="font-mono text-xs"
+              id="linked-planets"
+              onChange={(event) => setNextLinkedPlanets(event.target.value)}
+              placeholder={"https://planet-a.example.com\nhttps://planet-b.example.com"}
+              rows={4}
+              value={nextLinkedPlanets}
+            />
+            <p className="text-xs text-muted-foreground">
+              One URL per line. These planets will appear in mobile Home.
+            </p>
+          </div>
+
+          {error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           ) : null}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          PNG/JPEG/WebP, up to 20MB (compressed automatically after upload).
-        </p>
-        {uploadError ? <p className="text-sm text-destructive">{uploadError}</p> : null}
-      </div>
 
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Connected planet servers</span>
-        <textarea
-          className="w-full rounded-md border px-3 py-2 font-mono text-xs"
-          onChange={(event) => setNextLinkedPlanets(event.target.value)}
-          placeholder={"https://planet-a.example.com\nhttps://planet-b.example.com"}
-          rows={4}
-          value={nextLinkedPlanets}
-        />
-        <p className="mt-1 text-xs text-muted-foreground">
-          One URL per line. These planets will appear in mobile Home.
-        </p>
-      </label>
-
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Notification webhook URL</span>
-        <input
-          className="w-full rounded-md border px-3 py-2"
-          onChange={(event) => setWebhookUrl(event.target.value)}
-          placeholder="https://..."
-          type="url"
-          value={webhookUrl}
-        />
-      </label>
-
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-
-      <button
-        className="rounded-md bg-primary px-4 py-2 text-primary-foreground disabled:opacity-70"
-        disabled={saving}
-        type="submit"
-      >
-        {saving ? "Saving..." : "Save settings"}
-      </button>
-    </form>
+          <Button disabled={saving} type="submit">
+            {saving ? "Saving..." : "Save settings"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

@@ -1,3 +1,9 @@
+import {
+  Card,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
 
@@ -21,12 +27,14 @@ export default async function StickerManagePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">Sticker Upload & Moderation</h1>
-        <p className="text-sm text-muted-foreground">
-          Upload a sticker and approve/reject pending assets.
-        </p>
-      </div>
+      <Card className="py-0">
+        <CardHeader>
+          <CardTitle className="text-2xl">Sticker Upload & Moderation</CardTitle>
+          <CardDescription>
+            Upload a sticker and approve/reject pending assets.
+          </CardDescription>
+        </CardHeader>
+      </Card>
 
       <StickerUploadForm />
       <StickerModeration stickers={stickers} />

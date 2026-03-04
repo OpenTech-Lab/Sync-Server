@@ -1,7 +1,9 @@
-import Link from "next/link";
-
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { requireAdminSession } from "@/lib/session";
 
+import { AdminNav } from "./ui/admin-nav";
 import { LogoutButton } from "./ui/logout-button";
 
 const navItems = [
@@ -20,32 +22,35 @@ export default async function AdminLayout({
   const { user } = await requireAdminSession();
 
   return (
-    <div className="min-h-screen bg-muted/20">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <p className="text-sm text-muted-foreground">Sync Admin</p>
-            <p className="font-semibold">{user.username}</p>
+    <div className="min-h-screen bg-muted/30">
+      <header className="border-b bg-background/95 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-4">
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">Sync Admin Dashboard</p>
+            <div className="flex items-center gap-2">
+              <p className="text-lg font-semibold leading-none">{user.username}</p>
+              <Badge variant="outline">{user.role}</Badge>
+            </div>
           </div>
           <LogoutButton />
         </div>
       </header>
 
-      <div className="mx-auto grid w-full max-w-6xl grid-cols-1 gap-6 px-6 py-6 md:grid-cols-[220px_1fr]">
-        <aside className="rounded-lg border bg-background p-3">
-          <nav className="flex flex-col gap-1">
-            {navItems.map((item) => (
-              <Link
-                className="rounded-md px-3 py-2 text-sm hover:bg-accent"
-                href={item.href}
-                key={item.href}
-              >
-                {item.label}
-              </Link>
-            ))}
-          </nav>
-        </aside>
-        <main>{children}</main>
+      <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-6 px-6 py-6 md:grid-cols-[240px_1fr]">
+        <Card className="h-fit py-0 md:sticky md:top-6">
+          <CardContent className="p-4">
+            <p className="mb-3 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              Navigation
+            </p>
+            <AdminNav items={navItems} />
+            <Separator className="my-4" />
+            <p className="text-xs text-muted-foreground">
+              Manage users, content, and server operations from one place.
+            </p>
+          </CardContent>
+        </Card>
+
+        <main className="space-y-6">{children}</main>
       </div>
     </div>
   );

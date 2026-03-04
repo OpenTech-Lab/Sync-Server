@@ -1,3 +1,9 @@
+import {
+  Card,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
 
@@ -20,12 +26,14 @@ export default async function StickersPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Stickers</h1>
-        <p className="text-sm text-muted-foreground">
-          Review all sticker assets and current moderation state.
-        </p>
-      </div>
+      <Card className="py-0">
+        <CardHeader>
+          <CardTitle className="text-2xl">Stickers</CardTitle>
+          <CardDescription>
+            Review all sticker assets and current moderation state.
+          </CardDescription>
+        </CardHeader>
+      </Card>
       <StickersTable stickers={stickers} />
     </div>
   );

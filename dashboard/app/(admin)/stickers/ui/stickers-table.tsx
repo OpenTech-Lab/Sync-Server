@@ -1,3 +1,14 @@
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
 type StickerItem = {
   id: string;
   uploader_id: string;
@@ -9,37 +20,49 @@ type StickerItem = {
   created_at: string;
 };
 
+function statusVariant(status: StickerItem["status"]) {
+  if (status === "active") {
+    return "default";
+  }
+  if (status === "rejected") {
+    return "destructive";
+  }
+  return "secondary";
+}
+
 export function StickersTable({ stickers }: { stickers: StickerItem[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border bg-background">
-      <table className="min-w-full text-sm">
-        <thead className="border-b bg-muted/40 text-left">
-          <tr>
-            <th className="px-3 py-2 font-medium">Name</th>
-            <th className="px-3 py-2 font-medium">Group</th>
-            <th className="px-3 py-2 font-medium">MIME</th>
-            <th className="px-3 py-2 font-medium">Size</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">Uploader</th>
-            <th className="px-3 py-2 font-medium">Created</th>
-          </tr>
-        </thead>
-        <tbody>
+    <Card className="overflow-hidden py-0">
+      <Table>
+        <TableHeader className="bg-muted/40">
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Group</TableHead>
+            <TableHead>MIME</TableHead>
+            <TableHead>Size</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Uploader</TableHead>
+            <TableHead>Created</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {stickers.map((sticker) => (
-            <tr className="border-b" key={sticker.id}>
-              <td className="px-3 py-2 font-medium">{sticker.name}</td>
-              <td className="px-3 py-2">{sticker.group_name}</td>
-              <td className="px-3 py-2">{sticker.mime_type}</td>
-              <td className="px-3 py-2">{sticker.size_bytes}</td>
-              <td className="px-3 py-2">{sticker.status}</td>
-              <td className="px-3 py-2 text-muted-foreground">{sticker.uploader_id}</td>
-              <td className="px-3 py-2 text-muted-foreground">
+            <TableRow key={sticker.id}>
+              <TableCell className="font-medium">{sticker.name}</TableCell>
+              <TableCell>{sticker.group_name}</TableCell>
+              <TableCell>{sticker.mime_type}</TableCell>
+              <TableCell>{sticker.size_bytes}</TableCell>
+              <TableCell>
+                <Badge variant={statusVariant(sticker.status)}>{sticker.status}</Badge>
+              </TableCell>
+              <TableCell className="text-muted-foreground">{sticker.uploader_id}</TableCell>
+              <TableCell className="text-muted-foreground">
                 {new Date(sticker.created_at).toLocaleString()}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </TableBody>
+      </Table>
+    </Card>
   );
 }

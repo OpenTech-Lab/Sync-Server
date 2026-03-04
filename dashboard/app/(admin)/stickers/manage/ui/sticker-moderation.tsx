@@ -1,7 +1,24 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 type StickerItem = {
   id: string;
@@ -18,6 +35,11 @@ export function StickerModeration({ stickers }: { stickers: StickerItem[] }) {
   const router = useRouter();
   const [workingId, setWorkingId] = useState<string | null>(null);
 
+  const pendingCount = useMemo(
+    () => stickers.filter((item) => item.status === "pending").length,
+    [stickers],
+  );
+
   async function moderate(stickerId: string, action: "approve" | "reject") {
     setWorkingId(stickerId);
     await fetch(`/api/admin/stickers/${stickerId}/moderate`, {
@@ -30,52 +52,68 @@ export function StickerModeration({ stickers }: { stickers: StickerItem[] }) {
   }
 
   return (
-    <div className="space-y-3 rounded-lg border bg-background p-4">
-      <h2 className="font-medium">Moderation Queue</h2>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead className="border-b text-left">
-            <tr>
-              <th className="px-3 py-2">Sticker</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+    <Card className="py-0">
+      <CardHeader>
+        <CardTitle className="text-lg">Moderation queue ({pendingCount} pending)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Sticker</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {stickers.map((sticker) => (
-              <tr className="border-b" key={sticker.id}>
-                <td className="px-3 py-2">
+              <TableRow key={sticker.id}>
+                <TableCell>
                   <p className="font-medium">{sticker.name}</p>
                   <p className="text-muted-foreground">
                     {sticker.group_name} · {sticker.mime_type}
                   </p>
-                </td>
-                <td className="px-3 py-2">{sticker.status}</td>
-                <td className="px-3 py-2">
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    variant={
+                      sticker.status === "rejected"
+                        ? "destructive"
+                        : sticker.status === "active"
+                          ? "default"
+                          : "secondary"
+                    }
+                  >
+                    {sticker.status}
+                  </Badge>
+                </TableCell>
+                <TableCell>
                   <div className="flex gap-2">
-                    <button
-                      className="rounded-md border px-3 py-1"
+                    <Button
                       disabled={workingId === sticker.id}
                       onClick={() => moderate(sticker.id, "approve")}
+                      size="sm"
                       type="button"
+                      variant="secondary"
                     >
                       Approve
-                    </button>
-                    <button
-                      className="rounded-md border px-3 py-1"
+                    </Button>
+                    <Button
                       disabled={workingId === sticker.id}
                       onClick={() => moderate(sticker.id, "reject")}
+                      size="sm"
                       type="button"
+                      variant="destructive"
                     >
                       Reject
-                    </button>
+                    </Button>
                   </div>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }

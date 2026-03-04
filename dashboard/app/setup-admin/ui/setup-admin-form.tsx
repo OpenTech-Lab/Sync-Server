@@ -3,6 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
 export function SetupAdminForm() {
   const router = useRouter();
   const [username, setUsername] = useState("");
@@ -48,38 +53,40 @@ export function SetupAdminForm() {
   }
 
   return (
-    <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Username</span>
-        <input
+    <form className="space-y-4" onSubmit={onSubmit}>
+      <div className="space-y-2">
+        <Label htmlFor="setup-username">Username</Label>
+        <Input
           aria-label="Username"
           autoComplete="username"
-          className="w-full rounded-md border bg-background px-3 py-2"
+          id="setup-username"
           name="username"
           onChange={(event) => setUsername(event.target.value)}
           required
           value={username}
         />
-      </label>
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Email</span>
-        <input
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="setup-email">Email</Label>
+        <Input
           aria-label="Email"
           autoComplete="email"
-          className="w-full rounded-md border bg-background px-3 py-2"
+          id="setup-email"
           name="email"
           onChange={(event) => setEmail(event.target.value)}
           required
           type="email"
           value={email}
         />
-      </label>
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Password</span>
-        <input
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="setup-password">Password</Label>
+        <Input
           aria-label="Password"
           autoComplete="new-password"
-          className="w-full rounded-md border bg-background px-3 py-2"
+          id="setup-password"
           minLength={8}
           name="password"
           onChange={(event) => setPassword(event.target.value)}
@@ -87,13 +94,14 @@ export function SetupAdminForm() {
           type="password"
           value={password}
         />
-      </label>
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Confirm Password</span>
-        <input
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="setup-confirm-password">Confirm Password</Label>
+        <Input
           aria-label="Confirm Password"
           autoComplete="new-password"
-          className="w-full rounded-md border bg-background px-3 py-2"
+          id="setup-confirm-password"
           minLength={8}
           name="confirm-password"
           onChange={(event) => setConfirmPassword(event.target.value)}
@@ -101,15 +109,17 @@ export function SetupAdminForm() {
           type="password"
           value={confirmPassword}
         />
-      </label>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      <button
-        className="w-full rounded-md bg-primary px-3 py-2 text-primary-foreground disabled:opacity-70"
-        disabled={submitting}
-        type="submit"
-      >
+      </div>
+
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Button className="w-full" disabled={submitting} type="submit">
         {submitting ? "Creating account..." : "Create admin account"}
-      </button>
+      </Button>
     </form>
   );
 }

@@ -3,6 +3,21 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+
 export function StickerUploadForm() {
   const router = useRouter();
   const [groupName, setGroupName] = useState("General");
@@ -57,44 +72,68 @@ export function StickerUploadForm() {
   }
 
   return (
-    <form className="space-y-3 rounded-lg border bg-background p-4" onSubmit={onSubmit}>
-      <h2 className="font-medium">Upload Sticker</h2>
-      <div className="grid gap-3 md:grid-cols-4">
-        <input
-          className="rounded-md border bg-background px-3 py-2"
-          onChange={(e) => setGroupName(e.target.value)}
-          placeholder="Group"
-          type="text"
-          value={groupName}
-        />
-        <input
-          className="rounded-md border bg-background px-3 py-2"
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Sticker name"
-          type="text"
-          value={name}
-        />
-        <select
-          className="rounded-md border bg-background px-3 py-2"
-          onChange={(e) => setMimeType(e.target.value)}
-          value={mimeType}
-        >
-          <option value="image/png">image/png</option>
-          <option value="image/webp">image/webp</option>
-          <option value="image/gif">image/gif</option>
-          <option value="image/jpeg">image/jpeg</option>
-        </select>
-        <input
-          accept="image/png,image/webp,image/gif,image/jpeg"
-          className="rounded-md border bg-background px-3 py-2"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          type="file"
-        />
-      </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <button className="rounded-md border px-4 py-2" disabled={working} type="submit">
-        {working ? "Uploading..." : "Upload"}
-      </button>
-    </form>
+    <Card className="py-0">
+      <CardHeader>
+        <CardTitle className="text-lg">Upload sticker</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form className="space-y-4" onSubmit={onSubmit}>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="space-y-2">
+              <Label htmlFor="sticker-group">Group</Label>
+              <Input
+                id="sticker-group"
+                onChange={(e) => setGroupName(e.target.value)}
+                placeholder="Group"
+                type="text"
+                value={groupName}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sticker-name">Sticker name</Label>
+              <Input
+                id="sticker-name"
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Sticker name"
+                type="text"
+                value={name}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sticker-mime">MIME type</Label>
+              <NativeSelect
+                id="sticker-mime"
+                onChange={(e) => setMimeType(e.target.value)}
+                value={mimeType}
+              >
+                <NativeSelectOption value="image/png">image/png</NativeSelectOption>
+                <NativeSelectOption value="image/webp">image/webp</NativeSelectOption>
+                <NativeSelectOption value="image/gif">image/gif</NativeSelectOption>
+                <NativeSelectOption value="image/jpeg">image/jpeg</NativeSelectOption>
+              </NativeSelect>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sticker-file">File</Label>
+              <Input
+                accept="image/png,image/webp,image/gif,image/jpeg"
+                id="sticker-file"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                type="file"
+              />
+            </div>
+          </div>
+
+          {error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <Button disabled={working} type="submit">
+            {working ? "Uploading..." : "Upload"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

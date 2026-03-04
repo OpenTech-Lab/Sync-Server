@@ -1,3 +1,18 @@
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
 
@@ -16,41 +31,46 @@ export default async function AuditPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Audit logs</h1>
-        <p className="text-sm text-muted-foreground">
-          Recent admin actions and configuration changes.
-        </p>
-      </div>
+      <Card className="py-0">
+        <CardHeader>
+          <CardTitle className="text-2xl">Audit logs</CardTitle>
+          <CardDescription>
+            Recent admin actions and configuration changes.
+          </CardDescription>
+          <div>
+            <Badge variant="outline">Entries: {logs.length}</Badge>
+          </div>
+        </CardHeader>
+      </Card>
 
-      <div className="overflow-x-auto rounded-lg border bg-background">
-        <table className="min-w-full text-sm">
-          <thead className="border-b bg-muted/40 text-left">
-            <tr>
-              <th className="px-3 py-2 font-medium">When</th>
-              <th className="px-3 py-2 font-medium">Action</th>
-              <th className="px-3 py-2 font-medium">Target</th>
-              <th className="px-3 py-2 font-medium">Details</th>
-            </tr>
-          </thead>
-          <tbody>
+      <Card className="overflow-hidden py-0">
+        <Table>
+          <TableHeader className="bg-muted/40">
+            <TableRow>
+              <TableHead>When</TableHead>
+              <TableHead>Action</TableHead>
+              <TableHead>Target</TableHead>
+              <TableHead>Details</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {logs.map((log) => (
-              <tr className="border-b" key={log.id}>
-                <td className="px-3 py-2 text-muted-foreground">
+              <TableRow key={log.id}>
+                <TableCell className="text-muted-foreground">
                   {new Date(log.created_at).toLocaleString()}
-                </td>
-                <td className="px-3 py-2 font-medium">{log.action}</td>
-                <td className="px-3 py-2">{log.target ?? "-"}</td>
-                <td className="px-3 py-2 text-muted-foreground">
-                  <pre className="max-w-xl whitespace-pre-wrap break-words text-xs">
+                </TableCell>
+                <TableCell className="font-medium">{log.action}</TableCell>
+                <TableCell>{log.target ?? "-"}</TableCell>
+                <TableCell className="align-top text-muted-foreground">
+                  <pre className="max-w-xl overflow-auto whitespace-pre-wrap break-words text-xs">
                     {JSON.stringify(log.details, null, 2)}
                   </pre>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </Card>
     </div>
   );
 }

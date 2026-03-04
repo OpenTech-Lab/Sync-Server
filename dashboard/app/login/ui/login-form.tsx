@@ -1,8 +1,13 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export function LoginForm() {
   const router = useRouter();
@@ -41,33 +46,35 @@ export function LoginForm() {
   }
 
   return (
-    <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Email</span>
-        <input
+    <form className="space-y-4" onSubmit={onSubmit}>
+      <div className="space-y-2">
+        <Label htmlFor="login-email">Email</Label>
+        <Input
           aria-label="Email"
           autoComplete="email"
-          className="w-full rounded-md border bg-background px-3 py-2"
+          id="login-email"
           name="email"
           onChange={(event) => setEmail(event.target.value)}
           required
           type="email"
           value={email}
         />
-      </label>
-      <label className="block text-sm">
-        <span className="mb-1 block text-muted-foreground">Password</span>
-        <input
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="login-password">Password</Label>
+        <Input
           aria-label="Password"
           autoComplete="current-password"
-          className="w-full rounded-md border bg-background px-3 py-2"
+          id="login-password"
           name="password"
           onChange={(event) => setPassword(event.target.value)}
           required
           type="password"
           value={password}
         />
-      </label>
+      </div>
+
       <div className="text-right">
         <Link
           className="text-sm text-muted-foreground underline-offset-4 hover:underline"
@@ -76,14 +83,16 @@ export function LoginForm() {
           Forgot password?
         </Link>
       </div>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      <button
-        className="w-full rounded-md bg-primary px-3 py-2 text-primary-foreground disabled:opacity-70"
-        disabled={submitting}
-        type="submit"
-      >
+
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Button className="w-full" disabled={submitting} type="submit">
         {submitting ? "Signing in..." : "Sign in"}
-      </button>
+      </Button>
     </form>
   );
 }

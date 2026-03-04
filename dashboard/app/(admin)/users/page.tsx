@@ -1,3 +1,13 @@
+import { Search } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
 
@@ -27,24 +37,26 @@ export default async function UsersPage({
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Users</h1>
-        <p className="text-sm text-muted-foreground">
-          Search users and apply moderation actions.
-        </p>
-      </div>
+      <Card className="py-0">
+        <CardHeader>
+          <CardTitle className="text-2xl">Users</CardTitle>
+          <CardDescription>
+            Search users and apply moderation actions.
+          </CardDescription>
+        </CardHeader>
+      </Card>
 
-      <form className="flex gap-2" method="get">
-        <input
-          className="w-full rounded-md border bg-background px-3 py-2"
+      <form className="flex flex-col gap-2 sm:flex-row" method="get">
+        <Input
           defaultValue={needle}
           name="q"
           placeholder="Search by username or email"
           type="text"
         />
-        <button className="rounded-md border px-4 py-2" type="submit">
+        <Button type="submit" variant="secondary">
+          <Search className="size-4" />
           Search
-        </button>
+        </Button>
       </form>
 
       <UsersTable users={users} />

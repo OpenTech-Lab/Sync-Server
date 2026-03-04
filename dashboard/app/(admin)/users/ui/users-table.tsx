@@ -3,6 +3,18 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
 type UserItem = {
   id: string;
   username: string;
@@ -26,49 +38,54 @@ export function UsersTable({ users }: { users: UserItem[] }) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border bg-background">
-      <table className="min-w-full text-sm">
-        <thead className="border-b bg-muted/40 text-left">
-          <tr>
-            <th className="px-3 py-2 font-medium">User</th>
-            <th className="px-3 py-2 font-medium">Role</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">Last Seen</th>
-            <th className="px-3 py-2 font-medium">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
+    <Card className="overflow-hidden py-0">
+      <Table>
+        <TableHeader className="bg-muted/40">
+          <TableRow>
+            <TableHead>User</TableHead>
+            <TableHead>Role</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Last seen</TableHead>
+            <TableHead>Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {users.map((user) => (
-            <tr className="border-b" key={user.id}>
-              <td className="px-3 py-2">
+            <TableRow key={user.id}>
+              <TableCell>
                 <p className="font-medium">{user.username}</p>
                 <p className="text-muted-foreground">{user.email}</p>
-              </td>
-              <td className="px-3 py-2">{user.role}</td>
-              <td className="px-3 py-2">{user.is_active ? "active" : "suspended"}</td>
-              <td className="px-3 py-2 text-muted-foreground">
+              </TableCell>
+              <TableCell>{user.role}</TableCell>
+              <TableCell>
+                <Badge variant={user.is_active ? "default" : "secondary"}>
+                  {user.is_active ? "active" : "suspended"}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-muted-foreground">
                 {user.last_seen_at
                   ? new Date(user.last_seen_at).toLocaleString()
                   : "never"}
-              </td>
-              <td className="px-3 py-2">
-                <button
-                  className="rounded-md border px-3 py-1 disabled:opacity-70"
+              </TableCell>
+              <TableCell>
+                <Button
                   disabled={workingUserId === user.id}
                   onClick={() => toggleStatus(user)}
+                  size="sm"
                   type="button"
+                  variant="outline"
                 >
                   {workingUserId === user.id
                     ? "Updating..."
                     : user.is_active
                       ? "Suspend"
                       : "Activate"}
-                </button>
-              </td>
-            </tr>
+                </Button>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </TableBody>
+      </Table>
+    </Card>
   );
 }

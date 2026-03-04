@@ -2,6 +2,18 @@
 
 import { useMemo, useState } from "react";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { renderSimpleMarkdownToHtml } from "@/lib/simple-markdown";
 
 type ServerNewsItem = {
@@ -41,23 +53,28 @@ export function PlanetNewsForm({ initialNews }: { initialNews: ServerNewsItem[] 
     setError(null);
 
     try {
-      const response = await fetch(editingId ? `/api/admin/server-news/${editingId}` : "/api/admin/server-news", {
-        method: editingId ? "PUT" : "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        editingId ? `/api/admin/server-news/${editingId}` : "/api/admin/server-news",
+        {
+          method: editingId ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title,
+            summary: summary.trim() || null,
+            markdown_content: markdown,
+          }),
         },
-        body: JSON.stringify({
-          title,
-          summary: summary.trim() || null,
-          markdown_content: markdown,
-        }),
-      });
+      );
 
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(body?.error ?? (editingId ? "Failed to update post" : "Failed to publish post"));
+        setError(
+          body?.error ?? (editingId ? "Failed to update post" : "Failed to publish post"),
+        );
         return;
       }
 
@@ -116,115 +133,146 @@ export function PlanetNewsForm({ initialNews }: { initialNews: ServerNewsItem[] 
 
   return (
     <div className="space-y-4">
-      <form className="space-y-4 rounded-lg border bg-background p-4" onSubmit={onSubmit}>
-        <label className="block text-sm">
-          <span className="mb-1 block text-muted-foreground">Title</span>
-          <input
-            className="w-full rounded-md border px-3 py-2"
-            maxLength={120}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="Server maintenance window"
-            required
-            type="text"
-            value={title}
-          />
-        </label>
+      <Card className="py-0">
+        <CardHeader>
+          <CardTitle>{isEditing ? "Edit post" : "Publish post"}</CardTitle>
+          <CardDescription>
+            Use markdown for headings, lists, links, and inline code.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form className="space-y-4" onSubmit={onSubmit}>
+            <div className="space-y-2">
+              <Label htmlFor="news-title">Title</Label>
+              <Input
+                id="news-title"
+                maxLength={120}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Server maintenance window"
+                required
+                type="text"
+                value={title}
+              />
+            </div>
 
-        <label className="block text-sm">
-          <span className="mb-1 block text-muted-foreground">Summary</span>
-          <input
-            className="w-full rounded-md border px-3 py-2"
-            maxLength={280}
-            onChange={(event) => setSummary(event.target.value)}
-            placeholder="Optional short summary shown in list cards"
-            type="text"
-            value={summary}
-          />
-        </label>
+            <div className="space-y-2">
+              <Label htmlFor="news-summary">Summary</Label>
+              <Input
+                id="news-summary"
+                maxLength={280}
+                onChange={(event) => setSummary(event.target.value)}
+                placeholder="Optional short summary shown in list cards"
+                type="text"
+                value={summary}
+              />
+            </div>
 
-        <label className="block text-sm">
-          <span className="mb-1 block text-muted-foreground">Markdown content</span>
-          <textarea
-            className="min-h-48 w-full rounded-md border px-3 py-2 font-mono text-xs"
-            maxLength={20000}
-            onChange={(event) => setMarkdown(event.target.value)}
-            required
-            value={markdown}
-          />
-        </label>
+            <div className="space-y-2">
+              <Label htmlFor="news-markdown">Markdown content</Label>
+              <Textarea
+                className="min-h-52 font-mono text-xs"
+                id="news-markdown"
+                maxLength={20000}
+                onChange={(event) => setMarkdown(event.target.value)}
+                required
+                value={markdown}
+              />
+            </div>
 
-        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Preview</p>
-          <article
-            className="space-y-2 text-sm [&_a]:text-primary [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_li]:ml-5 [&_li]:list-disc [&_p]:leading-6"
-            dangerouslySetInnerHTML={{ __html: previewHtml }}
-          />
-        </div>
+            <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                Preview
+              </p>
+              <article
+                className="space-y-2 text-sm [&_a]:text-primary [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_li]:ml-5 [&_li]:list-disc [&_p]:leading-6"
+                dangerouslySetInnerHTML={{ __html: previewHtml }}
+              />
+            </div>
 
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {error ? (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
 
-        <button
-          className="rounded-md bg-primary px-4 py-2 text-primary-foreground disabled:opacity-70"
-          disabled={saving}
-          type="submit"
-        >
-          {saving ? (isEditing ? "Saving..." : "Publishing...") : isEditing ? "Save changes" : "Publish post"}
-        </button>
-        {isEditing ? (
-          <button
-            className="ml-2 rounded-md border px-4 py-2 text-sm disabled:opacity-70"
-            disabled={saving}
-            onClick={() => resetForm()}
-            type="button"
-          >
-            Cancel edit
-          </button>
-        ) : null}
-      </form>
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={saving} type="submit">
+                {saving
+                  ? isEditing
+                    ? "Saving..."
+                    : "Publishing..."
+                  : isEditing
+                    ? "Save changes"
+                    : "Publish post"}
+              </Button>
+              {isEditing ? (
+                <Button
+                  disabled={saving}
+                  onClick={() => resetForm()}
+                  type="button"
+                  variant="outline"
+                >
+                  Cancel edit
+                </Button>
+              ) : null}
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
       <section className="space-y-3">
         <p className="text-sm font-medium">Published posts ({items.length})</p>
         {items.length === 0 ? (
-          <p className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">
-            No server news published yet.
-          </p>
+          <Card className="py-0">
+            <CardContent className="py-4 text-sm text-muted-foreground">
+              No server news published yet.
+            </CardContent>
+          </Card>
         ) : (
           items.map((item) => {
             const html = renderSimpleMarkdownToHtml(item.markdown_content);
             return (
-              <article className="rounded-lg border bg-background p-4" key={item.id}>
-                <div className="mb-2 flex items-start justify-between gap-3">
-                  <h2 className="text-base font-semibold">{item.title}</h2>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(item.published_at).toLocaleString()}
-                    </span>
-                    <button
-                      className="rounded-md border px-2 py-1 text-xs disabled:opacity-70"
-                      disabled={saving || removingId === item.id}
-                      onClick={() => onEdit(item)}
-                      type="button"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="rounded-md border border-destructive/40 px-2 py-1 text-xs text-destructive disabled:opacity-70"
-                      disabled={saving || removingId === item.id}
-                      onClick={() => void onRemove(item)}
-                      type="button"
-                    >
-                      {removingId === item.id ? "Removing..." : "Remove"}
-                    </button>
+              <Card className="py-0" key={item.id}>
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <CardTitle className="text-base">{item.title}</CardTitle>
+                      {item.summary ? (
+                        <CardDescription className="mt-2">{item.summary}</CardDescription>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(item.published_at).toLocaleString()}
+                      </span>
+                      <Button
+                        disabled={saving || removingId === item.id}
+                        onClick={() => onEdit(item)}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        disabled={saving || removingId === item.id}
+                        onClick={() => void onRemove(item)}
+                        size="sm"
+                        type="button"
+                        variant="destructive"
+                      >
+                        {removingId === item.id ? "Removing..." : "Remove"}
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                {item.summary ? (
-                  <p className="mb-3 text-sm text-muted-foreground">{item.summary}</p>
-                ) : null}
-                <article
-                  className="space-y-2 text-sm [&_a]:text-primary [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_li]:ml-5 [&_li]:list-disc [&_p]:leading-6"
-                  dangerouslySetInnerHTML={{ __html: html }}
-                />
-              </article>
+                </CardHeader>
+                <CardContent>
+                  <article
+                    className="space-y-2 text-sm [&_a]:text-primary [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_li]:ml-5 [&_li]:list-disc [&_p]:leading-6"
+                    dangerouslySetInnerHTML={{ __html: html }}
+                  />
+                </CardContent>
+              </Card>
             );
           })
         )}

@@ -2,6 +2,7 @@ use actix_web::{web, HttpResponse};
 use chrono::Utc;
 use diesel::prelude::*;
 use redis::AsyncCommands;
+use ring::digest::{digest, SHA256};
 use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -35,6 +36,11 @@ pub struct RegisterRequest {
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeviceLoginRequest {
+    pub device_auth_pubkey: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -278,6 +284,7 @@ pub async fn register(
         email: body.email.to_lowercase(),
         password_hash: pw_hash,
         role: "user".to_string(),
+        device_auth_pubkey: None,
     };
 
     let max_users = user_service::resolved_max_users(&pool, &config)?;
@@ -346,6 +353,7 @@ pub async fn setup_admin(
         email,
         password_hash: pw_hash,
         role: "admin".to_string(),
+        device_auth_pubkey: None,
     };
 
     let user = user_service::create_user(&pool, new_user, None)?;
@@ -372,6 +380,69 @@ pub async fn login(
         user.id,
         &user.role,
         Uuid::new_v4(), // new family for each login
+        &config,
+    )?;
+
+    Ok(HttpResponse::Ok().json(tokens))
+}
+
+/// POST /auth/device-login → 200 TokenResponse
+///
+/// Authenticates by a device-generated public key. If this key has never been
+/// seen on this server, a new local user is created automatically.
+pub async fn device_login(
+    pool: web::Data<Pool>,
+    config: web::Data<Config>,
+    body: web::Json<DeviceLoginRequest>,
+) -> Result<HttpResponse, AppError> {
+    let pubkey = body.device_auth_pubkey.trim();
+    if pubkey.is_empty() {
+        return Err(AppError::BadRequest(
+            "device_auth_pubkey is required".into(),
+        ));
+    }
+
+    let user = if let Some(existing) = user_service::find_by_device_auth_pubkey(&pool, pubkey)? {
+        if !existing.is_active {
+            return Err(AppError::Unauthorized);
+        }
+        existing
+    } else {
+        let pubkey_hash = hex::encode(digest(&SHA256, pubkey.as_bytes()).as_ref());
+        let username = format!("u{}", &pubkey_hash[..15]);
+        let shadow_email = format!("device+{}@device.sync.invalid", &pubkey_hash[..32]);
+        let password_hash = hash_password(Uuid::new_v4().to_string()).await?;
+
+        let new_user = NewUser {
+            id: Uuid::new_v4(),
+            username,
+            email: shadow_email,
+            password_hash,
+            role: "user".to_string(),
+            device_auth_pubkey: Some(pubkey.to_string()),
+        };
+
+        let max_users = user_service::resolved_max_users(&pool, &config)?;
+        match user_service::create_user(&pool, new_user, max_users) {
+            Ok(created) => created,
+            Err(AppError::Conflict(_)) => {
+                let existing = user_service::find_by_device_auth_pubkey(&pool, pubkey)?
+                    .ok_or(AppError::Unauthorized)?;
+                if !existing.is_active {
+                    return Err(AppError::Unauthorized);
+                }
+                existing
+            }
+            Err(other) => return Err(other),
+        }
+    };
+
+    let mut conn = pool.get()?;
+    let tokens = mint_tokens(
+        &mut conn,
+        user.id,
+        &user.role,
+        Uuid::new_v4(), // new family for each device-login
         &config,
     )?;
 
@@ -772,6 +843,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/setup-admin", web::post().to(setup_admin))
         .route("/register", web::post().to(register))
         .route("/login", web::post().to(login))
+        .route("/device-login", web::post().to(device_login))
         .route("/qr-login/session", web::post().to(create_qr_login_session))
         .route(
             "/qr-login/session/{session_id}",

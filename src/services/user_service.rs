@@ -114,6 +114,19 @@ pub fn find_by_username(pool: &Pool, lookup_username: &str) -> Result<Option<Use
         .map_err(AppError::from)
 }
 
+/// Look up a user by device auth public key.
+pub fn find_by_device_auth_pubkey(
+    pool: &Pool,
+    pubkey_value: &str,
+) -> Result<Option<User>, AppError> {
+    let mut conn = pool.get()?;
+    users
+        .filter(device_auth_pubkey.eq(pubkey_value))
+        .first::<User>(&mut conn)
+        .optional()
+        .map_err(AppError::from)
+}
+
 pub fn ensure_federated_shadow_user(
     pool: &Pool,
     remote_user_id: &str,
@@ -135,6 +148,7 @@ pub fn ensure_federated_shadow_user(
         email: email_value,
         password_hash: FEDERATED_DISABLED_PASSWORD_HASH.to_string(),
         role: "user".to_string(),
+        device_auth_pubkey: None,
     };
 
     match diesel::insert_into(crate::schema::users::table)

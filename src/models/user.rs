@@ -19,6 +19,7 @@ pub struct User {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_seen_at: Option<DateTime<Utc>>,
+    pub device_auth_pubkey: Option<String>,
 }
 
 #[derive(Debug, Insertable)]
@@ -29,6 +30,7 @@ pub struct NewUser {
     pub email: String,
     pub password_hash: String,
     pub role: String,
+    pub device_auth_pubkey: Option<String>,
 }
 
 /// Public representation of a user — never includes the password hash.

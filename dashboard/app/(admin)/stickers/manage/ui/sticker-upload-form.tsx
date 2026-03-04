@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import {
 
 export function StickerUploadForm() {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [groupName, setGroupName] = useState("General");
   const [name, setName] = useState("");
   const [mimeType, setMimeType] = useState("image/png");
@@ -62,6 +63,9 @@ export function StickerUploadForm() {
         setName("");
         setGroupName("General");
         setFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
         router.refresh();
       }
     } catch (e) {
@@ -113,13 +117,27 @@ export function StickerUploadForm() {
               </NativeSelect>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="sticker-file">File</Label>
+              <Label htmlFor="sticker-file-input">File</Label>
               <Input
                 accept="image/png,image/webp,image/gif,image/jpeg"
-                id="sticker-file"
+                className="hidden"
+                id="sticker-file-input"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                ref={fileInputRef}
                 type="file"
               />
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => fileInputRef.current?.click()}
+                  type="button"
+                  variant="outline"
+                >
+                  Browse image
+                </Button>
+                <span className="truncate text-sm text-muted-foreground">
+                  {file ? file.name : "No file selected"}
+                </span>
+              </div>
             </div>
           </div>
 

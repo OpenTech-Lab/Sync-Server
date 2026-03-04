@@ -14,6 +14,7 @@ const MAX_TOTAL_BYTES_PER_USER: i64 = 8 * 1024 * 1024;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct UploadStickerInput {
+    pub group_name: String,
     pub name: String,
     pub mime_type: String,
     pub content_base64: String,
@@ -31,6 +32,12 @@ pub fn upload_sticker(
     if name.is_empty() || name.len() > 80 {
         return Err(AppError::BadRequest(
             "name is required and must be <= 80 chars".into(),
+        ));
+    }
+    let group_name = input.group_name.trim();
+    if group_name.is_empty() || group_name.len() > 40 {
+        return Err(AppError::BadRequest(
+            "group_name is required and must be <= 40 chars".into(),
         ));
     }
 
@@ -85,6 +92,7 @@ pub fn upload_sticker(
     let entity = NewSticker {
         id: Uuid::new_v4(),
         uploader_id,
+        group_name: group_name.to_string(),
         name: name.to_string(),
         mime_type: input.mime_type,
         content_base64: input.content_base64.trim().to_string(),
@@ -113,6 +121,7 @@ pub fn list_stickers(
 
     let rows = if requester_role == "admin" {
         sticker_dsl::stickers
+            .order(sticker_dsl::group_name.asc())
             .order(sticker_dsl::created_at.desc())
             .select(Sticker::as_select())
             .load::<Sticker>(&mut conn)?
@@ -123,6 +132,7 @@ pub fn list_stickers(
                     .eq("active")
                     .or(sticker_dsl::uploader_id.eq(requester_id)),
             )
+            .order(sticker_dsl::group_name.asc())
             .order(sticker_dsl::created_at.desc())
             .select(Sticker::as_select())
             .load::<Sticker>(&mut conn)?

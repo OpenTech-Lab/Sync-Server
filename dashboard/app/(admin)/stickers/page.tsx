@@ -6,6 +6,7 @@ import { StickersTable } from "./ui/stickers-table";
 type StickerItem = {
   id: string;
   uploader_id: string;
+  group_name: string;
   name: string;
   mime_type: string;
   size_bytes: number;

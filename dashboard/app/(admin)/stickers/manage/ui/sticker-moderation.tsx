@@ -6,6 +6,7 @@ import { useState } from "react";
 type StickerItem = {
   id: string;
   uploader_id: string;
+  group_name: string;
   name: string;
   mime_type: string;
   size_bytes: number;
@@ -45,7 +46,9 @@ export function StickerModeration({ stickers }: { stickers: StickerItem[] }) {
               <tr className="border-b" key={sticker.id}>
                 <td className="px-3 py-2">
                   <p className="font-medium">{sticker.name}</p>
-                  <p className="text-muted-foreground">{sticker.mime_type}</p>
+                  <p className="text-muted-foreground">
+                    {sticker.group_name} · {sticker.mime_type}
+                  </p>
                 </td>
                 <td className="px-3 py-2">{sticker.status}</td>
                 <td className="px-3 py-2">

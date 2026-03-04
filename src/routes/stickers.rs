@@ -10,6 +10,7 @@ use crate::services::sticker_service;
 
 #[derive(Debug, Deserialize)]
 pub struct UploadStickerRequest {
+    pub group_name: String,
     pub name: String,
     pub mime_type: String,
     pub content_base64: String,
@@ -31,6 +32,7 @@ pub async fn upload(
         requester_id,
         &auth.0.role,
         sticker_service::UploadStickerInput {
+            group_name: body.group_name.clone(),
             name: body.name.clone(),
             mime_type: body.mime_type.clone(),
             content_base64: body.content_base64.clone(),
@@ -43,6 +45,7 @@ pub async fn upload(
         "sticker.upload",
         Some(&created.id.to_string()),
         serde_json::json!({
+            "group_name": created.group_name,
             "mime_type": created.mime_type,
             "size_bytes": created.size_bytes,
             "status": created.status,

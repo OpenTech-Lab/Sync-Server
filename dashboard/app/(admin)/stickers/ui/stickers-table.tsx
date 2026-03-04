@@ -1,6 +1,7 @@
 type StickerItem = {
   id: string;
   uploader_id: string;
+  group_name: string;
   name: string;
   mime_type: string;
   size_bytes: number;
@@ -15,6 +16,7 @@ export function StickersTable({ stickers }: { stickers: StickerItem[] }) {
         <thead className="border-b bg-muted/40 text-left">
           <tr>
             <th className="px-3 py-2 font-medium">Name</th>
+            <th className="px-3 py-2 font-medium">Group</th>
             <th className="px-3 py-2 font-medium">MIME</th>
             <th className="px-3 py-2 font-medium">Size</th>
             <th className="px-3 py-2 font-medium">Status</th>
@@ -26,6 +28,7 @@ export function StickersTable({ stickers }: { stickers: StickerItem[] }) {
           {stickers.map((sticker) => (
             <tr className="border-b" key={sticker.id}>
               <td className="px-3 py-2 font-medium">{sticker.name}</td>
+              <td className="px-3 py-2">{sticker.group_name}</td>
               <td className="px-3 py-2">{sticker.mime_type}</td>
               <td className="px-3 py-2">{sticker.size_bytes}</td>
               <td className="px-3 py-2">{sticker.status}</td>

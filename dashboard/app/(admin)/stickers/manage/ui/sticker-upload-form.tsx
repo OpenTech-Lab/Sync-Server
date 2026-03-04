@@ -5,6 +5,7 @@ import { useState } from "react";
 
 export function StickerUploadForm() {
   const router = useRouter();
+  const [groupName, setGroupName] = useState("General");
   const [name, setName] = useState("");
   const [mimeType, setMimeType] = useState("image/png");
   const [file, setFile] = useState<File | null>(null);
@@ -33,6 +34,7 @@ export function StickerUploadForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          group_name: groupName,
           name: name || file.name,
           mime_type: mimeType,
           content_base64: contentBase64,
@@ -43,6 +45,7 @@ export function StickerUploadForm() {
         setError("Upload failed.");
       } else {
         setName("");
+        setGroupName("General");
         setFile(null);
         router.refresh();
       }
@@ -56,7 +59,14 @@ export function StickerUploadForm() {
   return (
     <form className="space-y-3 rounded-lg border bg-background p-4" onSubmit={onSubmit}>
       <h2 className="font-medium">Upload Sticker</h2>
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-4">
+        <input
+          className="rounded-md border bg-background px-3 py-2"
+          onChange={(e) => setGroupName(e.target.value)}
+          placeholder="Group"
+          type="text"
+          value={groupName}
+        />
         <input
           className="rounded-md border bg-background px-3 py-2"
           onChange={(e) => setName(e.target.value)}

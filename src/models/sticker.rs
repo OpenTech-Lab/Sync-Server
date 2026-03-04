@@ -10,6 +10,7 @@ use crate::schema::stickers;
 pub struct Sticker {
     pub id: Uuid,
     pub uploader_id: Uuid,
+    pub group_name: String,
     pub name: String,
     pub mime_type: String,
     pub content_base64: String,
@@ -24,6 +25,7 @@ pub struct Sticker {
 pub struct NewSticker {
     pub id: Uuid,
     pub uploader_id: Uuid,
+    pub group_name: String,
     pub name: String,
     pub mime_type: String,
     pub content_base64: String,
@@ -35,6 +37,7 @@ pub struct NewSticker {
 pub struct StickerListItem {
     pub id: Uuid,
     pub uploader_id: Uuid,
+    pub group_name: String,
     pub name: String,
     pub mime_type: String,
     pub size_bytes: i32,
@@ -46,6 +49,7 @@ pub struct StickerListItem {
 pub struct StickerDetail {
     pub id: Uuid,
     pub uploader_id: Uuid,
+    pub group_name: String,
     pub name: String,
     pub mime_type: String,
     pub size_bytes: i32,
@@ -59,6 +63,7 @@ impl From<Sticker> for StickerListItem {
         Self {
             id: value.id,
             uploader_id: value.uploader_id,
+            group_name: value.group_name,
             name: value.name,
             mime_type: value.mime_type,
             size_bytes: value.size_bytes,
@@ -73,6 +78,7 @@ impl From<Sticker> for StickerDetail {
         Self {
             id: value.id,
             uploader_id: value.uploader_id,
+            group_name: value.group_name,
             name: value.name,
             mime_type: value.mime_type,
             size_bytes: value.size_bytes,

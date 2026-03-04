@@ -61,6 +61,7 @@ async fn upload_requires_authentication() {
     let res = client
         .post(format!("{base}/api/stickers/upload"))
         .json(&json!({
+            "group_name": "General",
             "name": "smile",
             "mime_type": "image/png",
             "content_base64": "aGVsbG8=",
@@ -82,6 +83,7 @@ async fn upload_validation_rejects_invalid_mime_type() {
         .post(format!("{base}/api/stickers/upload"))
         .bearer_auth(token)
         .json(&json!({
+            "group_name": "General",
             "name": "bad",
             "mime_type": "text/plain",
             "content_base64": "aGVsbG8=",
@@ -105,6 +107,7 @@ async fn sticker_sync_flow_list_then_get() {
         .post(format!("{base}/api/stickers/upload"))
         .bearer_auth(&token_a)
         .json(&json!({
+            "group_name": "Animals",
             "name": "local-pending",
             "mime_type": "image/png",
             "content_base64": "aGVsbG8=",
@@ -117,6 +120,7 @@ async fn sticker_sync_flow_list_then_get() {
         .expect("upload json invalid");
 
     let sticker_id = created["id"].as_str().expect("missing sticker id");
+    assert_eq!(created["group_name"], "Animals");
 
     let list_a: Value = client
         .get(format!("{base}/api/stickers/list"))
@@ -159,6 +163,7 @@ async fn non_admin_cannot_moderate_sticker() {
         .post(format!("{base}/api/stickers/upload"))
         .bearer_auth(&token_a)
         .json(&json!({
+            "group_name": "General",
             "name": "needs-review",
             "mime_type": "image/png",
             "content_base64": "aGVsbG8=",

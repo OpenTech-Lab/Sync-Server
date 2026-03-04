@@ -24,6 +24,7 @@ describe("StickerModeration", () => {
           {
             id: "sticker-1",
             uploader_id: "user-1",
+            group_name: "Default",
             name: "smile",
             mime_type: "image/png",
             size_bytes: 16,

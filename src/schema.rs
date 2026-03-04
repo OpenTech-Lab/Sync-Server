@@ -42,6 +42,7 @@ diesel::table! {
     stickers (id) {
         id -> Uuid,
         uploader_id -> Uuid,
+        group_name -> Text,
         name -> Text,
         mime_type -> Text,
         content_base64 -> Text,

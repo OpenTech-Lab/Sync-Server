@@ -29,7 +29,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CARGO_TOML="$REPO_ROOT/Cargo.toml"
 CARGO_LOCK="$REPO_ROOT/Cargo.lock"
 VERSION_DIR="$SCRIPT_DIR/version"
-TAG="v$NEW_VERSION"
 REMOTE="${REMOTE:-origin}"
 
 if [[ ! -f "$CARGO_TOML" ]]; then
@@ -79,6 +78,8 @@ if [[ "$LATEST" != "$NEW_VERSION" || "$NEW_VERSION" == "$LATEST_VERSION" ]]; the
   echo "Error: new version ($NEW_VERSION) must be greater than latest version ($LATEST_VERSION)." >&2
   exit 1
 fi
+
+TAG="v$NEW_VERSION"
 
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
   echo "Error: tag $TAG already exists locally." >&2

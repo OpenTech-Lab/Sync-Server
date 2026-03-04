@@ -102,7 +102,7 @@ struct QrLoginSessionRecord {
     expires_in: Option<u64>,
 }
 
-const QR_LOGIN_TTL_SECS: u64 = 180;
+const QR_LOGIN_TTL_SECS: u64 = 30;
 const QR_LOGIN_STATUS_PENDING: &str = "pending";
 const QR_LOGIN_STATUS_APPROVED: &str = "approved";
 const QR_LOGIN_STATUS_EXPIRED: &str = "expired";

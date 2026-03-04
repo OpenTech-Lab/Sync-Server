@@ -10,7 +10,8 @@ use crate::auth::AdminUser;
 use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
-use crate::services::admin_service;
+use crate::models::server_news::ServerNews;
+use crate::services::{admin_service, server_news_service};
 
 #[derive(Debug, Deserialize)]
 pub struct UserQuery {
@@ -30,6 +31,41 @@ pub struct UpdateConfigRequest {
     pub planet_description: Option<String>,
     pub planet_image_base64: Option<String>,
     pub linked_planets: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListServerNewsQuery {
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateServerNewsRequest {
+    pub title: String,
+    pub summary: Option<String>,
+    pub markdown_content: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct AdminServerNewsView {
+    pub id: Uuid,
+    pub title: String,
+    pub summary: Option<String>,
+    pub markdown_content: String,
+    pub created_by: Option<Uuid>,
+    pub published_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+fn to_admin_server_news_view(item: ServerNews) -> AdminServerNewsView {
+    AdminServerNewsView {
+        id: item.id,
+        title: item.title,
+        summary: item.summary,
+        markdown_content: item.markdown_content,
+        created_by: item.created_by,
+        published_at: item.published_at,
+        updated_at: item.updated_at,
+    }
 }
 
 const MAX_INPUT_IMAGE_BYTES: usize = 20 * 1024 * 1024;
@@ -196,6 +232,47 @@ pub async fn activate_user(
         serde_json::json!({ "is_active": true }),
     )?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "status": "active" })))
+}
+
+pub async fn list_server_news(
+    pool: web::Data<Pool>,
+    _admin: AdminUser,
+    query: web::Query<ListServerNewsQuery>,
+) -> Result<HttpResponse, AppError> {
+    let items = server_news_service::list_news(&pool, query.limit.unwrap_or(50))?;
+    Ok(HttpResponse::Ok().json(
+        items
+            .into_iter()
+            .map(to_admin_server_news_view)
+            .collect::<Vec<_>>(),
+    ))
+}
+
+pub async fn create_server_news(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    body: web::Json<CreateServerNewsRequest>,
+) -> Result<HttpResponse, AppError> {
+    let admin_user_id = admin.0.user_id()?;
+    let created = server_news_service::create_news(
+        &pool,
+        admin_user_id,
+        &body.title,
+        body.summary.as_deref(),
+        &body.markdown_content,
+    )?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_user_id),
+        "server_news.create",
+        Some(&created.id.to_string()),
+        serde_json::json!({
+            "title": created.title,
+            "summary_set": created.summary.as_ref().map(|v| !v.trim().is_empty()).unwrap_or(false),
+            "markdown_len": created.markdown_content.len(),
+        }),
+    )?;
+    Ok(HttpResponse::Created().json(to_admin_server_news_view(created)))
 }
 
 pub async fn get_config(
@@ -365,6 +442,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/users", web::get().to(list_users))
         .route("/users/{user_id}/suspend", web::post().to(suspend_user))
         .route("/users/{user_id}/activate", web::post().to(activate_user))
+        .route("/server-news", web::get().to(list_server_news))
+        .route("/server-news", web::post().to(create_server_news))
         .route("/config", web::get().to(get_config))
         .route("/config", web::put().to(update_config))
         .route("/audit-logs", web::get().to(audit_logs));

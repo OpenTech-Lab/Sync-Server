@@ -10,6 +10,7 @@ const navItems = [
   { href: "/stickers", label: "Stickers" },
   { href: "/stickers/manage", label: "Sticker Moderation" },
   { href: "/config", label: "Config" },
+  { href: "/planet-news", label: "Planet News" },
   { href: "/audit", label: "Audit Logs" },
 ];
 

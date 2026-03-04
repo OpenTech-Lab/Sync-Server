@@ -4,6 +4,7 @@ pub mod backup;
 pub mod federation;
 pub mod health;
 pub mod messages;
+pub mod planet_news;
 pub mod profile;
 pub mod push;
 pub mod stickers;

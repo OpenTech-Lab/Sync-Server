@@ -4,6 +4,7 @@ pub mod encrypted_backup;
 pub mod federation;
 pub mod message;
 pub mod refresh_token;
+pub mod server_news;
 pub mod sticker;
 pub mod user;
 
@@ -23,6 +24,8 @@ pub use federation::{
 pub use message::{Message, NewMessage};
 #[allow(unused_imports)]
 pub use refresh_token::{NewRefreshToken, RefreshToken};
+#[allow(unused_imports)]
+pub use server_news::{NewServerNews, ServerNews};
 #[allow(unused_imports)]
 pub use sticker::{NewSticker, Sticker, StickerDetail, StickerListItem};
 #[allow(unused_imports)]

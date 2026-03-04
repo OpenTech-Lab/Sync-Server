@@ -147,6 +147,11 @@ async fn main() -> std::io::Result<()> {
                     .configure(routes::stickers::configure),
             )
             .service(
+                web::scope("/api/planet-news")
+                    .wrap(Governor::new(&api_governor))
+                    .configure(routes::planet_news::configure),
+            )
+            .service(
                 web::scope("/api/profile")
                     .wrap(Governor::new(&api_governor))
                     .configure(routes::profile::configure),

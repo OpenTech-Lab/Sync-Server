@@ -7,5 +7,6 @@ pub mod message_service;
 pub mod push_dispatch_service;
 pub mod push_token_service;
 pub mod redis_pubsub;
+pub mod server_news_service;
 pub mod sticker_service;
 pub mod user_service;

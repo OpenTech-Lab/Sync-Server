@@ -14,6 +14,20 @@ diesel::table! {
 diesel::table! {
     use diesel::sql_types::*;
 
+    server_news (id) {
+        id -> Uuid,
+        title -> Text,
+        summary -> Nullable<Text>,
+        markdown_content -> Text,
+        created_by -> Nullable<Uuid>,
+        published_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
     encrypted_backups (user_id) {
         user_id -> Uuid,
         encrypted_blob -> Text,
@@ -177,6 +191,7 @@ diesel::joinable!(admin_audit_logs -> users (actor_user_id));
 diesel::joinable!(stickers -> users (uploader_id));
 diesel::joinable!(device_push_tokens -> users (user_id));
 diesel::joinable!(encrypted_backups -> users (user_id));
+diesel::joinable!(server_news -> users (created_by));
 
 diesel::allow_tables_to_appear_in_same_query!(
     admin_settings,
@@ -191,4 +206,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     federation_deliveries,
     federation_remote_messages,
     stickers,
+    server_news,
 );

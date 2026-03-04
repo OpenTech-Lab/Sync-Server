@@ -18,6 +18,8 @@ pub struct UpdateProfileRequest {
     pub username: Option<String>,
     #[serde(default)]
     pub avatar_base64: Option<Option<String>>,
+    #[serde(default)]
+    pub message_public_key: Option<Option<String>>,
 }
 
 fn is_valid_username(value: &str) -> bool {
@@ -39,6 +41,18 @@ fn validate_avatar_base64(avatar_base64: &str) -> Result<(), AppError> {
         return Err(AppError::BadRequest("avatar image must be <= 256KB".into()));
     }
 
+    Ok(())
+}
+
+fn validate_message_public_key(message_public_key: &str) -> Result<(), AppError> {
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(message_public_key.trim())
+        .map_err(|_| AppError::BadRequest("message_public_key must be valid base64".into()))?;
+    if decoded.len() != 32 {
+        return Err(AppError::BadRequest(
+            "message_public_key must decode to 32 bytes".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -69,12 +83,16 @@ pub async fn update_me(
     if let Some(Some(ref avatar)) = body.avatar_base64 {
         validate_avatar_base64(avatar)?;
     }
+    if let Some(Some(ref message_public_key)) = body.message_public_key {
+        validate_message_public_key(message_public_key)?;
+    }
 
     let updated = user_service::update_profile(
         &pool,
         auth.0.user_id()?,
         next_username,
         body.avatar_base64.clone(),
+        body.message_public_key.clone(),
     )?;
 
     Ok(HttpResponse::Ok().json(UserProfilePublic::from(updated)))

@@ -14,6 +14,17 @@ diesel::table! {
 diesel::table! {
     use diesel::sql_types::*;
 
+    encrypted_backups (user_id) {
+        user_id -> Uuid,
+        encrypted_blob -> Text,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
     stickers (id) {
         id -> Uuid,
         uploader_id -> Uuid,
@@ -49,6 +60,7 @@ diesel::table! {
         email -> Text,
         password_hash -> Text,
         avatar_base64 -> Nullable<Text>,
+        message_public_key -> Nullable<Text>,
         role -> Text,
         is_active -> Bool,
         created_at -> Timestamptz,
@@ -164,11 +176,13 @@ diesel::joinable!(messages -> users (sender_id));
 diesel::joinable!(admin_audit_logs -> users (actor_user_id));
 diesel::joinable!(stickers -> users (uploader_id));
 diesel::joinable!(device_push_tokens -> users (user_id));
+diesel::joinable!(encrypted_backups -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     admin_settings,
     admin_audit_logs,
     users,
+    encrypted_backups,
     device_push_tokens,
     refresh_tokens,
     messages,

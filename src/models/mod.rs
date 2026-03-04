@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod device_push_token;
+pub mod encrypted_backup;
 pub mod federation;
 pub mod message;
 pub mod refresh_token;
@@ -10,6 +11,8 @@ pub mod user;
 pub use admin::{AdminAuditLog, AdminSetting, NewAdminAuditLog, NewAdminSetting};
 #[allow(unused_imports)]
 pub use device_push_token::{DevicePushToken, NewDevicePushToken};
+#[allow(unused_imports)]
+pub use encrypted_backup::{EncryptedBackup, NewEncryptedBackup};
 #[allow(unused_imports)]
 pub use federation::{
     FederationActorKey, FederationDelivery, FederationInboxActivity, FederationRemoteMessage,

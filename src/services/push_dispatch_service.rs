@@ -81,6 +81,9 @@ pub async fn dispatch_new_message(
 }
 
 fn truncate_preview(content: &str, max_chars: usize) -> String {
+    if is_encrypted_payload(content) {
+        return "Sent you an encrypted message".to_string();
+    }
     let trimmed = content.trim();
     if trimmed.chars().count() <= max_chars {
         return trimmed.to_string();
@@ -92,4 +95,20 @@ fn truncate_preview(content: &str, max_chars: usize) -> String {
     }
     out.push_str("...");
     out
+}
+
+fn is_encrypted_payload(content: &str) -> bool {
+    let trimmed = content.trim();
+    if !trimmed.starts_with('{') {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return false;
+    };
+    let Some(map) = value.as_object() else {
+        return false;
+    };
+    map.get("v").and_then(|v| v.as_i64()) == Some(1)
+        && map.get("recipient").and_then(|v| v.as_object()).is_some()
+        && map.get("sender").and_then(|v| v.as_object()).is_some()
 }

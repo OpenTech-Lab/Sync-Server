@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod auth;
+pub mod backup;
 pub mod federation;
 pub mod health;
 pub mod messages;

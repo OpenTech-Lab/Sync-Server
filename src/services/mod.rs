@@ -1,4 +1,5 @@
 pub mod admin_service;
+pub mod backup_service;
 pub mod email_service;
 pub mod federation_service;
 pub mod geoip_service;

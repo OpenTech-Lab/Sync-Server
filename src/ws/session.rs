@@ -1,5 +1,6 @@
 use actix_ws::{Message, MessageStream, Session};
 use futures_util::StreamExt;
+use redis::AsyncCommands;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -27,6 +28,15 @@ pub enum ServerEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientEvent {
     Ping,
+    Typing { partner_id: Uuid, is_typing: bool },
+}
+
+#[derive(Debug, serde::Serialize)]
+struct TypingEvent {
+    r#type: &'static str,
+    sender_id: Uuid,
+    recipient_id: Uuid,
+    is_typing: bool,
 }
 
 // ── Session driver ────────────────────────────────────────────────────────────
@@ -44,12 +54,17 @@ pub async fn run_ws_session(
     mut msg_stream: MessageStream,
     redis_client: redis::Client,
 ) {
+    let mut publish_conn = crate::services::redis_pubsub::get_async_conn(&redis_client)
+        .await
+        .ok();
     let (redis_tx, mut redis_rx) = mpsc::unbounded_channel::<String>();
 
     // ── Spawn Redis subscriber ────────────────────────────────────────────────
     let channel = crate::services::redis_pubsub::user_channel(user_id);
+    let subscribe_client = redis_client.clone();
     tokio::spawn(async move {
-        match crate::services::redis_pubsub::subscribe(&redis_client, &[channel.as_str()]).await {
+        match crate::services::redis_pubsub::subscribe(&subscribe_client, &[channel.as_str()]).await
+        {
             Ok(mut pubsub) => {
                 let mut stream = pubsub.on_message();
                 while let Some(msg) = stream.next().await {
@@ -80,11 +95,38 @@ pub async fn run_ws_session(
                 match msg {
                     Ok(Message::Text(text)) => {
                         last_heartbeat = Instant::now();
-                        if let Ok(ClientEvent::Ping) = serde_json::from_str::<ClientEvent>(&text) {
-                            let pong = serde_json::to_string(&ServerEvent::Pong)
-                                .unwrap_or_else(|_| r#"{"type":"pong"}"#.to_string());
-                            if session.text(pong).await.is_err() {
-                                break;
+                        if let Ok(event) = serde_json::from_str::<ClientEvent>(&text) {
+                            match event {
+                                ClientEvent::Ping => {
+                                    let pong = serde_json::to_string(&ServerEvent::Pong)
+                                        .unwrap_or_else(|_| r#"{"type":"pong"}"#.to_string());
+                                    if session.text(pong).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                ClientEvent::Typing { partner_id, is_typing } => {
+                                    let Some(conn) = publish_conn.as_mut() else {
+                                        continue;
+                                    };
+                                    let payload = TypingEvent {
+                                        r#type: "typing",
+                                        sender_id: user_id,
+                                        recipient_id: partner_id,
+                                        is_typing,
+                                    };
+                                    let channel = crate::services::redis_pubsub::user_channel(partner_id);
+                                    if let Err(error) = conn.publish::<_, _, ()>(
+                                        channel,
+                                        serde_json::to_string(&payload).unwrap_or_default(),
+                                    ).await {
+                                        tracing::warn!(
+                                            %user_id,
+                                            %partner_id,
+                                            %error,
+                                            "Failed to publish typing event"
+                                        );
+                                    }
+                                }
                             }
                         }
                     }

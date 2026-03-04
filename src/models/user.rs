@@ -13,6 +13,7 @@ pub struct User {
     pub email: String,
     pub password_hash: String,
     pub avatar_base64: Option<String>,
+    pub message_public_key: Option<String>,
     pub role: String,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
@@ -47,6 +48,7 @@ pub struct UserProfilePublic {
     pub id: Uuid,
     pub username: String,
     pub avatar_base64: Option<String>,
+    pub message_public_key: Option<String>,
 }
 
 impl From<User> for UserPublic {
@@ -69,6 +71,7 @@ impl From<User> for UserProfilePublic {
             id: u.id,
             username: u.username,
             avatar_base64: u.avatar_base64,
+            message_public_key: u.message_public_key,
         }
     }
 }

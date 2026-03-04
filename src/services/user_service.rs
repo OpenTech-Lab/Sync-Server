@@ -208,6 +208,7 @@ pub fn update_profile(
     user_id: Uuid,
     next_username: Option<String>,
     next_avatar_base64: Option<Option<String>>,
+    next_message_public_key: Option<Option<String>>,
 ) -> Result<User, AppError> {
     let mut conn = pool.get()?;
     let existing = users.find(user_id).first::<User>(&mut conn).optional()?;
@@ -218,9 +219,17 @@ pub fn update_profile(
         Some(value) => value,
         None => existing.avatar_base64,
     };
+    let message_public_key_value = match next_message_public_key {
+        Some(value) => value,
+        None => existing.message_public_key,
+    };
 
     diesel::update(users.find(user_id))
-        .set((username.eq(username_value), avatar_base64.eq(avatar_value)))
+        .set((
+            username.eq(username_value),
+            avatar_base64.eq(avatar_value),
+            message_public_key.eq(message_public_key_value),
+        ))
         .get_result::<User>(&mut conn)
         .map_err(|e| match e {
             diesel::result::Error::DatabaseError(

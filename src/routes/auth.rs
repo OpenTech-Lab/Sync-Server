@@ -4,6 +4,7 @@ use diesel::prelude::*;
 use redis::AsyncCommands;
 use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::auth::claims::Claims;
@@ -59,6 +60,51 @@ pub struct SetupStatusResponse {
     pub needs_setup: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct QrLoginCreateResponse {
+    pub session_id: String,
+    pub qr_payload: String,
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QrLoginSessionPath {
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QrLoginSessionQuery {
+    pub secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QrLoginApproveRequest {
+    pub session_id: String,
+    pub secret: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QrLoginStatusResponse {
+    pub status: String,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub expires_in: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct QrLoginSessionRecord {
+    secret: String,
+    status: String,
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    expires_in: Option<u64>,
+}
+
+const QR_LOGIN_TTL_SECS: u64 = 180;
+const QR_LOGIN_STATUS_PENDING: &str = "pending";
+const QR_LOGIN_STATUS_APPROVED: &str = "approved";
+const QR_LOGIN_STATUS_EXPIRED: &str = "expired";
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn is_valid_username(value: &str) -> bool {
@@ -70,6 +116,50 @@ fn is_valid_username(value: &str) -> bool {
     normalized
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-')
+}
+
+fn qr_login_redis_key(session_id: &str) -> String {
+    format!("qr_login:{}", session_id)
+}
+
+async fn load_qr_login_record(
+    redis: &redis::Client,
+    session_id: &str,
+) -> Result<Option<QrLoginSessionRecord>, AppError> {
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {}", e)))?;
+    let key = qr_login_redis_key(session_id);
+    let raw: Option<String> = conn
+        .get(&key)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis get: {}", e)))?;
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let parsed = serde_json::from_str::<QrLoginSessionRecord>(&raw)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis JSON parse: {}", e)))?;
+    Ok(Some(parsed))
+}
+
+async fn save_qr_login_record(
+    redis: &redis::Client,
+    session_id: &str,
+    record: &QrLoginSessionRecord,
+    ttl_secs: u64,
+) -> Result<(), AppError> {
+    let raw = serde_json::to_string(record)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis JSON encode: {}", e)))?;
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {}", e)))?;
+    let key = qr_login_redis_key(session_id);
+    conn.set_ex::<_, _, ()>(&key, raw, ttl_secs)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis set: {}", e)))?;
+    Ok(())
 }
 
 /// Issue a fresh access + refresh token pair, storing the refresh token in DB.
@@ -232,6 +322,131 @@ pub async fn login(
     )?;
 
     Ok(HttpResponse::Ok().json(tokens))
+}
+
+/// POST /auth/qr-login/session → 201 QrLoginCreateResponse
+pub async fn create_qr_login_session(
+    redis: web::Data<redis::Client>,
+) -> Result<HttpResponse, AppError> {
+    let session_id = Uuid::new_v4().to_string();
+    let mut secret_raw = [0u8; 16];
+    let rng = ring::rand::SystemRandom::new();
+    rng.fill(&mut secret_raw)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("RNG failed")))?;
+    let secret = hex::encode(secret_raw);
+
+    let record = QrLoginSessionRecord {
+        secret: secret.clone(),
+        status: QR_LOGIN_STATUS_PENDING.to_string(),
+        access_token: None,
+        refresh_token: None,
+        expires_in: None,
+    };
+
+    save_qr_login_record(&redis, &session_id, &record, QR_LOGIN_TTL_SECS).await?;
+
+    let qr_payload = json!({
+        "type": "sync_qr_login",
+        "session_id": session_id.clone(),
+        "secret": secret,
+    })
+    .to_string();
+
+    Ok(HttpResponse::Created().json(QrLoginCreateResponse {
+        session_id,
+        qr_payload,
+        expires_in: QR_LOGIN_TTL_SECS,
+    }))
+}
+
+/// GET /auth/qr-login/session/{session_id}?secret=... → 200 QrLoginStatusResponse
+pub async fn poll_qr_login_session(
+    redis: web::Data<redis::Client>,
+    path: web::Path<QrLoginSessionPath>,
+    query: web::Query<QrLoginSessionQuery>,
+) -> Result<HttpResponse, AppError> {
+    let session_id = path.session_id.trim();
+    if session_id.is_empty() || query.secret.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "session_id and secret are required".into(),
+        ));
+    }
+
+    let Some(record) = load_qr_login_record(&redis, session_id).await? else {
+        return Ok(HttpResponse::Ok().json(QrLoginStatusResponse {
+            status: QR_LOGIN_STATUS_EXPIRED.to_string(),
+            access_token: None,
+            refresh_token: None,
+            expires_in: None,
+        }));
+    };
+
+    if record.secret != query.secret {
+        return Err(AppError::Unauthorized);
+    }
+
+    if record.status == QR_LOGIN_STATUS_APPROVED {
+        let mut conn = redis
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {}", e)))?;
+        let key = qr_login_redis_key(session_id);
+        conn.del::<_, ()>(&key)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis del: {}", e)))?;
+    }
+
+    Ok(HttpResponse::Ok().json(QrLoginStatusResponse {
+        status: record.status,
+        access_token: record.access_token,
+        refresh_token: record.refresh_token,
+        expires_in: record.expires_in,
+    }))
+}
+
+/// POST /auth/qr-login/approve → 200 { status: "approved" }
+pub async fn approve_qr_login(
+    pool: web::Data<Pool>,
+    config: web::Data<Config>,
+    redis: web::Data<redis::Client>,
+    auth: AuthUser,
+    body: web::Json<QrLoginApproveRequest>,
+) -> Result<HttpResponse, AppError> {
+    let session_id = body.session_id.trim();
+    let secret = body.secret.trim();
+    if session_id.is_empty() || secret.is_empty() {
+        return Err(AppError::BadRequest(
+            "session_id and secret are required".into(),
+        ));
+    }
+
+    let Some(mut record) = load_qr_login_record(&redis, session_id).await? else {
+        return Err(AppError::BadRequest("QR login session expired".into()));
+    };
+
+    if record.secret != secret {
+        return Err(AppError::Unauthorized);
+    }
+    if record.status != QR_LOGIN_STATUS_PENDING {
+        return Ok(HttpResponse::Ok().json(json!({ "status": record.status })));
+    }
+
+    let mut conn = pool.get()?;
+    let tokens = mint_tokens(
+        &mut conn,
+        auth.0.user_id()?,
+        auth.0.role.as_str(),
+        Uuid::new_v4(),
+        &config,
+    )?;
+
+    record.status = QR_LOGIN_STATUS_APPROVED.to_string();
+    record.access_token = Some(tokens.access_token);
+    record.refresh_token = Some(tokens.refresh_token);
+    record.expires_in = Some(tokens.expires_in);
+    save_qr_login_record(&redis, session_id, &record, QR_LOGIN_TTL_SECS).await?;
+
+    Ok(HttpResponse::Ok().json(json!({ "status": QR_LOGIN_STATUS_APPROVED })))
 }
 
 /// POST /auth/refresh → 200 TokenResponse (token rotation with family replay detection)
@@ -510,6 +725,12 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/setup-admin", web::post().to(setup_admin))
         .route("/register", web::post().to(register))
         .route("/login", web::post().to(login))
+        .route("/qr-login/session", web::post().to(create_qr_login_session))
+        .route(
+            "/qr-login/session/{session_id}",
+            web::get().to(poll_qr_login_session),
+        )
+        .route("/qr-login/approve", web::post().to(approve_qr_login))
         .route("/me", web::get().to(me))
         .route("/refresh", web::post().to(refresh))
         .route("/logout", web::post().to(logout))

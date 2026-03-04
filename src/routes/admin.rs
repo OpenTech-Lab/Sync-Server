@@ -45,6 +45,13 @@ pub struct CreateServerNewsRequest {
     pub markdown_content: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateServerNewsRequest {
+    pub title: String,
+    pub summary: Option<String>,
+    pub markdown_content: String,
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct AdminServerNewsView {
     pub id: Uuid,
@@ -275,6 +282,53 @@ pub async fn create_server_news(
     Ok(HttpResponse::Created().json(to_admin_server_news_view(created)))
 }
 
+pub async fn update_server_news(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    news_id: web::Path<Uuid>,
+    body: web::Json<UpdateServerNewsRequest>,
+) -> Result<HttpResponse, AppError> {
+    let admin_user_id = admin.0.user_id()?;
+    let updated = server_news_service::update_news(
+        &pool,
+        *news_id,
+        &body.title,
+        body.summary.as_deref(),
+        &body.markdown_content,
+    )?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_user_id),
+        "server_news.update",
+        Some(&updated.id.to_string()),
+        serde_json::json!({
+            "title": updated.title,
+            "summary_set": updated.summary.as_ref().map(|v| !v.trim().is_empty()).unwrap_or(false),
+            "markdown_len": updated.markdown_content.len(),
+        }),
+    )?;
+    Ok(HttpResponse::Ok().json(to_admin_server_news_view(updated)))
+}
+
+pub async fn delete_server_news(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    news_id: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    let admin_user_id = admin.0.user_id()?;
+    let deleted = server_news_service::delete_news(&pool, *news_id)?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_user_id),
+        "server_news.delete",
+        Some(&deleted.id.to_string()),
+        serde_json::json!({
+            "title": deleted.title,
+        }),
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "status": "deleted" })))
+}
+
 pub async fn get_config(
     pool: web::Data<Pool>,
     cfg: web::Data<Config>,
@@ -444,6 +498,11 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/users/{user_id}/activate", web::post().to(activate_user))
         .route("/server-news", web::get().to(list_server_news))
         .route("/server-news", web::post().to(create_server_news))
+        .route("/server-news/{news_id}", web::put().to(update_server_news))
+        .route(
+            "/server-news/{news_id}",
+            web::delete().to(delete_server_news),
+        )
         .route("/config", web::get().to(get_config))
         .route("/config", web::put().to(update_config))
         .route("/audit-logs", web::get().to(audit_logs));

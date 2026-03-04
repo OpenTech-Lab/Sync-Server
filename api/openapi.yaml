@@ -545,6 +545,142 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /api/planet-news:
+    get:
+      operationId: listPlanetNews
+      summary: List published server news for authenticated users
+      tags: [planet-news]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
+      responses:
+        '200':
+          description: News list sorted by newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, title, markdown_content, published_at]
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    title:
+                      type: string
+                    summary:
+                      type: string
+                      nullable: true
+                    markdown_content:
+                      type: string
+                    published_at:
+                      type: string
+                      format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/planet-news/{news_id}:
+    get:
+      operationId: getPlanetNewsDetail
+      summary: Get one server news post by ID
+      tags: [planet-news]
+      parameters:
+        - name: news_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Full news detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, title, markdown_content, published_at, updated_at]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  title:
+                    type: string
+                  summary:
+                    type: string
+                    nullable: true
+                  markdown_content:
+                    type: string
+                  published_at:
+                    type: string
+                    format: date-time
+                  updated_at:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/admin/server-news:
+    get:
+      operationId: adminListServerNews
+      summary: List server news posts (admin)
+      tags: [admin]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Full server news list for admin dashboard
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Admin role required
+    post:
+      operationId: adminCreateServerNews
+      summary: Publish a new server news post (admin)
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, markdown_content]
+              properties:
+                title:
+                  type: string
+                  maxLength: 120
+                summary:
+                  type: string
+                  nullable: true
+                  maxLength: 280
+                markdown_content:
+                  type: string
+                  maxLength: 20000
+      responses:
+        '201':
+          description: Created
+        '400':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Admin role required
+
   /ws:
     get:
       operationId: websocketConnect
@@ -591,5 +727,9 @@ tags:
     description: Registration, login, token refresh, and logout
   - name: messages
     description: Send, receive, paginate, and mark messages
+  - name: planet-news
+    description: Planet feed and server news posts
+  - name: admin
+    description: Administrative operations for server management
   - name: websocket
     description: Real-time event stream over WebSocket

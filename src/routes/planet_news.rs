@@ -59,9 +59,7 @@ pub async fn list_news(
     query: web::Query<ListNewsQuery>,
 ) -> Result<HttpResponse, AppError> {
     let items = server_news_service::list_news(&pool, query.limit.unwrap_or(30))?;
-    Ok(HttpResponse::Ok().json(
-        items.into_iter().map(to_list_item).collect::<Vec<_>>(),
-    ))
+    Ok(HttpResponse::Ok().json(items.into_iter().map(to_list_item).collect::<Vec<_>>()))
 }
 
 pub async fn get_news_detail(

@@ -143,6 +143,9 @@ cat >"$RELEASE_NOTE" <<EOF
 - TODO: summarize notable updates.
 EOF
 
+# Keep only latest version note file
+find "$VERSION_DIR" -maxdepth 1 -type f -name '*.md' ! -name "$NEW_VERSION.md" -delete
+
 git add -A
 
 if git diff --cached --quiet; then

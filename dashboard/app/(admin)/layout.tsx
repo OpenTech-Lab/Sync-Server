@@ -1,6 +1,4 @@
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { requireAdminSession } from "@/lib/session";
 
 import { AdminNav } from "./ui/admin-nav";
@@ -22,35 +20,32 @@ export default async function AdminLayout({
   const { user } = await requireAdminSession();
 
   return (
-    <div className="min-h-screen bg-muted/30">
-      <header className="border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-4">
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">Sync Admin Dashboard</p>
-            <div className="flex items-center gap-2">
-              <p className="text-lg font-semibold leading-none">{user.username}</p>
-              <Badge variant="outline">{user.role}</Badge>
-            </div>
+    <div className="flex min-h-screen flex-col bg-background">
+      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="flex h-14 items-center gap-4 px-6">
+          <span className="text-sm font-semibold tracking-tight">Sync Admin</span>
+          <div className="flex-1" />
+          <div className="flex items-center gap-3">
+            <span className="hidden text-sm text-muted-foreground sm:inline">{user.username}</span>
+            <Badge className="text-xs" variant="outline">{user.role}</Badge>
+            <LogoutButton />
           </div>
-          <LogoutButton />
         </div>
       </header>
 
-      <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-6 px-6 py-6 md:grid-cols-[240px_1fr]">
-        <Card className="h-fit py-0 md:sticky md:top-6">
-          <CardContent className="p-4">
-            <p className="mb-3 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-              Navigation
+      <div className="flex flex-1">
+        <aside className="hidden w-52 shrink-0 border-r md:block">
+          <div className="sticky top-14 overflow-y-auto p-4">
+            <p className="mb-2 px-2 text-[11px] font-semibold tracking-widest text-muted-foreground/70 uppercase">
+              Menu
             </p>
             <AdminNav items={navItems} />
-            <Separator className="my-4" />
-            <p className="text-xs text-muted-foreground">
-              Manage users, content, and server operations from one place.
-            </p>
-          </CardContent>
-        </Card>
+          </div>
+        </aside>
 
-        <main className="space-y-6">{children}</main>
+        <main className="min-w-0 flex-1 p-6 lg:px-8">
+          <div className="mx-auto max-w-5xl space-y-6">{children}</div>
+        </main>
       </div>
     </div>
   );

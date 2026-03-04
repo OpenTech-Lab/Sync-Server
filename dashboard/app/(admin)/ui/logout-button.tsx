@@ -19,9 +19,9 @@ export function LogoutButton() {
   }
 
   return (
-    <Button onClick={logout} type="button" variant="outline">
-      <LogOut className="size-4" />
-      Sign out
+    <Button onClick={logout} size="sm" type="button" variant="ghost" className="gap-1.5 text-muted-foreground hover:text-foreground">
+      <LogOut className="size-3.5" />
+      <span className="hidden sm:inline">Sign out</span>
     </Button>
   );
 }

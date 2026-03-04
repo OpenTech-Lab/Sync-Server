@@ -1,12 +1,6 @@
 import { Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
@@ -36,25 +30,26 @@ export default async function UsersPage({
   const users = await apiGetJson<UserItem[]>(`/api/admin/users${query}`);
 
   return (
-    <div className="space-y-4">
-      <Card className="py-0">
-        <CardHeader>
-          <CardTitle className="text-2xl">Users</CardTitle>
-          <CardDescription>
-            Search users and apply moderation actions.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">Users</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Search users and apply moderation actions.
+        </p>
+      </div>
 
-      <form className="flex flex-col gap-2 sm:flex-row" method="get">
-        <Input
-          defaultValue={needle}
-          name="q"
-          placeholder="Search by username or email"
-          type="text"
-        />
+      <form className="flex gap-2" method="get">
+        <div className="relative flex-1">
+          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-8"
+            defaultValue={needle}
+            name="q"
+            placeholder="Search by username or email…"
+            type="text"
+          />
+        </div>
         <Button type="submit" variant="secondary">
-          <Search className="size-4" />
           Search
         </Button>
       </form>

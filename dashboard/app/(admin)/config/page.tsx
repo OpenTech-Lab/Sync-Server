@@ -1,10 +1,3 @@
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
 
@@ -25,20 +18,17 @@ export default async function ConfigPage() {
   const config = await apiGetJson<AdminConfig>("/api/admin/config");
 
   return (
-    <div className="space-y-4">
-      <Card className="py-0">
-        <CardHeader>
-          <CardTitle className="text-2xl">Config</CardTitle>
-          <CardDescription>
-            Manage planet profile and instance configuration.
-          </CardDescription>
-          <div>
-            <Badge variant="outline">
-              Effective max users: {config.effective_max_users ?? "unlimited"}
-            </Badge>
-          </div>
-        </CardHeader>
-      </Card>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">Config</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Manage planet profile and instance configuration.
+          {" "}
+          <span className="text-muted-foreground/70">
+            Effective max users: <strong className="font-medium text-foreground">{config.effective_max_users ?? "unlimited"}</strong>
+          </span>
+        </p>
+      </div>
 
       <ConfigForm
         maxUsersOverride={config.max_users_override}

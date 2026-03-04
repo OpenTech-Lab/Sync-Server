@@ -5,12 +5,6 @@ import { useRef, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -76,82 +70,79 @@ export function StickerUploadForm() {
   }
 
   return (
-    <Card className="py-0">
-      <CardHeader>
-        <CardTitle className="text-lg">Upload sticker</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form className="space-y-4" onSubmit={onSubmit}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="space-y-2">
-              <Label htmlFor="sticker-group">Group</Label>
-              <Input
-                id="sticker-group"
-                onChange={(e) => setGroupName(e.target.value)}
-                placeholder="Group"
-                type="text"
-                value={groupName}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="sticker-name">Sticker name</Label>
-              <Input
-                id="sticker-name"
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Sticker name"
-                type="text"
-                value={name}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="sticker-mime">MIME type</Label>
-              <NativeSelect
-                id="sticker-mime"
-                onChange={(e) => setMimeType(e.target.value)}
-                value={mimeType}
+    <section className="space-y-4">
+      <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">Upload sticker</p>
+      <form className="space-y-4" onSubmit={onSubmit}>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="space-y-2">
+            <Label htmlFor="sticker-group">Group</Label>
+            <Input
+              id="sticker-group"
+              onChange={(e) => setGroupName(e.target.value)}
+              placeholder="Group"
+              type="text"
+              value={groupName}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="sticker-name">Sticker name</Label>
+            <Input
+              id="sticker-name"
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Sticker name"
+              type="text"
+              value={name}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="sticker-mime">MIME type</Label>
+            <NativeSelect
+              id="sticker-mime"
+              onChange={(e) => setMimeType(e.target.value)}
+              value={mimeType}
+            >
+              <NativeSelectOption value="image/png">image/png</NativeSelectOption>
+              <NativeSelectOption value="image/webp">image/webp</NativeSelectOption>
+              <NativeSelectOption value="image/gif">image/gif</NativeSelectOption>
+              <NativeSelectOption value="image/jpeg">image/jpeg</NativeSelectOption>
+            </NativeSelect>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="sticker-file-input">File</Label>
+            <Input
+              accept="image/png,image/webp,image/gif,image/jpeg"
+              className="hidden"
+              id="sticker-file-input"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              ref={fileInputRef}
+              type="file"
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                size="sm"
+                type="button"
+                variant="outline"
               >
-                <NativeSelectOption value="image/png">image/png</NativeSelectOption>
-                <NativeSelectOption value="image/webp">image/webp</NativeSelectOption>
-                <NativeSelectOption value="image/gif">image/gif</NativeSelectOption>
-                <NativeSelectOption value="image/jpeg">image/jpeg</NativeSelectOption>
-              </NativeSelect>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="sticker-file-input">File</Label>
-              <Input
-                accept="image/png,image/webp,image/gif,image/jpeg"
-                className="hidden"
-                id="sticker-file-input"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                ref={fileInputRef}
-                type="file"
-              />
-              <div className="flex items-center gap-2">
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  type="button"
-                  variant="outline"
-                >
-                  Browse image
-                </Button>
-                <span className="truncate text-sm text-muted-foreground">
-                  {file ? file.name : "No file selected"}
-                </span>
-              </div>
+                Browse
+              </Button>
+              <span className="truncate text-sm text-muted-foreground">
+                {file ? file.name : "No file selected"}
+              </span>
             </div>
           </div>
+        </div>
 
-          {error ? (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
+        {error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
 
-          <Button disabled={working} type="submit">
-            {working ? "Uploading..." : "Upload"}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+        <Button disabled={working} size="sm" type="submit">
+          {working ? "Uploading…" : "Upload sticker"}
+        </Button>
+      </form>
+    </section>
   );
 }

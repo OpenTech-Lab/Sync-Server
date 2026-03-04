@@ -1,11 +1,5 @@
 import { Badge } from "@/components/ui/badge";
 import {
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   Table,
   TableBody,
   TableCell,
@@ -30,22 +24,20 @@ export default async function AuditPage() {
   const logs = await apiGetJson<AuditLog[]>("/api/admin/audit-logs?limit=100");
 
   return (
-    <div className="space-y-4">
-      <Card className="py-0">
-        <CardHeader>
-          <CardTitle className="text-2xl">Audit logs</CardTitle>
-          <CardDescription>
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Audit logs</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
             Recent admin actions and configuration changes.
-          </CardDescription>
-          <div>
-            <Badge variant="outline">Entries: {logs.length}</Badge>
-          </div>
-        </CardHeader>
-      </Card>
+          </p>
+        </div>
+        <Badge variant="outline" className="mt-1 shrink-0">{logs.length} entries</Badge>
+      </div>
 
-      <Card className="overflow-hidden py-0">
+      <div className="overflow-hidden rounded-lg border">
         <Table>
-          <TableHeader className="bg-muted/40">
+          <TableHeader className="bg-muted/30">
             <TableRow>
               <TableHead>When</TableHead>
               <TableHead>Action</TableHead>
@@ -54,15 +46,22 @@ export default async function AuditPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
+            {logs.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+                  No audit log entries found.
+                </TableCell>
+              </TableRow>
+            ) : null}
             {logs.map((log) => (
               <TableRow key={log.id}>
-                <TableCell className="text-muted-foreground">
+                <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                   {new Date(log.created_at).toLocaleString()}
                 </TableCell>
-                <TableCell className="font-medium">{log.action}</TableCell>
-                <TableCell>{log.target ?? "-"}</TableCell>
-                <TableCell className="align-top text-muted-foreground">
-                  <pre className="max-w-xl overflow-auto whitespace-pre-wrap break-words text-xs">
+                <TableCell className="font-medium text-sm">{log.action}</TableCell>
+                <TableCell className="text-sm">{log.target ?? "—"}</TableCell>
+                <TableCell className="align-top">
+                  <pre className="max-w-xl overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
                     {JSON.stringify(log.details, null, 2)}
                   </pre>
                 </TableCell>
@@ -70,7 +69,7 @@ export default async function AuditPage() {
             ))}
           </TableBody>
         </Table>
-      </Card>
+      </div>
     </div>
   );
 }

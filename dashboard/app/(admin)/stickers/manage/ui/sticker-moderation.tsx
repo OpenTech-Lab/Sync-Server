@@ -5,12 +5,7 @@ import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableBody,
@@ -52,30 +47,42 @@ export function StickerModeration({ stickers }: { stickers: StickerItem[] }) {
   }
 
   return (
-    <Card className="py-0">
-      <CardHeader>
-        <CardTitle className="text-lg">Moderation queue ({pendingCount} pending)</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <section className="space-y-4">
+      <Separator />
+      <div className="flex items-center gap-2">
+        <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">Moderation queue</p>
+        {pendingCount > 0 ? (
+          <Badge variant="secondary" className="text-xs">{pendingCount} pending</Badge>
+        ) : null}
+      </div>
+      <div className="overflow-hidden rounded-lg border">
         <Table>
-          <TableHeader>
+          <TableHeader className="bg-muted/30">
             <TableRow>
               <TableHead>Sticker</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Actions</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
+            {stickers.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={3} className="py-10 text-center text-sm text-muted-foreground">
+                  No stickers to moderate.
+                </TableCell>
+              </TableRow>
+            ) : null}
             {stickers.map((sticker) => (
               <TableRow key={sticker.id}>
                 <TableCell>
                   <p className="font-medium">{sticker.name}</p>
-                  <p className="text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     {sticker.group_name} · {sticker.mime_type}
                   </p>
                 </TableCell>
                 <TableCell>
                   <Badge
+                    className="text-xs"
                     variant={
                       sticker.status === "rejected"
                         ? "destructive"
@@ -87,8 +94,8 @@ export function StickerModeration({ stickers }: { stickers: StickerItem[] }) {
                     {sticker.status}
                   </Badge>
                 </TableCell>
-                <TableCell>
-                  <div className="flex gap-2">
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-2">
                     <Button
                       disabled={workingId === sticker.id}
                       onClick={() => moderate(sticker.id, "approve")}
@@ -113,7 +120,7 @@ export function StickerModeration({ stickers }: { stickers: StickerItem[] }) {
             ))}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }

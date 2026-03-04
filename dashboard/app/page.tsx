@@ -7,7 +7,7 @@ import { ACCESS_COOKIE } from "@/lib/server-api";
 export default async function Home() {
   const { needsSetup } = await fetchSetupStatus();
   if (needsSetup) {
-    redirect("/setup-admin");
+    redirect("/login");
   }
 
   const jar = await cookies();

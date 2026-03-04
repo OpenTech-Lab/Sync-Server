@@ -7,6 +7,7 @@ type SetupAdminBody = {
   username?: string;
   email?: string;
   password?: string;
+  setupToken?: string;
 };
 
 export async function POST(request: Request) {
@@ -18,10 +19,14 @@ export async function POST(request: Request) {
   const username = body.username?.trim() ?? "";
   const email = body.email?.trim().toLowerCase() ?? "";
   const password = body.password ?? "";
+  const setupToken = body.setupToken?.trim() ?? "";
 
-  if (!username || !email || password.length < 8) {
+  if (!username || !email || password.length < 8 || !setupToken) {
     return NextResponse.json(
-      { error: "username, email required; password must be ≥8 chars" },
+      {
+        error:
+          "username, email, setupToken required; password must be ≥8 chars",
+      },
       { status: 400 },
     );
   }
@@ -32,7 +37,12 @@ export async function POST(request: Request) {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({ username, email, password }),
+    body: JSON.stringify({
+      username,
+      email,
+      password,
+      setup_token: setupToken,
+    }),
     cache: "no-store",
   });
 

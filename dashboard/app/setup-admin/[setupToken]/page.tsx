@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -6,7 +5,13 @@ import { AuthShell } from "@/app/ui/auth-shell";
 import { fetchSetupStatus } from "@/lib/setup-status";
 import { ACCESS_COOKIE } from "@/lib/server-api";
 
-export default async function SetupAdminPage() {
+import { SetupAdminForm } from "../ui/setup-admin-form";
+
+export default async function SetupAdminTokenPage({
+  params,
+}: {
+  params: Promise<{ setupToken: string }>;
+}) {
   const { needsSetup } = await fetchSetupStatus();
   if (!needsSetup) {
     const jar = await cookies();
@@ -16,19 +21,18 @@ export default async function SetupAdminPage() {
     redirect("/login");
   }
 
+  const { setupToken } = await params;
+  const token = setupToken.trim();
+  if (!token) {
+    redirect("/setup-admin");
+  }
+
   return (
     <AuthShell
-      title="One-time setup link required"
-      description="Open the setup URL printed in the server terminal to create the first admin account."
+      title="Create admin account"
+      description="First-time setup: create the initial admin account for this Sync server."
     >
-      <p className="text-sm text-muted-foreground">
-        This endpoint requires a one-time token from the startup log.
-      </p>
-      <p className="mt-4 text-sm">
-        <Link className="underline" href="/login">
-          Back to login
-        </Link>
-      </p>
+      <SetupAdminForm setupToken={token} />
     </AuthShell>
   );
 }

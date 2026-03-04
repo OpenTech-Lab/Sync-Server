@@ -53,6 +53,7 @@ pub struct SetupAdminRequest {
     pub username: String,
     pub email: String,
     pub password: String,
+    pub setup_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,6 +116,7 @@ const QR_LOGIN_STATUS_EXPIRED: &str = "expired";
 
 static QR_LOGIN_FALLBACK_STORE: OnceLock<Mutex<HashMap<String, (QrLoginSessionRecord, i64)>>> =
     OnceLock::new();
+static ADMIN_SETUP_TOKEN: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -135,6 +137,90 @@ fn qr_login_redis_key(session_id: &str) -> String {
 
 fn qr_login_fallback_store() -> &'static Mutex<HashMap<String, (QrLoginSessionRecord, i64)>> {
     QR_LOGIN_FALLBACK_STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn admin_setup_token_store() -> &'static Mutex<Option<String>> {
+    ADMIN_SETUP_TOKEN.get_or_init(|| Mutex::new(None))
+}
+
+fn random_setup_token() -> Result<String, AppError> {
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    const GROUPS: usize = 6;
+    const GROUP_LEN: usize = 4;
+    const TOKEN_LEN: usize = GROUPS * GROUP_LEN;
+
+    let mut raw = [0u8; TOKEN_LEN];
+    let rng = ring::rand::SystemRandom::new();
+    rng.fill(&mut raw)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("RNG failed")))?;
+
+    let mut token = String::with_capacity(TOKEN_LEN + (GROUPS - 1));
+    for (idx, byte) in raw.iter().enumerate() {
+        if idx > 0 && idx % GROUP_LEN == 0 {
+            token.push('-');
+        }
+        let ch = ALPHABET[(*byte as usize) % ALPHABET.len()] as char;
+        token.push(ch);
+    }
+
+    Ok(token)
+}
+
+fn current_setup_token() -> Option<String> {
+    admin_setup_token_store()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+fn set_setup_token(next_token: Option<String>) {
+    if let Ok(mut guard) = admin_setup_token_store().lock() {
+        *guard = next_token;
+    }
+}
+
+fn is_setup_token_valid(token: &str) -> bool {
+    let Some(expected) = current_setup_token() else {
+        return false;
+    };
+    expected == token
+}
+
+fn clear_setup_token() {
+    set_setup_token(None);
+}
+
+pub fn initialize_first_admin_setup_link(pool: &Pool, config: &Config) -> Result<(), AppError> {
+    let mut conn = pool.get()?;
+    let admin_count: i64 = user_dsl::users
+        .filter(user_dsl::role.eq("admin"))
+        .count()
+        .get_result(&mut conn)?;
+
+    if admin_count > 0 {
+        clear_setup_token();
+        return Ok(());
+    }
+
+    let setup_token = random_setup_token()?;
+    set_setup_token(Some(setup_token.clone()));
+
+    let scheme = if config.enforce_https {
+        "https"
+    } else {
+        "http"
+    };
+    let setup_url = format!(
+        "{scheme}://{}/setup-admin/{setup_token}",
+        config.instance_domain
+    );
+    tracing::warn!(
+        setup_url = %setup_url,
+        "No admin account found. Use this one-time setup URL to create the first admin."
+    );
+    println!("\n[SYNC] One-time admin setup URL: {setup_url}\n");
+
+    Ok(())
 }
 
 fn fallback_save_qr_login_record(session_id: &str, record: &QrLoginSessionRecord, ttl_secs: u64) {
@@ -305,6 +391,9 @@ pub async fn setup_status(pool: web::Data<Pool>) -> Result<HttpResponse, AppErro
         .filter(user_dsl::role.eq("admin"))
         .count()
         .get_result(&mut conn)?;
+    if admin_count > 0 {
+        clear_setup_token();
+    }
 
     Ok(HttpResponse::Ok().json(SetupStatusResponse {
         needs_setup: admin_count == 0,
@@ -322,6 +411,7 @@ pub async fn setup_admin(
     let username = body.username.trim();
     let email = body.email.trim().to_lowercase();
     let password = body.password.as_str();
+    let setup_token = body.setup_token.as_deref().unwrap_or("").trim();
 
     if username.is_empty() || email.is_empty() || password.len() < 8 {
         return Err(AppError::BadRequest(
@@ -341,9 +431,13 @@ pub async fn setup_admin(
         .get_result(&mut conn)?;
 
     if admin_count > 0 {
+        clear_setup_token();
         return Err(AppError::Conflict(
             "Admin account is already configured".into(),
         ));
+    }
+    if setup_token.is_empty() || !is_setup_token_valid(setup_token) {
+        return Err(AppError::Forbidden);
     }
 
     let pw_hash = hash_password(password.to_string()).await?;
@@ -357,6 +451,7 @@ pub async fn setup_admin(
     };
 
     let user = user_service::create_user(&pool, new_user, None)?;
+    clear_setup_token();
     Ok(HttpResponse::Created().json(UserPublic::from(user)))
 }
 

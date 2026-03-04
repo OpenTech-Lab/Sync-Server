@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export function SetupAdminForm() {
+export function SetupAdminForm({ setupToken }: { setupToken: string }) {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -29,12 +29,12 @@ export function SetupAdminForm() {
     }
 
     try {
-      const response = await fetch("./api/session/setup-admin", {
+      const response = await fetch("/api/session/setup-admin", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify({ username, email, password, setupToken }),
       });
 
       if (!response.ok) {

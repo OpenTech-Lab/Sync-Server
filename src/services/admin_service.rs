@@ -17,6 +17,7 @@ pub const SETTING_WEBHOOK_URL: &str = "notification_webhook_url";
 pub const SETTING_PLANET_NAME: &str = "planet_name";
 pub const SETTING_PLANET_DESCRIPTION: &str = "planet_description";
 pub const SETTING_PLANET_IMAGE_BASE64: &str = "planet_image_base64";
+pub const SETTING_LINKED_PLANETS: &str = "linked_planets";
 
 #[derive(Debug, serde::Serialize)]
 pub struct AdminOverview {
@@ -37,6 +38,7 @@ pub struct AdminConfigView {
     pub planet_name: Option<String>,
     pub planet_description: Option<String>,
     pub planet_image_base64: Option<String>,
+    pub linked_planets: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -189,6 +191,7 @@ pub fn read_admin_config(pool: &Pool, config: &Config) -> Result<AdminConfigView
     let planet_name = get_setting(pool, SETTING_PLANET_NAME)?.map(|s| s.value);
     let planet_description = get_setting(pool, SETTING_PLANET_DESCRIPTION)?.map(|s| s.value);
     let planet_image_base64 = get_setting(pool, SETTING_PLANET_IMAGE_BASE64)?.map(|s| s.value);
+    let linked_planets = read_linked_planets(pool)?;
 
     Ok(AdminConfigView {
         max_users_override,
@@ -197,7 +200,21 @@ pub fn read_admin_config(pool: &Pool, config: &Config) -> Result<AdminConfigView
         planet_name,
         planet_description,
         planet_image_base64,
+        linked_planets,
     })
+}
+
+pub fn read_linked_planets(pool: &Pool) -> Result<Vec<String>, AppError> {
+    let raw = get_setting(pool, SETTING_LINKED_PLANETS)?.map(|s| s.value);
+    let Some(raw) = raw else {
+        return Ok(vec![]);
+    };
+    let parsed = serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default();
+    Ok(parsed
+        .into_iter()
+        .map(|item| item.trim().trim_end_matches('/').to_string())
+        .filter(|item| !item.is_empty())
+        .collect())
 }
 
 pub fn append_audit_log(

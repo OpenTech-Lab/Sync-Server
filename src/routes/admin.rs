@@ -29,6 +29,7 @@ pub struct UpdateConfigRequest {
     pub planet_name: Option<String>,
     pub planet_description: Option<String>,
     pub planet_image_base64: Option<String>,
+    pub linked_planets: Option<Vec<String>>,
 }
 
 const MAX_INPUT_IMAGE_BYTES: usize = 20 * 1024 * 1024;
@@ -212,6 +213,7 @@ pub async fn update_config(
     admin: AdminUser,
     body: web::Json<UpdateConfigRequest>,
 ) -> Result<HttpResponse, AppError> {
+    let mut normalized_linked_planets: Vec<String> = Vec::new();
     if let Some(max_users) = body.max_users {
         if max_users == 0 {
             return Err(AppError::BadRequest(
@@ -284,6 +286,36 @@ pub async fn update_config(
         admin_service::clear_setting(&pool, admin_service::SETTING_PLANET_IMAGE_BASE64)?;
     }
 
+    if let Some(linked_planets) = body.linked_planets.as_ref() {
+        for raw in linked_planets {
+            let trimmed = raw.trim().trim_end_matches('/');
+            if trimmed.is_empty() {
+                continue;
+            }
+            let parsed = reqwest::Url::parse(trimmed).map_err(|_| {
+                AppError::BadRequest("linked_planets must contain valid URLs".into())
+            })?;
+            if parsed.scheme() != "https" && parsed.scheme() != "http" {
+                return Err(AppError::BadRequest(
+                    "linked_planets URLs must use http or https".into(),
+                ));
+            }
+            normalized_linked_planets.push(trimmed.to_string());
+        }
+        normalized_linked_planets.sort();
+        normalized_linked_planets.dedup();
+
+        if normalized_linked_planets.is_empty() {
+            admin_service::clear_setting(&pool, admin_service::SETTING_LINKED_PLANETS)?;
+        } else {
+            let encoded = serde_json::to_string(&normalized_linked_planets)
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("JSON encode: {}", e)))?;
+            admin_service::set_setting(&pool, admin_service::SETTING_LINKED_PLANETS, &encoded)?;
+        }
+    } else {
+        admin_service::clear_setting(&pool, admin_service::SETTING_LINKED_PLANETS)?;
+    }
+
     admin_service::append_audit_log(
         &pool,
         Some(admin.0.user_id()?),
@@ -311,6 +343,7 @@ pub async fn update_config(
                 .as_ref()
                 .map(|v| !v.trim().is_empty())
                 .unwrap_or(false),
+            "linked_planets_count": normalized_linked_planets.len(),
         }),
     )?;
 

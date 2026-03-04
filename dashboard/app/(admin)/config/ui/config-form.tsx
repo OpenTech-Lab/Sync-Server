@@ -10,12 +10,14 @@ export function ConfigForm({
   planetName,
   planetDescription,
   planetImageBase64,
+  linkedPlanets,
 }: {
   maxUsersOverride: number | null;
   notificationWebhookUrl: string | null;
   planetName: string | null;
   planetDescription: string | null;
   planetImageBase64: string | null;
+  linkedPlanets: string[];
 }) {
   const router = useRouter();
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -29,6 +31,9 @@ export function ConfigForm({
   );
   const [nextPlanetImageBase64, setNextPlanetImageBase64] = useState(
     planetImageBase64 ?? "",
+  );
+  const [nextLinkedPlanets, setNextLinkedPlanets] = useState(
+    linkedPlanets.join("\n"),
   );
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -45,6 +50,10 @@ export function ConfigForm({
       planet_name: nextPlanetName.trim() || null,
       planet_description: nextPlanetDescription.trim() || null,
       planet_image_base64: nextPlanetImageBase64.trim() || null,
+      linked_planets: nextLinkedPlanets
+        .split("\n")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0),
     };
 
     const response = await fetch("/api/admin/config", {
@@ -185,6 +194,20 @@ export function ConfigForm({
         </p>
         {uploadError ? <p className="text-sm text-destructive">{uploadError}</p> : null}
       </div>
+
+      <label className="block text-sm">
+        <span className="mb-1 block text-muted-foreground">Connected planet servers</span>
+        <textarea
+          className="w-full rounded-md border px-3 py-2 font-mono text-xs"
+          onChange={(event) => setNextLinkedPlanets(event.target.value)}
+          placeholder={"https://planet-a.example.com\nhttps://planet-b.example.com"}
+          rows={4}
+          value={nextLinkedPlanets}
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          One URL per line. These planets will appear in mobile Home.
+        </p>
+      </label>
 
       <label className="block text-sm">
         <span className="mb-1 block text-muted-foreground">Notification webhook URL</span>

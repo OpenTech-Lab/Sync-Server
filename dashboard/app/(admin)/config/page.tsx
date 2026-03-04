@@ -10,6 +10,7 @@ type AdminConfig = {
   planet_name: string | null;
   planet_description: string | null;
   planet_image_base64: string | null;
+  linked_planets: string[];
 };
 
 export default async function ConfigPage() {
@@ -35,6 +36,7 @@ export default async function ConfigPage() {
         planetName={config.planet_name}
         planetDescription={config.planet_description}
         planetImageBase64={config.planet_image_base64}
+        linkedPlanets={config.linked_planets}
       />
     </div>
   );

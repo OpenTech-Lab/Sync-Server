@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::db::Pool;
+use crate::schema::users::dsl as user_dsl;
 use crate::services::admin_service;
 use crate::services::geoip_service::PlanetGeoInfo;
 
@@ -17,6 +18,8 @@ struct LivenessResponse {
     instance_domain: String,
     instance_description: Option<String>,
     instance_image_url: Option<String>,
+    member_count: i64,
+    linked_planets: Vec<String>,
     country_code: Option<String>,
     country_name: Option<String>,
 }
@@ -40,6 +43,25 @@ pub async fn liveness(
     geo: web::Data<PlanetGeoInfo>,
     pool: web::Data<Pool>,
 ) -> HttpResponse {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => {
+            return HttpResponse::Ok().json(LivenessResponse {
+                status: "ok",
+                version: env!("CARGO_PKG_VERSION"),
+                instance_name: cfg.instance_name.clone(),
+                instance_domain: cfg.instance_domain.clone(),
+                instance_description: None,
+                instance_image_url: None,
+                member_count: 0,
+                linked_planets: vec![],
+                country_code: geo.country_code.clone(),
+                country_name: geo.country_name.clone(),
+            })
+        }
+    };
+    let member_count = user_dsl::users.count().get_result(&mut conn).unwrap_or(0);
+
     let planet_name = admin_service::get_setting(&pool, admin_service::SETTING_PLANET_NAME)
         .ok()
         .flatten()
@@ -58,6 +80,7 @@ pub async fn liveness(
             .flatten()
             .map(|s| !s.value.trim().is_empty())
             .unwrap_or(false);
+    let linked_planets = admin_service::read_linked_planets(&pool).unwrap_or_default();
 
     HttpResponse::Ok().json(LivenessResponse {
         status: "ok",
@@ -66,6 +89,8 @@ pub async fn liveness(
         instance_domain: cfg.instance_domain.clone(),
         instance_description: planet_description,
         instance_image_url: has_planet_image.then_some("/planet-image".to_string()),
+        member_count,
+        linked_planets,
         country_code: geo.country_code.clone(),
         country_name: geo.country_name.clone(),
     })

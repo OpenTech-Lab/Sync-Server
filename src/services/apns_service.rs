@@ -100,6 +100,12 @@ pub async fn send_alert_to_tokens(
     let mut failures = Vec::new();
     for token in tokens {
         let url = format!("{base_url}/3/device/{token}");
+        // apns-expiration: Unix timestamp after which APNs discards the
+        // notification if it has not yet been delivered.  Default (0) means
+        // "deliver once immediately or discard", which silently drops the
+        // notification when the device is temporarily unreachable.  Using a
+        // 24-hour window ensures delivery after brief offline periods.
+        let expiration = (Utc::now().timestamp() + 86_400).to_string();
         let response: reqwest::Response = client
             .post(&url)
             .version(reqwest::Version::HTTP_2)
@@ -107,6 +113,7 @@ pub async fn send_alert_to_tokens(
             .header("apns-topic", cfg.bundle_id.as_str())
             .header("apns-push-type", "alert")
             .header("apns-priority", "10")
+            .header("apns-expiration", expiration.as_str())
             .json(&payload)
             .timeout(std::time::Duration::from_secs(5))
             .send()

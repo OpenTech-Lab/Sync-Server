@@ -29,7 +29,7 @@ fn is_valid_username(value: &str) -> bool {
     }
     value
         .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-')
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-' || ch == ' ')
 }
 
 fn validate_avatar_base64(avatar_base64: &str) -> Result<(), AppError> {
@@ -75,7 +75,7 @@ pub async fn update_me(
     if let Some(ref username) = next_username {
         if !is_valid_username(username) {
             return Err(AppError::BadRequest(
-                "username must be 3-32 chars and only contain a-zA-Z0-9._-".into(),
+                "username must be 3-32 chars and only contain a-zA-Z0-9._- and spaces".into(),
             ));
         }
     }

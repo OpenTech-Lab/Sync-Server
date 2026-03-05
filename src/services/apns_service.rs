@@ -102,6 +102,7 @@ pub async fn send_alert_to_tokens(
         let url = format!("{base_url}/3/device/{token}");
         let response: reqwest::Response = client
             .post(&url)
+            .version(reqwest::Version::HTTP_2)
             .header("authorization", format!("bearer {auth_token}"))
             .header("apns-topic", cfg.bundle_id.as_str())
             .header("apns-push-type", "alert")

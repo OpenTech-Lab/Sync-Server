@@ -80,6 +80,9 @@ Open:
 
 #### 4.2 Production domain HTTPS (Let's Encrypt)
 When `INSTANCE_DOMAIN` is a real domain with DNS A/AAAA pointing to this host:
+- Ensure both DNS records point to this server:
+  - `INSTANCE_DOMAIN`
+  - `push.INSTANCE_DOMAIN`
 ```bash
 bash scripts/init-ssl.sh
 ```

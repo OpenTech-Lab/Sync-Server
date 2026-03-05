@@ -118,7 +118,19 @@ async fn dispatch_push_for_message(
         )
         .await
         {
-            tracing::warn!(error = %error, "Push dispatch failed");
+            match &error {
+                AppError::Internal(cause) => {
+                    tracing::warn!(
+                        error = %error,
+                        cause = %cause,
+                        error_debug = ?error,
+                        "Push dispatch failed"
+                    );
+                }
+                _ => {
+                    tracing::warn!(error = %error, error_debug = ?error, "Push dispatch failed");
+                }
+            }
         }
     });
 }

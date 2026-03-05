@@ -528,7 +528,23 @@ pub async fn inbox(
                 )
                 .await
                 {
-                    tracing::warn!(error = %error, "Push dispatch failed for inbound federation message");
+                    match &error {
+                        AppError::Internal(cause) => {
+                            tracing::warn!(
+                                error = %error,
+                                cause = %cause,
+                                error_debug = ?error,
+                                "Push dispatch failed for inbound federation message"
+                            );
+                        }
+                        _ => {
+                            tracing::warn!(
+                                error = %error,
+                                error_debug = ?error,
+                                "Push dispatch failed for inbound federation message"
+                            );
+                        }
+                    }
                 }
             });
         }

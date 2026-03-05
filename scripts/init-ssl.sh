@@ -144,10 +144,26 @@ rm -f "$BOOTSTRAP_CONF"
 echo "→ Starting full stack with SSL..."
 docker compose up -d
 
+# Best-effort: show the latest one-time admin setup URL if it exists in API logs.
+SETUP_URL="$(
+  docker compose logs --no-color api 2>/dev/null \
+    | sed -nE 's#.*(https?://[^[:space:]]+/setup-admin/[a-z0-9-]+).*#\1#p' \
+    | tail -n1 || true
+)"
+
 echo ""
 echo "✓ Done! SSL is active."
 echo "  https://$INSTANCE_DOMAIN"
 echo "  https://$INSTANCE_DOMAIN/login"
 echo "  https://$PUSH_DOMAIN"
+echo ""
+if [[ -n "$SETUP_URL" ]]; then
+  echo "One-time admin setup URL:"
+  echo "  $SETUP_URL"
+else
+  echo "One-time admin setup URL: not found in API logs."
+  echo "  If this is first-run setup, check with:"
+  echo "  docker compose logs --no-color api | rg -n \"One-time admin setup URL|setup-admin\" -S"
+fi
 echo ""
 echo "Certs auto-renew every 12 h via the certbot service."

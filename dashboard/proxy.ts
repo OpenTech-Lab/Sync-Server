@@ -23,7 +23,9 @@ export async function proxy(request: NextRequest) {
   const hasSession = Boolean(request.cookies.get(ACCESS_COOKIE)?.value);
   const { needsSetup } = await fetchSetupStatus();
 
-  const isSetupPath = normalizedPath === "/setup-admin";
+  const isSetupPath =
+    normalizedPath === "/setup-admin" ||
+    normalizedPath.startsWith("/setup-admin/");
   const isSetupApiPath = normalizedPath === "/api/session/setup-admin";
 
   if (needsSetup && !isSetupPath && !isSetupApiPath) {

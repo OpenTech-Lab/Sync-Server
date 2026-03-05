@@ -2,14 +2,22 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { AuthShell } from "@/app/ui/auth-shell";
-import { ACCESS_COOKIE } from "@/lib/server-api";
+import { ACCESS_COOKIE, apiGetJson } from "@/lib/server-api";
+import type { SessionUser } from "@/lib/session";
 
 import { LoginForm } from "./ui/login-form";
 
 export default async function LoginPage() {
   const jar = await cookies();
   if (jar.get(ACCESS_COOKIE)?.value) {
-    redirect("/dashboard");
+    try {
+      const user = await apiGetJson<SessionUser>("/auth/me");
+      if (user.role === "admin") {
+        redirect("/dashboard");
+      }
+    } catch {
+      // Ignore invalid/stale token and render login form.
+    }
   }
 
   return (

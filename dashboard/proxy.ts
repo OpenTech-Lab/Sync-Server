@@ -40,7 +40,7 @@ export async function proxy(request: NextRequest) {
   if (!needsSetup && isSetupPath) {
     return secureHeaders(
       NextResponse.redirect(
-        new URL(`${basePath}${hasSession ? "/dashboard" : "/login"}`, request.url),
+        new URL(`${basePath}/login`, request.url),
         {
           status: 307,
         },
@@ -58,14 +58,6 @@ export async function proxy(request: NextRequest) {
   if (isProtectedPath && !hasSession) {
     return secureHeaders(
       NextResponse.redirect(new URL(`${basePath}/login`, request.url), {
-        status: 307,
-      }),
-    );
-  }
-
-  if (normalizedPath === "/login" && hasSession) {
-    return secureHeaders(
-      NextResponse.redirect(new URL(`${basePath}/dashboard`, request.url), {
         status: 307,
       }),
     );

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -9,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export function SetupAdminForm({ setupToken }: { setupToken: string }) {
-  const router = useRouter();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -45,8 +43,7 @@ export function SetupAdminForm({ setupToken }: { setupToken: string }) {
         return;
       }
 
-      router.push("/login");
-      router.refresh();
+      window.location.assign("/login");
     } finally {
       setSubmitting(false);
     }

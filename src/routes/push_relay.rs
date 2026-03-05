@@ -52,9 +52,15 @@ async fn webhook(
         return Ok(HttpResponse::NoContent().finish());
     }
 
-    let apns_cfg = apns_service::parse_apns_config(&cfg)
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Relay APNs config is missing")))?;
-    apns_service::send_alert_to_tokens(
+    let apns_cfg = apns_service::parse_apns_config(&cfg).ok_or_else(|| {
+        tracing::error!(
+            target_count = body.targets.len(),
+            ios_target_count = ios_tokens.len(),
+            "Relay APNs config is missing"
+        );
+        AppError::Internal(anyhow::anyhow!("Relay APNs config is missing"))
+    })?;
+    if let Err(error) = apns_service::send_alert_to_tokens(
         &apns_cfg,
         &ios_tokens,
         body.recipient_id.unwrap_or_else(Uuid::nil),
@@ -64,7 +70,16 @@ async fn webhook(
             .as_deref()
             .unwrap_or("You have a new message"),
     )
-    .await?;
+    .await
+    {
+        tracing::error!(
+            ios_target_count = ios_tokens.len(),
+            error = %error,
+            error_debug = ?error,
+            "Relay APNs send failed"
+        );
+        return Err(error);
+    }
 
     Ok(HttpResponse::NoContent().finish())
 }

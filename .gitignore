@@ -1,3 +1,6 @@
+# ios certificates and provisioning profiles
+scripts/ios
+
 # Rust
 target/
 # Cargo.lock is intentionally tracked for binary crates (reproducible builds)

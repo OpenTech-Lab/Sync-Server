@@ -110,7 +110,14 @@ pub async fn send_alert_to_tokens(
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("APNs send request failed: {e}")))?;
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!(
+                    "APNs send request failed: {}; debug={:?}; url={}",
+                    e,
+                    e,
+                    url
+                ))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();

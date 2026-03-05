@@ -10,10 +10,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVER_DIR="$(dirname "$SCRIPT_DIR")"
 
 if [[ -f "$SERVER_DIR/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$SERVER_DIR/.env"
-  set +a
+  INSTANCE_DOMAIN="$(grep -E '^INSTANCE_DOMAIN=' "$SERVER_DIR/.env" | tail -n1 | cut -d= -f2-)"
+  INSTANCE_DOMAIN="${INSTANCE_DOMAIN%\"}"
+  INSTANCE_DOMAIN="${INSTANCE_DOMAIN#\"}"
+  INSTANCE_DOMAIN="${INSTANCE_DOMAIN%\'}"
+  INSTANCE_DOMAIN="${INSTANCE_DOMAIN#\'}"
 else
   echo "ERROR: $SERVER_DIR/.env not found. Copy .env.example first."
   exit 1

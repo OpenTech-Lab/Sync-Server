@@ -18,9 +18,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVER_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Load .env
+# Load only required .env keys (avoid sourcing secrets with `$` expansions).
 if [[ -f "$SERVER_DIR/.env" ]]; then
-  set -a; source "$SERVER_DIR/.env"; set +a
+  INSTANCE_DOMAIN="$(grep -E '^INSTANCE_DOMAIN=' "$SERVER_DIR/.env" | tail -n1 | cut -d= -f2-)"
+  ADMIN_EMAIL="$(grep -E '^ADMIN_EMAIL=' "$SERVER_DIR/.env" | tail -n1 | cut -d= -f2-)"
+  INSTANCE_DOMAIN="${INSTANCE_DOMAIN%\"}"
+  INSTANCE_DOMAIN="${INSTANCE_DOMAIN#\"}"
+  INSTANCE_DOMAIN="${INSTANCE_DOMAIN%\'}"
+  INSTANCE_DOMAIN="${INSTANCE_DOMAIN#\'}"
+  ADMIN_EMAIL="${ADMIN_EMAIL%\"}"
+  ADMIN_EMAIL="${ADMIN_EMAIL#\"}"
+  ADMIN_EMAIL="${ADMIN_EMAIL%\'}"
+  ADMIN_EMAIL="${ADMIN_EMAIL#\'}"
 else
   echo "ERROR: $SERVER_DIR/.env not found. Copy .env.example and fill in values."
   exit 1
@@ -121,6 +130,9 @@ docker run --rm \
     --email "$ADMIN_EMAIL" \
     --agree-tos \
     --no-eff-email \
+    --non-interactive \
+    --expand \
+    --cert-name "$INSTANCE_DOMAIN" \
     -d "$INSTANCE_DOMAIN" \
     -d "$PUSH_DOMAIN"
 

@@ -7,5 +7,6 @@ pub mod messages;
 pub mod planet_news;
 pub mod profile;
 pub mod push;
+pub mod push_relay;
 pub mod stickers;
 pub mod ws;

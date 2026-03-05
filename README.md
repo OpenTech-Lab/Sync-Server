@@ -36,6 +36,7 @@ Optional:
 - Push delivery mode:
   - `PUSH_DELIVERY_MODE=relay` (default, recommended for open/public servers)
     - all push events are forwarded to `notification_webhook_url` (hosted relay)
+    - this stack now exposes a built-in relay endpoint at `/v1/push/webhook`
     - if `notification_webhook_url` is empty, server auto-uses `https://push.{INSTANCE_DOMAIN}/v1/push/webhook` (not applied for localhost/IP instance domains)
   - `PUSH_DELIVERY_MODE=direct`
     - iOS is sent directly to APNs from this server
@@ -50,6 +51,9 @@ Optional:
 - Webhook host restriction (security default):
   - by default, `notification_webhook_url` host must equal `push.{INSTANCE_DOMAIN}`
   - external relay hosts are not allowed
+- Relay webhook auth (recommended):
+  - set `PUSH_RELAY_SHARED_SECRET` to require `x-sync-push-secret` on webhook requests
+  - set the same value on sender servers and relay server
 
 ### 3. Start stack (local/dev)
 ```bash

@@ -33,7 +33,14 @@ Edit `.env` at minimum:
 
 Optional:
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (leave empty in local dev; password-reset emails are skipped)
-- APNs direct push (iOS background notifications):
+- Push delivery mode:
+  - `PUSH_DELIVERY_MODE=relay` (default, recommended for open/public servers)
+    - all push events are forwarded to `notification_webhook_url` (hosted relay)
+  - `PUSH_DELIVERY_MODE=direct`
+    - iOS is sent directly to APNs from this server
+  - `PUSH_DELIVERY_MODE=hybrid`
+    - iOS tries direct APNs first, then falls back to webhook relay
+- APNs direct push credentials (only needed for `direct` / `hybrid`):
   - `APNS_TEAM_ID`
   - `APNS_KEY_ID`
   - `APNS_BUNDLE_ID` (must match iOS app bundle id)
@@ -95,7 +102,8 @@ docker compose down
 - `scripts/init-ssl-dev.sh` is for local dev (`INSTANCE_DOMAIN=localhost`).
 - `scripts/init-ssl.sh` is for real domains with Let's Encrypt.
 - If `mkcert` is unavailable, `init-ssl-dev.sh` falls back to self-signed `openssl` certs (browser warning expected).
-- For iOS push while app is backgrounded/killed, APNs credentials must be configured and iOS Push Notifications capability must be enabled for the app id/profile.
+- For OSS/public infra, keep `PUSH_DELIVERY_MODE=relay` and configure `notification_webhook_url` to your hosted push relay.
+- Direct APNs modes (`direct`, `hybrid`) require APNs credentials and iOS Push Notifications capability enabled for the app id/profile.
 
 ## Contributing
 

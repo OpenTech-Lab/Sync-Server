@@ -4,7 +4,7 @@ use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::config::Config;
+use crate::config::{Config, PushDeliveryMode};
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::services::{admin_service, push_token_service};
@@ -106,29 +106,66 @@ pub async fn dispatch_new_message(
 
     let mut dispatch_errors = Vec::new();
 
-    if !ios_targets.is_empty() {
-        if let Some(apns_cfg) = parse_apns_config(cfg) {
-            if let Err(error) = send_apns_pushes(
-                &apns_cfg,
-                &ios_targets,
-                recipient_id,
-                sender_id,
-                message_id,
-                &preview,
-            )
-            .await
-            {
-                dispatch_errors.push(format!("APNs dispatch failed: {error}"));
-            }
-        } else {
-            tracing::warn!(
-                recipient_id = %recipient_id,
-                ios_target_count = ios_targets.len(),
-                "APNs config missing; falling back to webhook targets for iOS"
-            );
+    match cfg.push_delivery_mode {
+        PushDeliveryMode::Relay => {
             webhook_targets.extend(ios_targets);
         }
-    }
+        PushDeliveryMode::Direct => {
+            if !ios_targets.is_empty() {
+                if let Some(apns_cfg) = parse_apns_config(cfg) {
+                    if let Err(error) = send_apns_pushes(
+                        &apns_cfg,
+                        &ios_targets,
+                        recipient_id,
+                        sender_id,
+                        message_id,
+                        &preview,
+                    )
+                    .await
+                    {
+                        dispatch_errors.push(format!("APNs dispatch failed: {error}"));
+                    }
+                } else {
+                    tracing::warn!(
+                        recipient_id = %recipient_id,
+                        ios_target_count = ios_targets.len(),
+                        "APNs config missing in direct mode; skipping iOS push delivery"
+                    );
+                }
+            }
+        }
+        PushDeliveryMode::Hybrid => {
+            if !ios_targets.is_empty() {
+                if let Some(apns_cfg) = parse_apns_config(cfg) {
+                    if let Err(error) = send_apns_pushes(
+                        &apns_cfg,
+                        &ios_targets,
+                        recipient_id,
+                        sender_id,
+                        message_id,
+                        &preview,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            recipient_id = %recipient_id,
+                            ios_target_count = ios_targets.len(),
+                            error = %error,
+                            "APNs dispatch failed in hybrid mode; falling back to webhook for iOS targets"
+                        );
+                        webhook_targets.extend(ios_targets);
+                    }
+                } else {
+                    tracing::warn!(
+                        recipient_id = %recipient_id,
+                        ios_target_count = ios_targets.len(),
+                        "APNs config missing in hybrid mode; falling back to webhook targets for iOS"
+                    );
+                    webhook_targets.extend(ios_targets);
+                }
+            }
+        }
+    };
 
     if !webhook_targets.is_empty() {
         if let Some(url) = webhook_url {
@@ -148,7 +185,8 @@ pub async fn dispatch_new_message(
             tracing::warn!(
                 recipient_id = %recipient_id,
                 target_count = webhook_targets.len(),
-                "notification_webhook_url not configured; skipping non-iOS push delivery"
+                mode = ?cfg.push_delivery_mode,
+                "notification_webhook_url not configured; skipping webhook push delivery"
             );
         }
     }

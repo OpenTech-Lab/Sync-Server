@@ -1,6 +1,26 @@
 use anyhow::{Context, Result};
 use sysinfo::System;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PushDeliveryMode {
+    Relay,
+    Direct,
+    Hybrid,
+}
+
+impl PushDeliveryMode {
+    fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_lowercase().as_str() {
+            "relay" => Ok(Self::Relay),
+            "direct" => Ok(Self::Direct),
+            "hybrid" => Ok(Self::Hybrid),
+            _ => Err(anyhow::anyhow!(
+                "PUSH_DELIVERY_MODE must be one of: relay, direct, hybrid"
+            )),
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -37,6 +57,8 @@ pub struct Config {
     pub apns_private_key_p8: Option<String>,
     /// Use APNs sandbox endpoint (development builds).
     pub apns_use_sandbox: bool,
+    /// Push delivery mode. relay (default): webhook only.
+    pub push_delivery_mode: PushDeliveryMode,
 }
 
 impl Config {
@@ -113,6 +135,9 @@ impl Config {
             apns_use_sandbox: std::env::var("APNS_USE_SANDBOX")
                 .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
                 .unwrap_or(false),
+            push_delivery_mode: PushDeliveryMode::parse(
+                &std::env::var("PUSH_DELIVERY_MODE").unwrap_or_else(|_| "relay".to_string()),
+            )?,
         })
     }
 

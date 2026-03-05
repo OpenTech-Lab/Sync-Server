@@ -80,6 +80,14 @@ async fn webhook(
         );
         return Err(error);
     }
+    tracing::info!(
+        ios_target_count = ios_tokens.len(),
+        recipient_id = ?body.recipient_id,
+        sender_id = ?body.sender_id,
+        message_id = ?body.message_id,
+        apns_use_sandbox = apns_cfg.use_sandbox,
+        "Relay APNs send success"
+    );
 
     Ok(HttpResponse::NoContent().finish())
 }

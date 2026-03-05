@@ -88,7 +88,14 @@ pub async fn dispatch_new_message(
             if !ios_targets.is_empty() {
                 if let Some(apns_cfg) = apns_service::parse_apns_config(cfg) {
                     let tokens: Vec<String> = ios_targets.iter().map(|t| t.token.clone()).collect();
-                    if let Err(error) = apns_service::send_alert_to_tokens(
+                    tracing::info!(
+                        recipient_id = %recipient_id,
+                        ios_target_count = ios_targets.len(),
+                        use_sandbox = apns_cfg.use_sandbox,
+                        bundle_id = %apns_cfg.bundle_id,
+                        "Attempting APNs direct push"
+                    );
+                    match apns_service::send_alert_to_tokens(
                         &apns_cfg,
                         &tokens,
                         recipient_id,
@@ -98,7 +105,22 @@ pub async fn dispatch_new_message(
                     )
                     .await
                     {
-                        dispatch_errors.push(format!("APNs dispatch failed: {error}"));
+                        Ok(()) => {
+                            tracing::info!(
+                                recipient_id = %recipient_id,
+                                ios_target_count = ios_targets.len(),
+                                "APNs direct push delivered successfully"
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                recipient_id = %recipient_id,
+                                ios_target_count = ios_targets.len(),
+                                error = %error,
+                                "APNs direct push failed"
+                            );
+                            dispatch_errors.push(format!("APNs dispatch failed: {error}"));
+                        }
                     }
                 } else {
                     tracing::warn!(

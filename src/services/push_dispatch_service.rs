@@ -2,6 +2,7 @@ use base64::Engine;
 use chrono::Utc;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::Serialize;
+use std::net::IpAddr;
 use uuid::Uuid;
 
 use crate::config::{Config, PushDeliveryMode};
@@ -11,6 +12,7 @@ use crate::services::{admin_service, push_token_service};
 
 const APNS_PRODUCTION_URL: &str = "https://api.push.apple.com";
 const APNS_SANDBOX_URL: &str = "https://api.sandbox.push.apple.com";
+const RELAY_WEBHOOK_PATH: &str = "/v1/push/webhook";
 
 #[derive(Debug, Clone)]
 struct PushTargetData {
@@ -77,9 +79,12 @@ pub async fn dispatch_new_message(
     message_id: Uuid,
     message_content: &str,
 ) -> Result<(), AppError> {
-    let webhook_url = admin_service::get_setting(pool, admin_service::SETTING_WEBHOOK_URL)?
-        .map(|item| item.value)
-        .filter(|url| !url.trim().is_empty());
+    let configured_webhook_url =
+        admin_service::get_setting(pool, admin_service::SETTING_WEBHOOK_URL)?
+            .map(|item| item.value)
+            .filter(|url| !url.trim().is_empty());
+    let webhook_url =
+        configured_webhook_url.or_else(|| derive_default_relay_webhook_url(&cfg.instance_domain));
     let tokens = push_token_service::list_tokens_for_user(pool, recipient_id)?;
     if tokens.is_empty() {
         return Ok(());
@@ -198,6 +203,35 @@ pub async fn dispatch_new_message(
             dispatch_errors.join("; ")
         )))
     }
+}
+
+fn derive_default_relay_webhook_url(instance_domain: &str) -> Option<String> {
+    let trimmed = instance_domain.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let host = if let Ok(parsed) = reqwest::Url::parse(trimmed) {
+        parsed.host_str().unwrap_or_default().to_string()
+    } else {
+        trimmed
+            .trim_start_matches("http://")
+            .trim_start_matches("https://")
+            .split('/')
+            .next()
+            .unwrap_or_default()
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    let host = host.trim().to_lowercase();
+    if host.is_empty() || host == "localhost" || host.parse::<IpAddr>().is_ok() {
+        return None;
+    }
+
+    Some(format!("https://push.{host}{RELAY_WEBHOOK_PATH}"))
 }
 
 fn truncate_preview(content: &str, max_chars: usize) -> String {

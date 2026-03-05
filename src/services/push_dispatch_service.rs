@@ -64,8 +64,17 @@ pub async fn dispatch_new_message(
     for target in all_targets {
         if target.platform.eq_ignore_ascii_case("ios") {
             ios_targets.push(target);
-        } else {
+        } else if is_relay_deliverable_platform(&target.platform) {
+            // Only include platforms the push relay can actually deliver to
+            // (e.g. android). Desktop/web clients (linux, windows, macos, web)
+            // receive messages via their live SSE/WebSocket connection and do
+            // not have a relay-reachable push endpoint.
             webhook_targets.push(target);
+        } else {
+            tracing::debug!(
+                platform = %target.platform,
+                "Skipping push dispatch for non-relay platform (real-time delivery only)"
+            );
         }
     }
 
@@ -166,6 +175,15 @@ pub async fn dispatch_new_message(
             dispatch_errors.join("; ")
         )))
     }
+}
+
+/// Returns true for mobile platforms that a webhook push relay can reach via
+/// APNs or FCM-style delivery.  Desktop and web platforms (linux, windows,
+/// macos, web) rely on a persistent SSE/WebSocket connection for real-time
+/// delivery and have no relay-reachable push endpoint.
+fn is_relay_deliverable_platform(platform: &str) -> bool {
+    let p = platform.trim().to_lowercase();
+    matches!(p.as_str(), "android" | "fcm")
 }
 
 fn derive_default_relay_webhook_url(instance_domain: &str) -> Option<String> {

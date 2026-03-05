@@ -12,20 +12,35 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 
-export function StickerUploadForm({ groupName: fixedGroupName }: { groupName?: string }) {
+export function CreateGroupForm() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [groupName, setGroupName] = useState(fixedGroupName ?? "General");
-  const [name, setName] = useState("");
+  const [groupName, setGroupName] = useState("");
   const [mimeType, setMimeType] = useState("image/png");
   const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = e.target.files?.[0] ?? null;
+    setFile(picked);
+    if (picked) {
+      const url = URL.createObjectURL(picked);
+      setPreview(url);
+    } else {
+      setPreview(null);
+    }
+  }
+
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (!groupName.trim()) {
+      setError("Enter a group name.");
+      return;
+    }
     if (!file) {
-      setError("Choose an image file first.");
+      setError("Choose a tab image for the group.");
       return;
     }
 
@@ -44,26 +59,21 @@ export function StickerUploadForm({ groupName: fixedGroupName }: { groupName?: s
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          group_name: groupName,
-          name: name || file.name,
+          group_name: groupName.trim(),
+          name: "__tab__",
           mime_type: mimeType,
           content_base64: contentBase64,
         }),
       });
 
       if (!response.ok) {
-        setError("Upload failed.");
+        const body = await response.json().catch(() => ({}));
+        setError((body as { error?: string }).error ?? "Failed to create group.");
       } else {
-        setName("");
-        setGroupName(fixedGroupName ?? "General");
-        setFile(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
-        router.refresh();
+        router.push(`/stickers/manage?group=${encodeURIComponent(groupName.trim())}`);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed.");
+      setError(e instanceof Error ? e.message : "Failed to create group.");
     } finally {
       setWorking(false);
     }
@@ -71,35 +81,25 @@ export function StickerUploadForm({ groupName: fixedGroupName }: { groupName?: s
 
   return (
     <section className="space-y-4">
-      <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">Add sticker</p>
+      <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
+        Create group
+      </p>
       <form className="space-y-4" onSubmit={onSubmit}>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {fixedGroupName ? null : (
-            <div className="space-y-2">
-              <Label htmlFor="sticker-group">Group</Label>
-              <Input
-                id="sticker-group"
-                onChange={(e) => setGroupName(e.target.value)}
-                placeholder="Group"
-                type="text"
-                value={groupName}
-              />
-            </div>
-          )}
           <div className="space-y-2">
-            <Label htmlFor="sticker-name">Sticker name</Label>
+            <Label htmlFor="new-group-name">Group name</Label>
             <Input
-              id="sticker-name"
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Sticker name"
+              id="new-group-name"
+              onChange={(e) => setGroupName(e.target.value)}
+              placeholder="e.g. Happy"
               type="text"
-              value={name}
+              value={groupName}
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="sticker-mime">MIME type</Label>
+            <Label htmlFor="new-group-mime">Tab image type</Label>
             <NativeSelect
-              id="sticker-mime"
+              id="new-group-mime"
               onChange={(e) => setMimeType(e.target.value)}
               value={mimeType}
             >
@@ -110,16 +110,28 @@ export function StickerUploadForm({ groupName: fixedGroupName }: { groupName?: s
             </NativeSelect>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="sticker-file-input">File</Label>
+            <Label htmlFor="new-group-tab-file">Tab image</Label>
             <Input
               accept="image/png,image/webp,image/gif,image/jpeg"
               className="hidden"
-              id="sticker-file-input"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              id="new-group-tab-file"
+              onChange={onFileChange}
               ref={fileInputRef}
               type="file"
             />
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              {preview ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  alt="Tab preview"
+                  className="h-10 w-10 rounded object-cover ring-1 ring-border"
+                  src={preview}
+                />
+              ) : (
+                <div className="flex h-10 w-10 items-center justify-center rounded bg-muted ring-1 ring-border">
+                  <span className="text-xs text-muted-foreground">?</span>
+                </div>
+              )}
               <Button
                 onClick={() => fileInputRef.current?.click()}
                 size="sm"
@@ -142,7 +154,7 @@ export function StickerUploadForm({ groupName: fixedGroupName }: { groupName?: s
         ) : null}
 
         <Button disabled={working} size="sm" type="submit">
-          {working ? "Uploading…" : "Add sticker"}
+          {working ? "Creating…" : "Create group"}
         </Button>
       </form>
     </section>

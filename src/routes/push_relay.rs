@@ -22,7 +22,7 @@ struct RelayPayload {
     targets: Vec<RelayTarget>,
 }
 
-pub async fn webhook(
+async fn webhook(
     req: HttpRequest,
     cfg: web::Data<Config>,
     body: web::Json<RelayPayload>,

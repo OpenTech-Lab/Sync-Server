@@ -150,10 +150,13 @@ export function ConfigForm({
             <Input
               id="webhook-url"
               onChange={(event) => setWebhookUrl(event.target.value)}
-              placeholder="https://…"
+              placeholder="https://push.sync.icyanstudio.net/v1/push/webhook"
               type="url"
               value={webhookUrl}
             />
+            <p className="text-xs text-muted-foreground">
+              Leave blank to use the default relay. Override only if you host your own push relay.
+            </p>
           </div>
         </div>
       </section>

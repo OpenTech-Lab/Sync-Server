@@ -4,7 +4,6 @@ use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
 use serde::Deserialize;
-use std::net::IpAddr;
 use uuid::Uuid;
 
 use crate::auth::AdminUser;
@@ -81,33 +80,6 @@ const MAX_INPUT_IMAGE_ENCODED_CHARS: usize = 28_000_000;
 const MAX_OUTPUT_IMAGE_BYTES: usize = 512 * 1024;
 const MAX_OUTPUT_DIMENSION: u32 = 1024;
 const MIN_OUTPUT_DIMENSION: u32 = 128;
-
-fn expected_relay_host(instance_domain: &str) -> Option<String> {
-    let trimmed = instance_domain.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let host = if let Ok(parsed) = reqwest::Url::parse(trimmed) {
-        parsed.host_str().unwrap_or_default().to_string()
-    } else {
-        trimmed
-            .trim_start_matches("http://")
-            .trim_start_matches("https://")
-            .split('/')
-            .next()
-            .unwrap_or_default()
-            .split(':')
-            .next()
-            .unwrap_or_default()
-            .to_string()
-    };
-    let host = host.trim().to_lowercase();
-    if host.is_empty() || host == "localhost" || host.parse::<IpAddr>().is_ok() {
-        return None;
-    }
-    Some(format!("push.{host}"))
-}
 
 fn parse_supported_image_data_url(data_url: &str) -> Result<(ImageFormat, &str), AppError> {
     if let Some(payload) = data_url.strip_prefix("data:image/png;base64,") {
@@ -401,19 +373,7 @@ pub async fn update_config(
                     "notification_webhook_url must use https".into(),
                 ));
             }
-            let expected_host = expected_relay_host(&cfg.instance_domain).ok_or_else(|| {
-                AppError::BadRequest(
-                    "INSTANCE_DOMAIN must be a public hostname to validate notification_webhook_url"
-                        .into(),
-                )
-            })?;
-            let actual_host = parsed.host_str().unwrap_or_default().to_lowercase();
-            if actual_host != expected_host {
-                return Err(AppError::BadRequest(format!(
-                    "notification_webhook_url host must be `{expected_host}`"
-                )));
-            }
-            admin_service::set_setting(&pool, admin_service::SETTING_WEBHOOK_URL, trimmed)?;
+            admin_service::set_setting(&pool, admin_service::SETTING_WEBHOOK_URL, trimmed)?
         }
     } else {
         admin_service::clear_setting(&pool, admin_service::SETTING_WEBHOOK_URL)?;

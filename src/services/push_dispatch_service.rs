@@ -1,5 +1,4 @@
 use serde::Serialize;
-use std::net::IpAddr;
 use uuid::Uuid;
 
 use crate::config::{Config, PushDeliveryMode};
@@ -7,7 +6,12 @@ use crate::db::Pool;
 use crate::errors::AppError;
 use crate::services::{admin_service, apns_service, push_token_service};
 
-const RELAY_WEBHOOK_PATH: &str = "/v1/push/webhook";
+/// Default push relay hosted by the app publisher. Servers that have not
+/// configured a custom `notification_webhook_url` will forward iOS push
+/// payloads here so that APNs delivery works for the official mobile app
+/// without each operator having to supply their own APNs credentials.
+const DEFAULT_RELAY_WEBHOOK_URL: &str =
+    "https://push.sync.icyanstudio.net/v1/push/webhook";
 
 #[derive(Debug, Clone)]
 struct PushTargetData {
@@ -43,8 +47,9 @@ pub async fn dispatch_new_message(
         admin_service::get_setting(pool, admin_service::SETTING_WEBHOOK_URL)?
             .map(|item| item.value)
             .filter(|url| !url.trim().is_empty());
+    // Fall back to the publisher-hosted relay when no custom URL is configured.
     let webhook_url =
-        configured_webhook_url.or_else(|| derive_default_relay_webhook_url(&cfg.instance_domain));
+        configured_webhook_url.or_else(|| Some(DEFAULT_RELAY_WEBHOOK_URL.to_string()));
     let tokens = push_token_service::list_tokens_for_user(pool, recipient_id)?;
     if tokens.is_empty() {
         return Ok(());
@@ -208,38 +213,11 @@ fn is_relay_deliverable_platform(platform: &str) -> bool {
     matches!(p.as_str(), "android" | "fcm")
 }
 
-fn derive_default_relay_webhook_url(instance_domain: &str) -> Option<String> {
-    let trimmed = instance_domain.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
 
-    let host = if let Ok(parsed) = reqwest::Url::parse(trimmed) {
-        parsed.host_str().unwrap_or_default().to_string()
-    } else {
-        trimmed
-            .trim_start_matches("http://")
-            .trim_start_matches("https://")
-            .split('/')
-            .next()
-            .unwrap_or_default()
-            .split(':')
-            .next()
-            .unwrap_or_default()
-            .to_string()
-    };
-
-    let host = host.trim().to_lowercase();
-    if host.is_empty() || host == "localhost" || host.parse::<IpAddr>().is_ok() {
-        return None;
-    }
-
-    Some(format!("https://push.{host}{RELAY_WEBHOOK_PATH}"))
-}
 
 fn truncate_preview(content: &str, max_chars: usize) -> String {
     if is_encrypted_payload(content) {
-        return "Sent you an encrypted message".to_string();
+        return "Sent you a new message".to_string();
     }
     let trimmed = content.trim();
     if trimmed.chars().count() <= max_chars {

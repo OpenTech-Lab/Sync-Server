@@ -8,7 +8,6 @@ const navItems = [
   { href: "/dashboard", label: "Overview" },
   { href: "/users", label: "Users" },
   { href: "/stickers", label: "Stickers" },
-  { href: "/stickers/manage", label: "Sticker Moderation" },
   { href: "/config", label: "Config" },
   { href: "/planet-news", label: "Planet News" },
   { href: "/audit", label: "Audit Logs" },

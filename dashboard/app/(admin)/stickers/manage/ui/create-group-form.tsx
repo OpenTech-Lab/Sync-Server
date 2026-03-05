@@ -70,7 +70,7 @@ export function CreateGroupForm() {
         const body = await response.json().catch(() => ({}));
         setError((body as { error?: string }).error ?? "Failed to create group.");
       } else {
-        router.push(`/stickers/manage?group=${encodeURIComponent(groupName.trim())}`);
+        router.push(`/stickers?group=${encodeURIComponent(groupName.trim())}`);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create group.");

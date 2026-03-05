@@ -65,7 +65,7 @@ export function GroupsList({ stickers }: { stickers: StickerItem[] }) {
           {groups.map((group) => (
             <Link
               className="group flex flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:bg-accent"
-              href={`/stickers/manage?group=${encodeURIComponent(group.name)}`}
+              href={`/stickers?group=${encodeURIComponent(group.name)}`}
               key={group.name}
             >
               <div className="flex h-28 items-center justify-center bg-muted/40">

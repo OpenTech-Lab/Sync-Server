@@ -107,8 +107,15 @@ pub async fn get_user(
     Ok(HttpResponse::Ok().json(UserProfilePublic::from(user)))
 }
 
+pub async fn delete_me(pool: web::Data<Pool>, auth: AuthUser) -> Result<HttpResponse, AppError> {
+    let user_id = auth.0.user_id()?;
+    user_service::delete_user(&pool, user_id)?;
+    Ok(HttpResponse::NoContent().finish())
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/me", web::get().to(me))
         .route("/me", web::patch().to(update_me))
+        .route("/me", web::delete().to(delete_me))
         .route("/{user_id}", web::get().to(get_user));
 }

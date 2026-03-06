@@ -205,6 +205,16 @@ pub fn create_user(
         })
 }
 
+/// Permanently delete a user and all their data.
+pub fn delete_user(pool: &Pool, user_id: Uuid) -> Result<(), AppError> {
+    let mut conn = pool.get()?;
+    let affected = diesel::delete(users.find(user_id)).execute(&mut conn)?;
+    if affected == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(())
+}
+
 pub fn resolved_max_users(pool: &Pool, config: &Config) -> Result<Option<u32>, AppError> {
     admin_service::effective_max_users(pool, config)
 }

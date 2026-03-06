@@ -175,6 +175,19 @@ http {
             proxy_set_header   Connection        "";
         }
 
+        # ALTCHA challenge is a Next.js route handler (proxies internally to /auth/altcha)
+        location ^~ /api/altcha {
+            limit_req zone=auth_limit burst=10 nodelay;
+            limit_req_status 429;
+            proxy_pass         http://dashboard_backend;
+            proxy_http_version 1.1;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+            proxy_set_header   Connection        "";
+        }
+
         location /api/ {
             limit_req zone=api_limit burst=60 nodelay;
             limit_req_status 429;

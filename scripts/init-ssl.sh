@@ -45,6 +45,20 @@ echo "→ Domain:  $INSTANCE_DOMAIN"
 echo "→ Push:    $PUSH_DOMAIN"
 echo "→ Email:   $ADMIN_EMAIL"
 
+port_80_listeners() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -H -ltnp '( sport = :80 )' 2>/dev/null || true
+    return 0
+  fi
+
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -tlnp 2>/dev/null | awk '$4 ~ /:80$/'
+    return 0
+  fi
+
+  return 1
+}
+
 # ── 1. Generate dummy self-signed cert for the IP-block default_server ───────
 echo ""
 echo "→ Generating dummy cert for IP-block server block..."
@@ -90,10 +104,17 @@ docker compose stop nginx 2>/dev/null || true
 docker rm -f nginx-bootstrap 2>/dev/null || true
 
 # Hard-verify port 80 is actually free; bail with a clear message if not.
-if ss -tlnp 2>/dev/null | grep -q ':80 ' || \
-   netstat -tlnp 2>/dev/null | grep -q ':80 '; then
+PORT_80_LISTENERS="$(port_80_listeners)"
+if [[ -n "${PORT_80_LISTENERS:-}" ]]; then
   echo ""
-  echo "ERROR: Port 80 is still in use. Run 'docker compose down' first, then re-run this script."
+  echo "ERROR: Port 80 is still in use, but not by the bootstrap nginx this script manages."
+  echo "Listener(s):"
+  printf '%s\n' "$PORT_80_LISTENERS"
+  echo ""
+  echo "Stop the process above (for example host nginx/apache/caddy or another docker container),"
+  echo "then re-run this script."
+  echo "If you expect this compose project to own port 80, confirm it is stopped with:"
+  echo "  docker compose ps nginx"
   exit 1
 fi
 

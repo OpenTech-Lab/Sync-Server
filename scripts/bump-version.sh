@@ -141,14 +141,26 @@ if [[ -f "$RELEASE_NOTE" ]]; then
   exit 1
 fi
 
+LAST_TAG="$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null || true)"
+if [[ -n "$LAST_TAG" ]]; then
+  CHANGELOG_ENTRIES="$(git -C "$REPO_ROOT" log "${LAST_TAG}..HEAD" --pretty=format:'    %h %s' || true)"
+else
+  CHANGELOG_ENTRIES="$(git -C "$REPO_ROOT" log --max-count=20 --pretty=format:'    %h %s' || true)"
+fi
+
+if [[ -z "$CHANGELOG_ENTRIES" ]]; then
+  CHANGELOG_ENTRIES="    (no changes)"
+fi
+
 cat >"$RELEASE_NOTE" <<EOF
 # Sync Server $NEW_VERSION
 
 - Released on: $(date -u +"%Y-%m-%d")
 - Previous version: $CURRENT_VERSION
 
-## Changes
-- TODO: summarize notable updates.
+## What's Changed
+
+$CHANGELOG_ENTRIES
 EOF
 
 # Keep only latest version note file

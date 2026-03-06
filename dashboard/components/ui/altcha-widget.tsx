@@ -69,7 +69,7 @@ export function AltchaWidget({ onSolve }: AltchaWidgetProps) {
         try {
           const result = await probeCandidate(url);
           if (result === "enabled") {
-            void import("altcha");
+            await import("altcha");
             setChallengeUrl(url);
             setStatus("enabled");
             return;

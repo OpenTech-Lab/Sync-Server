@@ -5,12 +5,16 @@ use serde::Serialize;
 use crate::config::Config;
 use crate::errors::AppError;
 
+const ALTCHA_MAX_NUMBER: u64 = 250_000;
+
 #[derive(Debug, Serialize)]
 pub struct AltchaChallengeResponse {
     pub algorithm: String,
     pub challenge: String,
     pub salt: String,
     pub signature: String,
+    #[serde(rename = "maxnumber")]
+    pub max_number: u64,
 }
 
 /// GET /auth/altcha
@@ -23,7 +27,8 @@ pub async fn get_altcha_challenge(config: web::Data<Config>) -> Result<HttpRespo
 
     let options = ChallengeOptions {
         hmac_key: hmac_key,
-        max_number: None, // use default
+        // Keep proof-of-work bounded for responsive browser-side verification.
+        max_number: Some(ALTCHA_MAX_NUMBER),
         expires: Some(chrono::Utc::now() + chrono::Duration::minutes(5)), // 5 mins expiration
         salt_length: None, // use default
         ..Default::default()
@@ -37,5 +42,6 @@ pub async fn get_altcha_challenge(config: web::Data<Config>) -> Result<HttpRespo
         challenge: challenge.challenge,
         salt: challenge.salt,
         signature: challenge.signature,
+        max_number: ALTCHA_MAX_NUMBER,
     }))
 }

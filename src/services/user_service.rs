@@ -149,6 +149,7 @@ pub fn ensure_federated_shadow_user(
         password_hash: FEDERATED_DISABLED_PASSWORD_HASH.to_string(),
         role: "user".to_string(),
         device_auth_pubkey: None,
+        is_approved: true, // federated shadow accounts bypass approval gate
     };
 
     match diesel::insert_into(crate::schema::users::table)

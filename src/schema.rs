@@ -82,6 +82,7 @@ diesel::table! {
         updated_at -> Timestamptz,
         last_seen_at -> Nullable<Timestamptz>,
         device_auth_pubkey -> Nullable<Text>,
+        is_approved -> Bool,
     }
 }
 

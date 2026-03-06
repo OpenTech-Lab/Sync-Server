@@ -23,7 +23,7 @@ use crate::models::refresh_token::{NewRefreshToken, RefreshToken};
 use crate::models::user::{NewUser, UserPublic};
 use crate::schema::refresh_tokens::dsl as rt_dsl;
 use crate::schema::users::dsl as user_dsl;
-use crate::services::{email_service, user_service};
+use crate::services::{admin_service, email_service, user_service};
 
 // ── Request / Response DTOs ──────────────────────────────────────────────────
 
@@ -453,6 +453,7 @@ pub async fn register(
 
     let pw_hash = hash_password(body.password.clone()).await?;
 
+    let approval_required = admin_service::is_approval_required(&pool)?;
     let new_user = NewUser {
         id: Uuid::new_v4(),
         username: body.username.clone(),
@@ -460,11 +461,19 @@ pub async fn register(
         password_hash: pw_hash,
         role: "user".to_string(),
         device_auth_pubkey: None,
+        is_approved: !approval_required,
     };
 
     let max_users = user_service::resolved_max_users(&pool, &config)?;
     let user = user_service::create_user(&pool, new_user, max_users)?;
     record_registration(&client_ip);
+
+    if approval_required {
+        return Ok(HttpResponse::Accepted().json(serde_json::json!({
+            "status": "pending",
+            "message": "Your account is awaiting admin approval before you can log in."
+        })));
+    }
     Ok(HttpResponse::Created().json(UserPublic::from(user)))
 }
 
@@ -538,6 +547,7 @@ pub async fn setup_admin(
         password_hash: pw_hash,
         role: "admin".to_string(),
         device_auth_pubkey: None,
+        is_approved: true,
     };
 
     let user = user_service::create_user(&pool, new_user, None)?;
@@ -557,6 +567,10 @@ pub async fn login(
     let pw_ok = verify_password(body.password.clone(), user.password_hash.clone()).await?;
     if !pw_ok {
         return Err(AppError::Unauthorized);
+    }
+
+    if !user.is_approved {
+        return Err(AppError::Forbidden);
     }
 
     if let Some(hmac_key) = &config.altcha_hmac_key {
@@ -615,6 +629,9 @@ pub async fn device_login(
         if !existing.is_active {
             return Err(AppError::Unauthorized);
         }
+        if !existing.is_approved {
+            return Err(AppError::Forbidden);
+        }
         existing
     } else {
         // New device → new account creation. Enforce the per-IP hourly limit.
@@ -629,6 +646,7 @@ pub async fn device_login(
         let shadow_email = format!("device+{}@device.sync.invalid", &pubkey_hash[..32]);
         let password_hash = hash_password(Uuid::new_v4().to_string()).await?;
 
+        let approval_required = admin_service::is_approval_required(&pool)?;
         let new_user = NewUser {
             id: Uuid::new_v4(),
             username,
@@ -636,12 +654,19 @@ pub async fn device_login(
             password_hash,
             role: "user".to_string(),
             device_auth_pubkey: Some(pubkey.to_string()),
+            is_approved: !approval_required,
         };
 
         let max_users = user_service::resolved_max_users(&pool, &config)?;
         match user_service::create_user(&pool, new_user, max_users) {
             Ok(created) => {
                 record_registration(&client_ip);
+                if approval_required {
+                    return Ok(HttpResponse::Accepted().json(serde_json::json!({
+                        "status": "pending",
+                        "message": "Your account is awaiting admin approval before you can log in."
+                    })));
+                }
                 created
             }
             Err(AppError::Conflict(_)) => {
@@ -649,6 +674,9 @@ pub async fn device_login(
                     .ok_or(AppError::Unauthorized)?;
                 if !existing.is_active {
                     return Err(AppError::Unauthorized);
+                }
+                if !existing.is_approved {
+                    return Err(AppError::Forbidden);
                 }
                 existing
             }

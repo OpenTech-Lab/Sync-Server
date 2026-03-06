@@ -11,6 +11,7 @@ type AdminConfig = {
   planet_description: string | null;
   planet_image_base64: string | null;
   linked_planets: string[];
+  require_approval: boolean;
 };
 
 export default async function ConfigPage() {
@@ -37,6 +38,7 @@ export default async function ConfigPage() {
         planetDescription={config.planet_description}
         planetImageBase64={config.planet_image_base64}
         linkedPlanets={config.linked_planets}
+        requireApproval={config.require_approval}
       />
     </div>
   );

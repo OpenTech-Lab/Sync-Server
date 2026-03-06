@@ -18,6 +18,7 @@ pub const SETTING_PLANET_NAME: &str = "planet_name";
 pub const SETTING_PLANET_DESCRIPTION: &str = "planet_description";
 pub const SETTING_PLANET_IMAGE_BASE64: &str = "planet_image_base64";
 pub const SETTING_LINKED_PLANETS: &str = "linked_planets";
+pub const SETTING_REQUIRE_APPROVAL: &str = "registration_requires_approval";
 
 #[derive(Debug, serde::Serialize)]
 pub struct AdminOverview {
@@ -25,6 +26,7 @@ pub struct AdminOverview {
     pub total_users: i64,
     pub active_users: i64,
     pub admin_users: i64,
+    pub pending_approval: i64,
     pub federation_pending: i64,
     pub federation_failed: i64,
     pub federation_dead_letter: i64,
@@ -39,6 +41,7 @@ pub struct AdminConfigView {
     pub planet_description: Option<String>,
     pub planet_image_base64: Option<String>,
     pub linked_planets: Vec<String>,
+    pub require_approval: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -48,6 +51,7 @@ pub struct AdminUserView {
     pub email: String,
     pub role: String,
     pub is_active: bool,
+    pub is_approved: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -60,6 +64,7 @@ impl From<User> for AdminUserView {
             email: value.email,
             role: value.role,
             is_active: value.is_active,
+            is_approved: value.is_approved,
             created_at: value.created_at,
             last_seen_at: value.last_seen_at,
         }
@@ -76,6 +81,10 @@ pub fn admin_overview(pool: &Pool) -> Result<AdminOverview, AppError> {
         .get_result(&mut conn)?;
     let admin_users = user_dsl::users
         .filter(user_dsl::role.eq("admin"))
+        .count()
+        .get_result(&mut conn)?;
+    let pending_approval = user_dsl::users
+        .filter(user_dsl::is_approved.eq(false))
         .count()
         .get_result(&mut conn)?;
 
@@ -102,6 +111,7 @@ pub fn admin_overview(pool: &Pool) -> Result<AdminOverview, AppError> {
         total_users,
         active_users,
         admin_users,
+        pending_approval,
         federation_pending,
         federation_failed,
         federation_dead_letter,
@@ -129,6 +139,34 @@ pub fn list_users(pool: &Pool, query: Option<&str>) -> Result<Vec<AdminUserView>
         .load::<User>(&mut conn)?;
 
     Ok(users.into_iter().map(AdminUserView::from).collect())
+}
+
+pub fn approve_user(pool: &Pool, user_id: Uuid) -> Result<(), AppError> {
+    let mut conn = pool.get()?;
+    let changed = diesel::update(user_dsl::users.find(user_id))
+        .set((
+            user_dsl::is_approved.eq(true),
+            user_dsl::is_active.eq(true),
+        ))
+        .execute(&mut conn)?;
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(())
+}
+
+pub fn reject_user(pool: &Pool, user_id: Uuid) -> Result<(), AppError> {
+    let mut conn = pool.get()?;
+    let changed = diesel::delete(user_dsl::users.find(user_id)).execute(&mut conn)?;
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(())
+}
+
+pub fn is_approval_required(pool: &Pool) -> Result<bool, AppError> {
+    let setting = get_setting(pool, SETTING_REQUIRE_APPROVAL)?;
+    Ok(setting.map(|s| s.value == "true").unwrap_or(false))
 }
 
 pub fn set_user_active(pool: &Pool, user_id: Uuid, active: bool) -> Result<(), AppError> {
@@ -193,6 +231,10 @@ pub fn read_admin_config(pool: &Pool, config: &Config) -> Result<AdminConfigView
     let planet_image_base64 = get_setting(pool, SETTING_PLANET_IMAGE_BASE64)?.map(|s| s.value);
     let linked_planets = read_linked_planets(pool)?;
 
+    let require_approval = get_setting(pool, SETTING_REQUIRE_APPROVAL)?
+        .map(|s| s.value == "true")
+        .unwrap_or(false);
+
     Ok(AdminConfigView {
         max_users_override,
         effective_max_users: max_users_override.or(config.max_users),
@@ -201,6 +243,7 @@ pub fn read_admin_config(pool: &Pool, config: &Config) -> Result<AdminConfigView
         planet_description,
         planet_image_base64,
         linked_planets,
+        require_approval,
     })
 }
 

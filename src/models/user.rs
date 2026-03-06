@@ -20,6 +20,7 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
     pub last_seen_at: Option<DateTime<Utc>>,
     pub device_auth_pubkey: Option<String>,
+    pub is_approved: bool,
 }
 
 #[derive(Debug, Insertable)]
@@ -31,6 +32,7 @@ pub struct NewUser {
     pub password_hash: String,
     pub role: String,
     pub device_auth_pubkey: Option<String>,
+    pub is_approved: bool,
 }
 
 /// Public representation of a user — never includes the password hash.
@@ -42,6 +44,7 @@ pub struct UserPublic {
     pub avatar_base64: Option<String>,
     pub role: String,
     pub is_active: bool,
+    pub is_approved: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -62,6 +65,7 @@ impl From<User> for UserPublic {
             avatar_base64: u.avatar_base64,
             role: u.role,
             is_active: u.is_active,
+            is_approved: u.is_approved,
             created_at: u.created_at,
         }
     }

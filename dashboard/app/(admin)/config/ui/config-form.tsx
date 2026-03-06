@@ -18,6 +18,7 @@ export function ConfigForm({
   planetDescription,
   planetImageBase64,
   linkedPlanets,
+  requireApproval,
 }: {
   maxUsersOverride: number | null;
   notificationWebhookUrl: string | null;
@@ -25,6 +26,7 @@ export function ConfigForm({
   planetDescription: string | null;
   planetImageBase64: string | null;
   linkedPlanets: string[];
+  requireApproval: boolean;
 }) {
   const router = useRouter();
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -42,6 +44,7 @@ export function ConfigForm({
   const [nextLinkedPlanets, setNextLinkedPlanets] = useState(
     linkedPlanets.join("\n"),
   );
+  const [nextRequireApproval, setNextRequireApproval] = useState(requireApproval);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +64,7 @@ export function ConfigForm({
         .split("\n")
         .map((item) => item.trim())
         .filter((item) => item.length > 0),
+      require_approval: nextRequireApproval,
     };
 
     const response = await fetch("/api/admin/config", {
@@ -156,6 +160,25 @@ export function ConfigForm({
             />
             <p className="text-xs text-muted-foreground">
               Leave blank to use the default relay. Override only if you host your own push relay.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3 rounded-lg border p-4">
+          <input
+            checked={nextRequireApproval}
+            className="mt-0.5 h-4 w-4 cursor-pointer accent-primary"
+            id="require-approval"
+            onChange={(e) => setNextRequireApproval(e.target.checked)}
+            type="checkbox"
+          />
+          <div>
+            <Label className="cursor-pointer" htmlFor="require-approval">
+              Require manual approval for new registrations
+            </Label>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              When enabled, new accounts must be approved by an admin before they can log in.
+              Admins can review pending submissions on the Users page.
             </p>
           </div>
         </div>

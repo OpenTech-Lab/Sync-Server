@@ -20,6 +20,7 @@ type UserItem = {
   email: string;
   role: string;
   is_active: boolean;
+  is_approved: boolean;
   created_at: string;
   last_seen_at: string | null;
 };
@@ -34,6 +35,32 @@ export function UsersTable({ users }: { users: UserItem[] }) {
     await fetch(`/api/admin/users/${user.id}/${action}`, { method: "POST" });
     setWorkingUserId(null);
     router.refresh();
+  }
+
+  async function approveUser(user: UserItem) {
+    setWorkingUserId(user.id);
+    await fetch(`/api/admin/users/${user.id}/approve`, { method: "POST" });
+    setWorkingUserId(null);
+    router.refresh();
+  }
+
+  async function rejectUser(user: UserItem) {
+    if (!confirm(`Reject and permanently delete account for "${user.username}"?`)) return;
+    setWorkingUserId(user.id);
+    await fetch(`/api/admin/users/${user.id}/reject`, { method: "POST" });
+    setWorkingUserId(null);
+    router.refresh();
+  }
+
+  function statusBadge(user: UserItem) {
+    if (!user.is_approved) {
+      return <Badge variant="outline" className="text-xs border-amber-400 text-amber-600">pending</Badge>;
+    }
+    return (
+      <Badge variant={user.is_active ? "default" : "secondary"} className="text-xs">
+        {user.is_active ? "active" : "suspended"}
+      </Badge>
+    );
   }
 
   return (
@@ -63,30 +90,49 @@ export function UsersTable({ users }: { users: UserItem[] }) {
                 <p className="text-xs text-muted-foreground">{user.email}</p>
               </TableCell>
               <TableCell className="text-sm text-muted-foreground">{user.role}</TableCell>
-              <TableCell>
-                <Badge variant={user.is_active ? "default" : "secondary"} className="text-xs">
-                  {user.is_active ? "active" : "suspended"}
-                </Badge>
-              </TableCell>
+              <TableCell>{statusBadge(user)}</TableCell>
               <TableCell className="text-sm text-muted-foreground">
                 {user.last_seen_at
                   ? new Date(user.last_seen_at).toLocaleString()
                   : "never"}
               </TableCell>
               <TableCell className="text-right">
-                <Button
-                  disabled={workingUserId === user.id}
-                  onClick={() => toggleStatus(user)}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  {workingUserId === user.id
-                    ? "Updating…"
-                    : user.is_active
-                      ? "Suspend"
-                      : "Activate"}
-                </Button>
+                {!user.is_approved ? (
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      disabled={workingUserId === user.id}
+                      onClick={() => approveUser(user)}
+                      size="sm"
+                      type="button"
+                      variant="default"
+                    >
+                      {workingUserId === user.id ? "Updating…" : "Approve"}
+                    </Button>
+                    <Button
+                      disabled={workingUserId === user.id}
+                      onClick={() => rejectUser(user)}
+                      size="sm"
+                      type="button"
+                      variant="destructive"
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    disabled={workingUserId === user.id}
+                    onClick={() => toggleStatus(user)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    {workingUserId === user.id
+                      ? "Updating…"
+                      : user.is_active
+                        ? "Suspend"
+                        : "Activate"}
+                  </Button>
+                )}
               </TableCell>
             </TableRow>
           ))}

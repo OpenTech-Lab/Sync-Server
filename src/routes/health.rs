@@ -24,6 +24,7 @@ struct LivenessResponse {
     country_code: Option<String>,
     country_name: Option<String>,
     server_created_at: Option<DateTime<Utc>>,
+    registration_requires_approval: bool,
 }
 
 #[derive(Serialize)]
@@ -60,6 +61,7 @@ pub async fn liveness(
                 country_code: geo.country_code.clone(),
                 country_name: geo.country_name.clone(),
                 server_created_at: None,
+                registration_requires_approval: false,
             })
         }
     };
@@ -88,6 +90,8 @@ pub async fn liveness(
             .map(|s| !s.value.trim().is_empty())
             .unwrap_or(false);
     let linked_planets = admin_service::read_linked_planets(&pool).unwrap_or_default();
+    let registration_requires_approval =
+        admin_service::is_approval_required(&pool).unwrap_or(false);
 
     HttpResponse::Ok().json(LivenessResponse {
         status: "ok",
@@ -101,6 +105,7 @@ pub async fn liveness(
         country_code: geo.country_code.clone(),
         country_name: geo.country_name.clone(),
         server_created_at,
+        registration_requires_approval,
     })
 }
 

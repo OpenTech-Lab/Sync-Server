@@ -31,6 +31,7 @@ pub struct UpdateConfigRequest {
     pub planet_description: Option<String>,
     pub planet_image_base64: Option<String>,
     pub linked_planets: Option<Vec<String>>,
+    pub require_approval: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,6 +208,38 @@ pub async fn list_users(
 ) -> Result<HttpResponse, AppError> {
     let users = admin_service::list_users(&pool, query.q.as_deref())?;
     Ok(HttpResponse::Ok().json(users))
+}
+
+pub async fn approve_user(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    user_id: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    admin_service::approve_user(&pool, *user_id)?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin.0.user_id()?),
+        "user.approve",
+        Some(&user_id.to_string()),
+        serde_json::json!({ "is_approved": true }),
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "status": "approved" })))
+}
+
+pub async fn reject_user(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    user_id: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    admin_service::reject_user(&pool, *user_id)?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin.0.user_id()?),
+        "user.reject",
+        Some(&user_id.to_string()),
+        serde_json::json!({ "rejected": true }),
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "status": "rejected" })))
 }
 
 pub async fn suspend_user(
@@ -447,6 +480,18 @@ pub async fn update_config(
         admin_service::clear_setting(&pool, admin_service::SETTING_LINKED_PLANETS)?;
     }
 
+    if let Some(require_approval) = body.require_approval {
+        if require_approval {
+            admin_service::set_setting(
+                &pool,
+                admin_service::SETTING_REQUIRE_APPROVAL,
+                "true",
+            )?;
+        } else {
+            admin_service::clear_setting(&pool, admin_service::SETTING_REQUIRE_APPROVAL)?;
+        }
+    }
+
     admin_service::append_audit_log(
         &pool,
         Some(admin.0.user_id()?),
@@ -494,6 +539,8 @@ pub async fn audit_logs(
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/overview", web::get().to(overview))
         .route("/users", web::get().to(list_users))
+        .route("/users/{user_id}/approve", web::post().to(approve_user))
+        .route("/users/{user_id}/reject", web::post().to(reject_user))
         .route("/users/{user_id}/suspend", web::post().to(suspend_user))
         .route("/users/{user_id}/activate", web::post().to(activate_user))
         .route("/server-news", web::get().to(list_server_news))

@@ -70,8 +70,17 @@ export async function POST(request: Request) {
 
   if (!loginRes.ok) {
     recordLoginAttempt(ip);
+    // Try to surface a meaningful error from the backend (e.g. "altcha_payload
+    // is required") so the user/admin can understand what went wrong.
+    let errorMsg = "Invalid credentials";
+    try {
+      const errBody = (await loginRes.json()) as { error?: string };
+      if (errBody.error) errorMsg = errBody.error;
+    } catch {
+      // Ignore – keep the default message.
+    }
     return NextResponse.json(
-      { error: "Invalid credentials" },
+      { error: errorMsg },
       { status: loginRes.status === 401 ? 401 : 400 },
     );
   }

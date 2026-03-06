@@ -1,4 +1,4 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use chrono::Utc;
@@ -122,6 +122,58 @@ const QR_LOGIN_STATUS_EXPIRED: &str = "expired";
 static QR_LOGIN_FALLBACK_STORE: OnceLock<Mutex<HashMap<String, (QrLoginSessionRecord, i64)>>> =
     OnceLock::new();
 static ADMIN_SETUP_TOKEN: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+/// Per-IP new-account creation timestamps (Unix seconds) for the sliding
+/// registration rate limiter.  Key = client IP string.
+static REGISTRATION_LIMITER: OnceLock<Mutex<HashMap<String, Vec<i64>>>> = OnceLock::new();
+
+/// Maximum new accounts that can be created from one IP address per hour.
+const REGISTRATION_MAX_PER_HOUR: usize = 5;
+
+fn registration_limiter() -> &'static Mutex<HashMap<String, Vec<i64>>> {
+    REGISTRATION_LIMITER.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Extract the real client IP, respecting `X-Forwarded-For` set by nginx.
+fn extract_client_ip(req: &HttpRequest) -> String {
+    if let Some(xff) = req.headers().get("X-Forwarded-For") {
+        if let Ok(val) = xff.to_str() {
+            if let Some(first) = val.split(',').next() {
+                return first.trim().to_string();
+            }
+        }
+    }
+    if let Some(xri) = req.headers().get("X-Real-IP") {
+        if let Ok(val) = xri.to_str() {
+            return val.trim().to_string();
+        }
+    }
+    req.peer_addr()
+        .map(|a| a.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Returns `true` when the IP has exceeded the hourly registration limit.
+fn is_registration_rate_limited(ip: &str) -> bool {
+    let window = 3600_i64; // 1 hour
+    let now = Utc::now().timestamp();
+    let Ok(mut store) = registration_limiter().lock() else {
+        return false; // fail-open on lock poisoning
+    };
+    let timestamps = store.entry(ip.to_string()).or_default();
+    // Keep only timestamps within the window.
+    timestamps.retain(|&ts| now - ts < window);
+    timestamps.len() >= REGISTRATION_MAX_PER_HOUR
+}
+
+/// Record a successful new-account creation from this IP.
+fn record_registration(ip: &str) {
+    let now = Utc::now().timestamp();
+    let Ok(mut store) = registration_limiter().lock() else {
+        return;
+    };
+    store.entry(ip.to_string()).or_default().push(now);
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -366,10 +418,17 @@ fn mint_tokens(
 
 /// POST /auth/register → 201 UserPublic
 pub async fn register(
+    req: HttpRequest,
     pool: web::Data<Pool>,
     config: web::Data<Config>,
     body: web::Json<RegisterRequest>,
 ) -> Result<HttpResponse, AppError> {
+    let client_ip = extract_client_ip(&req);
+    if is_registration_rate_limited(&client_ip) {
+        return Err(AppError::TooManyRequests(
+            "Too many accounts created from this IP. Try again later.".into(),
+        ));
+    }
     // Validate minimal input
     if body.username.trim().is_empty() || body.email.trim().is_empty() || body.password.len() < 8 {
         return Err(AppError::BadRequest(
@@ -405,6 +464,7 @@ pub async fn register(
 
     let max_users = user_service::resolved_max_users(&pool, &config)?;
     let user = user_service::create_user(&pool, new_user, max_users)?;
+    record_registration(&client_ip);
     Ok(HttpResponse::Created().json(UserPublic::from(user)))
 }
 
@@ -526,6 +586,7 @@ pub async fn login(
 /// Authenticates by a device-generated public key. If this key has never been
 /// seen on this server, a new local user is created automatically.
 pub async fn device_login(
+    req: HttpRequest,
     pool: web::Data<Pool>,
     config: web::Data<Config>,
     body: web::Json<DeviceLoginRequest>,
@@ -536,6 +597,9 @@ pub async fn device_login(
             "device_auth_pubkey is required".into(),
         ));
     }
+    // Extract client IP early; we'll apply the registration limiter only when
+    // this is a *new* device (i.e. account creation, not re-login).
+    let client_ip = extract_client_ip(&req);
 
     if let Some(hmac_key) = &config.altcha_hmac_key {
         let payload = body.altcha_payload.as_deref().unwrap_or("");
@@ -553,6 +617,13 @@ pub async fn device_login(
         }
         existing
     } else {
+        // New device → new account creation. Enforce the per-IP hourly limit.
+        if is_registration_rate_limited(&client_ip) {
+            return Err(AppError::TooManyRequests(
+                "Too many accounts created from this IP. Try again later.".into(),
+            ));
+        }
+
         let pubkey_hash = hex::encode(digest(&SHA256, pubkey.as_bytes()).as_ref());
         let username = format!("u{}", &pubkey_hash[..15]);
         let shadow_email = format!("device+{}@device.sync.invalid", &pubkey_hash[..32]);
@@ -569,7 +640,10 @@ pub async fn device_login(
 
         let max_users = user_service::resolved_max_users(&pool, &config)?;
         match user_service::create_user(&pool, new_user, max_users) {
-            Ok(created) => created,
+            Ok(created) => {
+                record_registration(&client_ip);
+                created
+            }
             Err(AppError::Conflict(_)) => {
                 let existing = user_service::find_by_device_auth_pubkey(&pool, pubkey)?
                     .ok_or(AppError::Unauthorized)?;

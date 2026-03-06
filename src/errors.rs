@@ -26,6 +26,9 @@ pub enum AppError {
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
+
     #[error("Internal server error")]
     Internal(#[from] anyhow::Error),
 }
@@ -46,6 +49,7 @@ impl actix_web::ResponseError for AppError {
             AppError::Forbidden => HttpResponse::Forbidden().json(body),
             AppError::BadRequest(_) => HttpResponse::BadRequest().json(body),
             AppError::Conflict(_) => HttpResponse::Conflict().json(body),
+            AppError::TooManyRequests(_) => HttpResponse::TooManyRequests().json(body),
             _ => {
                 tracing::error!(error = %self, "Unhandled internal error");
                 HttpResponse::InternalServerError().json(body)

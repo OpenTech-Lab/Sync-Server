@@ -10,76 +10,164 @@ type AltchaWidgetProps = {
   onSolve: (payload: string | null) => void;
 };
 
-type ProbeStatus = "loading" | "enabled" | "disabled" | "error";
-type ProbeResult = "enabled" | "not_found" | "error";
+type ProbeStatus = "loading" | "verifying" | "disabled" | "solved" | "error";
+
+type AltchaChallenge = {
+  algorithm: string;
+  challenge: string;
+  salt: string;
+  signature: string;
+  maxnumber?: number;
+  maxNumber?: number;
+};
+
 const ALTCHA_CANDIDATE_URLS = ["/api/altcha", "/auth/altcha"] as const;
 
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function toBase64(value: string): string {
+  return btoa(value);
+}
+
+async function solveAltchaChallenge(
+  challenge: AltchaChallenge,
+  signal: AbortSignal,
+): Promise<string> {
+  if (challenge.algorithm.toUpperCase() !== "SHA-256") {
+    throw new Error(`Unsupported ALTCHA algorithm: ${challenge.algorithm}`);
+  }
+  if (
+    typeof crypto === "undefined" ||
+    !("subtle" in crypto) ||
+    typeof crypto.subtle.digest !== "function"
+  ) {
+    throw new Error("Web Crypto is unavailable for ALTCHA verification.");
+  }
+
+  const encoder = new TextEncoder();
+  const target = challenge.challenge.toLowerCase();
+  const maxNumber = challenge.maxNumber ?? challenge.maxnumber ?? 1_000_000;
+  const startedAt = Date.now();
+
+  for (let number = 0; number <= maxNumber; number += 1) {
+    if (signal.aborted) {
+      throw new DOMException("ALTCHA verification aborted.", "AbortError");
+    }
+
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      encoder.encode(`${challenge.salt}${number}`),
+    );
+    if (toHex(digest) !== target) {
+      continue;
+    }
+
+    return toBase64(
+      JSON.stringify({
+        algorithm: challenge.algorithm,
+        challenge: challenge.challenge,
+        number,
+        salt: challenge.salt,
+        signature: challenge.signature,
+        took: Date.now() - startedAt,
+      }),
+    );
+  }
+
+  throw new Error("Unable to solve the ALTCHA challenge.");
+}
+
 /**
- * Wraps the ALTCHA web component (`<altcha-widget>`).
- *
- * On mount the component probes challenge endpoints in order:
- * `/api/altcha` (dashboard proxy) → `/auth/altcha` (direct same-origin backend).
- *
- * - **404 (confirmed twice)** → ALTCHA disabled; `onSolve(null)` is called so
- *   the form can proceed without a proof-of-work payload.
- * - **200** → ALTCHA enabled; the web component renders and auto-solves the
- *   PoW puzzle (`auto="onload"`) so no user interaction is required.
- * - **Any other status / network error** → shows an error state with a retry
- *   button.  We deliberately do NOT silently skip ALTCHA here because the
- *   backend may still require the payload, and proceeding without it would
- *   produce a confusing "Invalid credentials" error.
+ * Fetches + solves ALTCHA directly in React instead of relying on the
+ * third-party web component runtime, which has been flaky in Firefox/Linux.
  */
 export function AltchaWidget({ onSolve }: AltchaWidgetProps) {
-  const ref = useRef<HTMLElement>(null);
-  const [status, setStatus] = useState<ProbeStatus>("loading");
-  const [challengeUrl, setChallengeUrl] = useState<
-    (typeof ALTCHA_CANDIDATE_URLS)[number]
-  >(ALTCHA_CANDIDATE_URLS[0]);
-
-  // Stable callback ref so the event-listener effect below does not re-run
-  // on every render.
   const onSolveRef = useRef(onSolve);
+  const abortRef = useRef<AbortController | null>(null);
+  const [status, setStatus] = useState<ProbeStatus>("loading");
+
   useEffect(() => {
     onSolveRef.current = onSolve;
   }, [onSolve]);
 
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   const probe = useCallback(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setStatus("loading");
-    const probeRequest = (url: string) => fetch(url, { cache: "no-store" });
-    const probeCandidate = async (url: string): Promise<ProbeResult> => {
-      const first = await probeRequest(url);
+
+    const fetchCandidate = async (
+      url: (typeof ALTCHA_CANDIDATE_URLS)[number],
+    ): Promise<AltchaChallenge | null> => {
+      const request = () =>
+        fetch(url, {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+
+      const first = await request();
       if (first.ok) {
-        return "enabled";
+        return (await first.json()) as AltchaChallenge;
       }
       if (first.status !== 404) {
-        return "error";
+        throw new Error(`ALTCHA challenge request failed (${first.status}).`);
       }
-      // Confirm 404 once more before disabling this candidate so a transient
-      // routing mismatch does not permanently skip verification.
-      const second = await probeRequest(url);
+
+      // Confirm 404 before treating this endpoint as unavailable so transient
+      // proxy/router mismatches do not disable verification.
+      const second = await request();
       if (second.ok) {
-        return "enabled";
+        return (await second.json()) as AltchaChallenge;
       }
-      return second.status === 404 ? "not_found" : "error";
+      if (second.status === 404) {
+        return null;
+      }
+      throw new Error(`ALTCHA challenge request failed (${second.status}).`);
     };
 
     void (async () => {
       let sawError = false;
+
       for (const url of ALTCHA_CANDIDATE_URLS) {
         try {
-          const result = await probeCandidate(url);
-          if (result === "enabled") {
-            await import("altcha");
-            setChallengeUrl(url);
-            setStatus("enabled");
+          const challenge = await fetchCandidate(url);
+          if (challenge === null) {
+            continue;
+          }
+
+          setStatus("verifying");
+          const payload = await solveAltchaChallenge(challenge, controller.signal);
+          if (controller.signal.aborted) {
             return;
           }
-          if (result === "error") {
-            sawError = true;
+
+          setStatus("solved");
+          onSolveRef.current(payload);
+          return;
+        } catch (error) {
+          if (
+            error instanceof DOMException &&
+            error.name === "AbortError"
+          ) {
+            return;
           }
-        } catch {
           sawError = true;
         }
+      }
+
+      if (controller.signal.aborted) {
+        return;
       }
 
       if (sawError) {
@@ -92,38 +180,24 @@ export function AltchaWidget({ onSolve }: AltchaWidgetProps) {
     })();
   }, []);
 
-  // Probe on mount.
   useEffect(() => {
-    probe();
+    const timer = window.setTimeout(() => {
+      probe();
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [probe]);
 
-  // Listen for the statechange event fired by the web component.
-  const handleStateChange = useCallback((e: Event) => {
-    const ev = e as AltchaStateChangeEvent;
-    if (ev.detail.state === "verified" && ev.detail.payload) {
-      onSolveRef.current(ev.detail.payload);
-    }
-  }, []);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || status !== "enabled") return;
-
-    el.addEventListener("statechange", handleStateChange);
-    return () => el.removeEventListener("statechange", handleStateChange);
-  }, [status, handleStateChange]);
-
-  if (status === "disabled" || status === "loading") return null;
+  if (status === "disabled" || status === "solved") {
+    return null;
+  }
 
   if (status === "error") {
     return (
       <p className="text-sm text-destructive">
         Verification unavailable.{" "}
-        <button
-          type="button"
-          className="underline"
-          onClick={probe}
-        >
+        <button className="underline" onClick={probe} type="button">
           Retry
         </button>
       </p>
@@ -131,11 +205,8 @@ export function AltchaWidget({ onSolve }: AltchaWidgetProps) {
   }
 
   return (
-    <altcha-widget
-      ref={ref}
-      challengeurl={challengeUrl}
-      auto="onload"
-      hidefooter
-    />
+    <p className="text-sm text-muted-foreground">
+      {status === "verifying" ? "Verifying..." : "Preparing verification..."}
+    </p>
   );
 }

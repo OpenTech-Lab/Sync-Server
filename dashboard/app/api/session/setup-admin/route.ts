@@ -8,6 +8,7 @@ type SetupAdminBody = {
   email?: string;
   password?: string;
   setupToken?: string;
+  altcha_payload?: string;
 };
 
 export async function POST(request: Request) {
@@ -20,6 +21,7 @@ export async function POST(request: Request) {
   const email = body.email?.trim().toLowerCase() ?? "";
   const password = body.password ?? "";
   const setupToken = body.setupToken?.trim() ?? "";
+  const altchaPayload = body.altcha_payload?.trim() ?? undefined;
 
   if (!username || !email || password.length < 8 || !setupToken) {
     return NextResponse.json(
@@ -42,6 +44,7 @@ export async function POST(request: Request) {
       email,
       password,
       setup_token: setupToken,
+      ...(altchaPayload ? { altcha_payload: altchaPayload } : {}),
     }),
     cache: "no-store",
   });

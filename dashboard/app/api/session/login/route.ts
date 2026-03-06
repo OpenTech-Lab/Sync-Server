@@ -38,9 +38,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const body = (await request.json()) as { email?: string; password?: string };
+  const body = (await request.json()) as {
+    email?: string;
+    password?: string;
+    altcha_payload?: string;
+  };
   const email = body.email?.trim().toLowerCase() ?? "";
   const password = body.password ?? "";
+  const altchaPayload = body.altcha_payload?.trim() ?? undefined;
 
   if (!email || !password) {
     return NextResponse.json(
@@ -55,7 +60,11 @@ export async function POST(request: Request) {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({
+      email,
+      password,
+      ...(altchaPayload ? { altcha_payload: altchaPayload } : {}),
+    }),
     cache: "no-store",
   });
 

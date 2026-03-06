@@ -1,4 +1,6 @@
 use actix_web::{web, HttpResponse};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use chrono::Utc;
 use diesel::prelude::*;
 use redis::AsyncCommands;
@@ -30,17 +32,20 @@ pub struct RegisterRequest {
     pub username: String,
     pub email: String,
     pub password: String,
+    pub altcha_payload: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
+    pub altcha_payload: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct DeviceLoginRequest {
     pub device_auth_pubkey: String,
+    pub altcha_payload: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +134,21 @@ fn is_valid_username(value: &str) -> bool {
     normalized
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-')
+}
+
+/// Verifies an ALTCHA payload (base64-encoded JSON) against the server HMAC key.
+///
+/// The client widget encodes the solved payload as `Base64(JSON{...})`.  We
+/// decode and then delegate to `altcha_lib_rs::verify_json_solution` which
+/// checks the HMAC signature and the optional expiry timestamp.
+fn verify_altcha(payload: &str, hmac_key: &str) -> bool {
+    let Ok(decoded) = BASE64_STANDARD.decode(payload.trim()) else {
+        return false;
+    };
+    let Ok(json_str) = std::str::from_utf8(&decoded) else {
+        return false;
+    };
+    altcha_lib_rs::verify_json_solution(json_str, hmac_key, true).is_ok()
 }
 
 fn qr_login_redis_key(session_id: &str) -> String {
@@ -362,6 +382,16 @@ pub async fn register(
         ));
     }
 
+    if let Some(hmac_key) = &config.altcha_hmac_key {
+        let payload = body.altcha_payload.as_deref().unwrap_or("");
+        if payload.is_empty() {
+            return Err(AppError::BadRequest("altcha_payload is required".into()));
+        }
+        if !verify_altcha(payload, hmac_key) {
+            return Err(AppError::Unauthorized);
+        }
+    }
+
     let pw_hash = hash_password(body.password.clone()).await?;
 
     let new_user = NewUser {
@@ -469,6 +499,16 @@ pub async fn login(
         return Err(AppError::Unauthorized);
     }
 
+    if let Some(hmac_key) = &config.altcha_hmac_key {
+        let payload = body.altcha_payload.as_deref().unwrap_or("");
+        if payload.is_empty() {
+            return Err(AppError::BadRequest("altcha_payload is required".into()));
+        }
+        if !verify_altcha(payload, hmac_key) {
+            return Err(AppError::Unauthorized);
+        }
+    }
+
     let mut conn = pool.get()?;
     let tokens = mint_tokens(
         &mut conn,
@@ -495,6 +535,16 @@ pub async fn device_login(
         return Err(AppError::BadRequest(
             "device_auth_pubkey is required".into(),
         ));
+    }
+
+    if let Some(hmac_key) = &config.altcha_hmac_key {
+        let payload = body.altcha_payload.as_deref().unwrap_or("");
+        if payload.is_empty() {
+            return Err(AppError::BadRequest("altcha_payload is required".into()));
+        }
+        if !verify_altcha(payload, hmac_key) {
+            return Err(AppError::Unauthorized);
+        }
     }
 
     let user = if let Some(existing) = user_service::find_by_device_auth_pubkey(&pool, pubkey)? {

@@ -24,7 +24,7 @@ async fn register_returns_201() {
 
     let res = client
         .post(format!("{base}/auth/register"))
-        .json(&json!({ "email": email, "password": "hunter2_secure!" }))
+        .json(&json!({ "username": "testuser", "email": email, "password": "hunter2_secure!" }))
         .send()
         .await
         .expect("request failed");

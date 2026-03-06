@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AltchaWidget } from "@/components/ui/altcha-widget";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,9 +16,23 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // null = ALTCHA still loading/pending; string = solved payload; empty
+  // string means ALTCHA is disabled on the server (skip the check).
+  const [altchaPayload, setAltchaPayload] = useState<string | null | undefined>(
+    undefined,
+  );
+
+  const handleAltchaSolve = useCallback((payload: string | null) => {
+    // null → ALTCHA disabled; forward an empty string so the backend ignores it.
+    setAltchaPayload(payload ?? "");
+  }, []);
+
+  // The form is ready to submit once ALTCHA is either solved or disabled.
+  const canSubmit = !submitting && altchaPayload !== undefined;
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
 
@@ -27,7 +42,11 @@ export function LoginForm() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email,
+          password,
+          altcha_payload: altchaPayload || undefined,
+        }),
       });
 
       if (!response.ok) {
@@ -84,13 +103,16 @@ export function LoginForm() {
         </Link>
       </div>
 
+      {/* ALTCHA proof-of-work widget – hidden automatically when disabled */}
+      <AltchaWidget onSolve={handleAltchaSolve} />
+
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
 
-      <Button className="w-full" disabled={submitting} type="submit">
+      <Button className="w-full" disabled={!canSubmit} type="submit">
         {submitting ? "Signing in..." : "Sign in"}
       </Button>
     </form>

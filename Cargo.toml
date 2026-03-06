@@ -72,6 +72,7 @@ maxminddb = "0.24"
 
 # Image decode/resize/compress for admin planet image uploads
 image = "0.25"
+altcha-lib-rs = { version = "0.3.2", features = ["json"] }
 
 [dev-dependencies]
 actix-web = { version = "4", features = ["macros"] }

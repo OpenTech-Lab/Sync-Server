@@ -61,6 +61,8 @@ pub struct Config {
     pub push_delivery_mode: PushDeliveryMode,
     /// Optional shared secret for webhook relay calls.
     pub push_relay_shared_secret: Option<String>,
+    /// HMAC key for generating ALTCHA challenges. If None, ALTCHA is disabled.
+    pub altcha_hmac_key: Option<String>,
 }
 
 impl Config {
@@ -141,6 +143,9 @@ impl Config {
                 &std::env::var("PUSH_DELIVERY_MODE").unwrap_or_else(|_| "relay".to_string()),
             )?,
             push_relay_shared_secret: std::env::var("PUSH_RELAY_SHARED_SECRET")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
+            altcha_hmac_key: std::env::var("ALTCHA_HMAC_KEY")
                 .ok()
                 .filter(|v| !v.trim().is_empty()),
         })

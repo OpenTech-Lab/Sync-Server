@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AltchaWidget } from "@/components/ui/altcha-widget";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,9 +15,20 @@ export function SetupAdminForm({ setupToken }: { setupToken: string }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // undefined = ALTCHA still loading; string (including "") = ready to submit
+  const [altchaPayload, setAltchaPayload] = useState<string | undefined>(
+    undefined,
+  );
+
+  const handleAltchaSolve = useCallback((payload: string | null) => {
+    setAltchaPayload(payload ?? "");
+  }, []);
+
+  const canSubmit = !submitting && altchaPayload !== undefined;
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
 
@@ -32,7 +44,13 @@ export function SetupAdminForm({ setupToken }: { setupToken: string }) {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username, email, password, setupToken }),
+        body: JSON.stringify({
+          username,
+          email,
+          password,
+          setupToken,
+          altcha_payload: altchaPayload || undefined,
+        }),
       });
 
       if (!response.ok) {
@@ -108,13 +126,16 @@ export function SetupAdminForm({ setupToken }: { setupToken: string }) {
         />
       </div>
 
+      {/* ALTCHA proof-of-work widget – hidden automatically when disabled */}
+      <AltchaWidget onSolve={handleAltchaSolve} />
+
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
 
-      <Button className="w-full" disabled={submitting} type="submit">
+      <Button className="w-full" disabled={!canSubmit} type="submit">
         {submitting ? "Creating account..." : "Create admin account"}
       </Button>
     </form>

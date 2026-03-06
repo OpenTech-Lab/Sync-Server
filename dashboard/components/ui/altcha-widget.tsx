@@ -11,12 +11,14 @@ type AltchaWidgetProps = {
 };
 
 type ProbeStatus = "loading" | "enabled" | "disabled" | "error";
+type ProbeResult = "enabled" | "not_found" | "error";
+const ALTCHA_CANDIDATE_URLS = ["/api/altcha", "/auth/altcha"] as const;
 
 /**
  * Wraps the ALTCHA web component (`<altcha-widget>`).
  *
- * On mount the component probes `/api/altcha` (which proxies the backend
- * challenge endpoint).
+ * On mount the component probes challenge endpoints in order:
+ * `/api/altcha` (dashboard proxy) → `/auth/altcha` (direct same-origin backend).
  *
  * - **404 (confirmed twice)** → ALTCHA disabled; `onSolve(null)` is called so
  *   the form can proceed without a proof-of-work payload.
@@ -30,6 +32,9 @@ type ProbeStatus = "loading" | "enabled" | "disabled" | "error";
 export function AltchaWidget({ onSolve }: AltchaWidgetProps) {
   const ref = useRef<HTMLElement>(null);
   const [status, setStatus] = useState<ProbeStatus>("loading");
+  const [challengeUrl, setChallengeUrl] = useState<
+    (typeof ALTCHA_CANDIDATE_URLS)[number]
+  >(ALTCHA_CANDIDATE_URLS[0]);
 
   // Stable callback ref so the event-listener effect below does not re-run
   // on every render.
@@ -40,47 +45,51 @@ export function AltchaWidget({ onSolve }: AltchaWidgetProps) {
 
   const probe = useCallback(() => {
     setStatus("loading");
-    const probeRequest = () => fetch("/api/altcha", { cache: "no-store" });
+    const probeRequest = (url: string) => fetch(url, { cache: "no-store" });
+    const probeCandidate = async (url: string): Promise<ProbeResult> => {
+      const first = await probeRequest(url);
+      if (first.ok) {
+        return "enabled";
+      }
+      if (first.status !== 404) {
+        return "error";
+      }
+      // Confirm 404 once more before disabling this candidate so a transient
+      // routing mismatch does not permanently skip verification.
+      const second = await probeRequest(url);
+      if (second.ok) {
+        return "enabled";
+      }
+      return second.status === 404 ? "not_found" : "error";
+    };
 
-    probeRequest()
-      .then((res) => {
-        if (res.ok) {
-          // ALTCHA is configured – load the web component and show the widget.
-          void import("altcha");
-          setStatus("enabled");
-          return;
+    void (async () => {
+      let sawError = false;
+      for (const url of ALTCHA_CANDIDATE_URLS) {
+        try {
+          const result = await probeCandidate(url);
+          if (result === "enabled") {
+            void import("altcha");
+            setChallengeUrl(url);
+            setStatus("enabled");
+            return;
+          }
+          if (result === "error") {
+            sawError = true;
+          }
+        } catch {
+          sawError = true;
         }
+      }
 
-        if (res.status === 404) {
-          // Confirm 404 once more before disabling ALTCHA so a transient backend
-          // routing mismatch does not permanently skip verification.
-          probeRequest()
-            .then((retryRes) => {
-              if (retryRes.ok) {
-                void import("altcha");
-                setStatus("enabled");
-                return;
-              }
-              if (retryRes.status === 404) {
-                setStatus("disabled");
-                onSolveRef.current(null);
-                return;
-              }
-              setStatus("error");
-            })
-            .catch(() => {
-              setStatus("error");
-            });
-          return;
-        }
+      if (sawError) {
+        setStatus("error");
+        return;
+      }
 
-        // Unexpected error (502, 500, …) – show retry so the user is not
-        // silently locked out.
-        setStatus("error");
-      })
-      .catch(() => {
-        setStatus("error");
-      });
+      setStatus("disabled");
+      onSolveRef.current(null);
+    })();
   }, []);
 
   // Probe on mount.
@@ -124,7 +133,7 @@ export function AltchaWidget({ onSolve }: AltchaWidgetProps) {
   return (
     <altcha-widget
       ref={ref}
-      challengeurl="/api/altcha"
+      challengeurl={challengeUrl}
       auto="onload"
       hidefooter
     />

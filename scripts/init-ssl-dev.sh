@@ -21,9 +21,24 @@ else
 fi
 
 INSTANCE_DOMAIN="${INSTANCE_DOMAIN:-localhost}"
-if [[ "$INSTANCE_DOMAIN" != "localhost" ]]; then
-  echo "ERROR: init-ssl-dev.sh is intended for local HTTPS only."
-  echo "Set INSTANCE_DOMAIN=localhost in .env, or use scripts/init-ssl.sh for real domains."
+
+# Allow only local/private addresses; reject public domain names.
+is_local() {
+  local d="$1"
+  [[ "$d" == "localhost" ]] && return 0
+  [[ "$d" =~ ^127\. ]] && return 0
+  [[ "$d" =~ ^10\. ]] && return 0
+  [[ "$d" =~ ^192\.168\. ]] && return 0
+  [[ "$d" =~ ^172\.(1[6-9]|2[0-9]|3[01])\. ]] && return 0
+  [[ "$d" == "::1" ]] && return 0
+  return 1
+}
+
+if ! is_local "$INSTANCE_DOMAIN"; then
+  echo "ERROR: init-ssl-dev.sh is intended for local/LAN HTTPS only."
+  echo "INSTANCE_DOMAIN='$INSTANCE_DOMAIN' looks like a public domain."
+  echo "Use scripts/init-ssl.sh for real domains, or set INSTANCE_DOMAIN to a"
+  echo "local address (localhost, 192.168.x.x, 10.x.x.x, …)."
   exit 1
 fi
 
@@ -38,9 +53,18 @@ PRIVKEY_PATH="$TMP_DIR/privkey.pem"
 echo "-> Generating localhost certificate..."
 if command -v mkcert >/dev/null 2>&1; then
   mkcert -install >/dev/null 2>&1 || true
-  mkcert -cert-file "$FULLCHAIN_PATH" -key-file "$PRIVKEY_PATH" localhost 127.0.0.1 ::1
+  # Include INSTANCE_DOMAIN in SAN so the cert is valid for the LAN IP too.
+  mkcert -cert-file "$FULLCHAIN_PATH" -key-file "$PRIVKEY_PATH" "$INSTANCE_DOMAIN" localhost 127.0.0.1 ::1
 else
-  cat > "$TMP_DIR/openssl.cnf" <<'EOF'
+  # Build SAN list: always include localhost entries + INSTANCE_DOMAIN if it's an IP.
+  SAN="DNS:localhost,IP:127.0.0.1,IP:::1"
+  if [[ "$INSTANCE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    SAN="IP:$INSTANCE_DOMAIN,$SAN"
+  elif [[ "$INSTANCE_DOMAIN" != "localhost" ]]; then
+    SAN="DNS:$INSTANCE_DOMAIN,$SAN"
+  fi
+
+  cat > "$TMP_DIR/openssl.cnf" << EOF
 [req]
 default_bits = 2048
 prompt = no
@@ -49,15 +73,10 @@ x509_extensions = v3_req
 distinguished_name = dn
 
 [dn]
-CN = localhost
+CN = $INSTANCE_DOMAIN
 
 [v3_req]
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = localhost
-IP.1 = 127.0.0.1
-IP.2 = ::1
+subjectAltName = $SAN
 EOF
   openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
     -keyout "$PRIVKEY_PATH" \
@@ -105,7 +124,14 @@ echo "Done. Local HTTPS is available at:"
 echo "  https://$INSTANCE_DOMAIN"
 echo "  https://$INSTANCE_DOMAIN/login"
 echo ""
-if ! command -v mkcert >/dev/null 2>&1; then
-  echo "Note: openssl fallback cert is self-signed; browser may warn."
-  echo "Install mkcert for a trusted local cert."
+if command -v mkcert >/dev/null 2>&1; then
+  CA_ROOT="$(mkcert -CAROOT)"
+  echo "To trust the cert on your phone (one-time):"
+  echo "  CA file: $CA_ROOT/rootCA.pem"
+  echo "  → Email/AirDrop it to the phone, then:"
+  echo "     iOS:     Settings → General → VPN & Device Management → trust the CA"
+  echo "     Android: Settings → Security → Install certificate → CA certificate"
+else
+  echo "Note: openssl fallback cert is self-signed; browsers and apps will warn."
+  echo "Install mkcert for a properly trusted local cert."
 fi

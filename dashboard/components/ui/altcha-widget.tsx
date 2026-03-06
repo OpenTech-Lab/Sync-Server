@@ -18,8 +18,8 @@ type ProbeStatus = "loading" | "enabled" | "disabled" | "error";
  * On mount the component probes `/api/altcha` (which proxies the backend
  * challenge endpoint).
  *
- * - **404** → ALTCHA disabled; `onSolve(null)` is called immediately so the
- *   form can proceed without a proof-of-work payload.
+ * - **404 (confirmed twice)** → ALTCHA disabled; `onSolve(null)` is called so
+ *   the form can proceed without a proof-of-work payload.
  * - **200** → ALTCHA enabled; the web component renders and auto-solves the
  *   PoW puzzle (`auto="onload"`) so no user interaction is required.
  * - **Any other status / network error** → shows an error state with a retry
@@ -40,21 +40,43 @@ export function AltchaWidget({ onSolve }: AltchaWidgetProps) {
 
   const probe = useCallback(() => {
     setStatus("loading");
-    fetch("/api/altcha", { cache: "no-store" })
+    const probeRequest = () => fetch("/api/altcha", { cache: "no-store" });
+
+    probeRequest()
       .then((res) => {
-        if (res.status === 404) {
-          // ALTCHA is not configured on this server – skip it.
-          setStatus("disabled");
-          onSolveRef.current(null);
-        } else if (res.ok) {
+        if (res.ok) {
           // ALTCHA is configured – load the web component and show the widget.
           void import("altcha");
           setStatus("enabled");
-        } else {
-          // Unexpected error (502, 500, …) – show retry so the user is not
-          // silently locked out.
-          setStatus("error");
+          return;
         }
+
+        if (res.status === 404) {
+          // Confirm 404 once more before disabling ALTCHA so a transient backend
+          // routing mismatch does not permanently skip verification.
+          probeRequest()
+            .then((retryRes) => {
+              if (retryRes.ok) {
+                void import("altcha");
+                setStatus("enabled");
+                return;
+              }
+              if (retryRes.status === 404) {
+                setStatus("disabled");
+                onSolveRef.current(null);
+                return;
+              }
+              setStatus("error");
+            })
+            .catch(() => {
+              setStatus("error");
+            });
+          return;
+        }
+
+        // Unexpected error (502, 500, …) – show retry so the user is not
+        // silently locked out.
+        setStatus("error");
       })
       .catch(() => {
         setStatus("error");

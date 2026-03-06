@@ -16,6 +16,7 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [altchaWidgetKey, setAltchaWidgetKey] = useState(0);
   // null = ALTCHA still loading/pending; string = solved payload; empty
   // string means ALTCHA is disabled on the server (skip the check).
   const [altchaPayload, setAltchaPayload] = useState<string | null | undefined>(
@@ -53,7 +54,14 @@ export function LoginForm() {
         const body = (await response.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(body?.error ?? "Login failed");
+        const message = body?.error ?? "Login failed";
+        if (message.toLowerCase().includes("altcha_payload is required")) {
+          setAltchaPayload(undefined);
+          setAltchaWidgetKey((current) => current + 1);
+          setError("Verification is required. Retrying challenge...");
+          return;
+        }
+        setError(message);
         return;
       }
 
@@ -104,7 +112,7 @@ export function LoginForm() {
       </div>
 
       {/* ALTCHA proof-of-work widget – hidden automatically when disabled */}
-      <AltchaWidget onSolve={handleAltchaSolve} />
+      <AltchaWidget key={altchaWidgetKey} onSolve={handleAltchaSolve} />
 
       {error ? (
         <Alert variant="destructive">

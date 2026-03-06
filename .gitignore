@@ -18,6 +18,7 @@ diesel_migrations/
 .env.local
 .env.production
 .env.staging
+.env.cloud
 
 # Logs
 *.log

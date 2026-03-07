@@ -9,7 +9,9 @@ use crate::errors::AppError;
 use crate::models::trust::TrustSnapshot;
 use crate::routes::federation;
 use crate::services::user_service;
-use crate::services::{message_service, push_dispatch_service, redis_pubsub, trust_service};
+use crate::services::{
+    admin_service, message_service, push_dispatch_service, redis_pubsub, trust_service,
+};
 
 // ── Request DTOs ─────────────────────────────────────────────────────────────
 
@@ -238,6 +240,19 @@ pub async fn send_message(
                 trust,
                 retry_after_seconds,
             } => {
+                admin_service::append_audit_log(
+                    &pool,
+                    Some(sender_id),
+                    "trust.blocked_action.outbound_message_limit",
+                    Some(&recipient_user.id.to_string()),
+                    serde_json::json!({
+                        "retry_after_seconds": retry_after_seconds,
+                        "level": trust.level,
+                        "rank": trust.rank,
+                        "daily_outbound_messages_limit": trust.daily_outbound_messages_limit,
+                        "daily_outbound_messages_sent": trust.daily_outbound_messages_sent,
+                    }),
+                )?;
                 return Ok(
                     HttpResponse::TooManyRequests().json(MessageLimitExceededResponse {
                         error: "Daily outbound message limit reached for your current trust level.",

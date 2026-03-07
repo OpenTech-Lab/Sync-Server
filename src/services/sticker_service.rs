@@ -1,5 +1,5 @@
 use base64::Engine;
-use diesel::prelude::*;
+use diesel::{prelude::*, PgConnection};
 use uuid::Uuid;
 
 use crate::db::Pool;
@@ -12,7 +12,7 @@ const MAX_STICKER_SIZE_BYTES: usize = 256 * 1024;
 const MAX_STICKERS_PER_USER: i64 = 120;
 const MAX_TOTAL_BYTES_PER_USER: i64 = 8 * 1024 * 1024;
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct UploadStickerInput {
     pub group_name: String,
     pub name: String,
@@ -27,7 +27,15 @@ pub fn upload_sticker(
     input: UploadStickerInput,
 ) -> Result<StickerDetail, AppError> {
     let mut conn = pool.get()?;
+    upload_sticker_conn(&mut conn, uploader_id, uploader_role, input)
+}
 
+pub fn upload_sticker_conn(
+    conn: &mut PgConnection,
+    uploader_id: Uuid,
+    uploader_role: &str,
+    input: UploadStickerInput,
+) -> Result<StickerDetail, AppError> {
     let name = input.name.trim();
     if name.is_empty() || name.len() > 80 {
         return Err(AppError::BadRequest(
@@ -60,7 +68,7 @@ pub fn upload_sticker(
     let existing_count: i64 = sticker_dsl::stickers
         .filter(sticker_dsl::uploader_id.eq(uploader_id))
         .count()
-        .get_result(&mut conn)?;
+        .get_result(conn)?;
 
     if existing_count >= MAX_STICKERS_PER_USER {
         return Err(AppError::BadRequest(format!(
@@ -71,7 +79,7 @@ pub fn upload_sticker(
     let used_bytes: Option<i64> = sticker_dsl::stickers
         .filter(sticker_dsl::uploader_id.eq(uploader_id))
         .select(diesel::dsl::sum(sticker_dsl::size_bytes))
-        .first(&mut conn)
+        .first(conn)
         .optional()?
         .flatten();
 
@@ -102,14 +110,18 @@ pub fn upload_sticker(
 
     diesel::insert_into(sticker_dsl::stickers)
         .values(&entity)
-        .execute(&mut conn)?;
+        .execute(conn)?;
 
     let saved = sticker_dsl::stickers
         .find(entity.id)
         .select(Sticker::as_select())
-        .first::<Sticker>(&mut conn)?;
+        .first::<Sticker>(conn)?;
 
     Ok(StickerDetail::from(saved))
+}
+
+pub fn supported_mime_types() -> &'static [&'static str] {
+    &ALLOWED_MIME_TYPES
 }
 
 pub fn list_stickers(

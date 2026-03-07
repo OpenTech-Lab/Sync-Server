@@ -1,11 +1,13 @@
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use diesel::prelude::*;
 use diesel::Connection;
+use serde_json::Value;
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use crate::db::Pool;
 use crate::errors::AppError;
+use crate::models::admin::NewAdminAuditLog;
 use crate::models::message::Message;
 use crate::models::trust::{
     LevelPolicy, NewDailyActionCounter, NewTrustScoreEvent, NewUserTrustStats, RankPolicy,
@@ -13,10 +15,14 @@ use crate::models::trust::{
     TrustSnapshot, UserTrustStats, DEFAULT_DAILY_COUNTER_RETENTION_DAYS,
     DEFAULT_SCORE_EVENT_RETENTION_DAYS,
 };
-use crate::schema::{admin_settings, daily_action_counters, trust_score_events, user_trust_stats};
+use crate::schema::{
+    admin_audit_logs, admin_settings, daily_action_counters, trust_score_events, user_trust_stats,
+    users,
+};
 use crate::services::{admin_service, message_service};
 
 const ACTION_OUTBOUND_MESSAGE: &str = "outbound_message";
+const ACTION_ATTACHMENT_SEND: &str = "attachment_send";
 const DEFAULT_AUTOMATION_REVIEW_STATE: &str = "clear";
 const AUTOMATION_REVIEW_STATE_CHALLENGED: &str = "challenged";
 const AUTOMATION_REVIEW_STATE_FROZEN: &str = "frozen";
@@ -25,12 +31,18 @@ const SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD: i32 = 3;
 const FROZEN_RECOVERY_WINDOW_HOURS: i64 = 24;
 const DEFAULT_SAFE_ATTACHMENT_TYPES: &[&str] = &[
     "application/pdf",
+    "image/gif",
     "image/jpeg",
     "image/png",
     "image/webp",
     "text/plain",
     "video/mp4",
 ];
+const VALIDATED_MODERATION_ACTION_POINTS: i32 = 50;
+pub const EVENT_VALIDATED_MODERATION_STICKER_REVIEW: &str =
+    "validated_moderation_action.sticker_review";
+pub const EVENT_VALIDATED_MODERATION_USER_SUSPEND: &str =
+    "validated_moderation_action.user_suspend";
 
 #[derive(Debug, Clone)]
 pub enum SendMessageWithTrustResult {
@@ -41,6 +53,36 @@ pub enum SendMessageWithTrustResult {
         trust: TrustSnapshot,
         retry_after_seconds: i64,
     },
+}
+
+#[derive(Debug)]
+pub enum AttachmentActionWithTrustResult<T> {
+    Completed {
+        value: T,
+    },
+    Limited {
+        trust: TrustSnapshot,
+        retry_after_seconds: i64,
+    },
+    UnsupportedMime {
+        trust: TrustSnapshot,
+    },
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ContributionEventOptions {
+    pub requires_meaningful_granter: bool,
+    pub daily_positive_cap: Option<i32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContributionEventOutcome {
+    pub event: Option<TrustScoreEvent>,
+    pub contribution_score: i32,
+    pub derived_rank: String,
+    pub applied_delta: i32,
+    pub duplicate: bool,
+    pub suppressed_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,15 +164,160 @@ pub fn record_score_event(
         .map_err(AppError::from)
 }
 
+pub fn record_contribution_event(
+    pool: &Pool,
+    user_id: Uuid,
+    granter_user_id: Option<Uuid>,
+    event_type: &str,
+    requested_delta: i32,
+    reference_id: Option<&str>,
+    metadata: Value,
+    options: ContributionEventOptions,
+) -> Result<ContributionEventOutcome, AppError> {
+    let mut conn = pool.get()?;
+    let now = Utc::now();
+    let normalized_event_type = event_type.trim().to_string();
+    let normalized_reference_id = reference_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+
+    if normalized_event_type.is_empty() {
+        return Err(AppError::BadRequest("event_type cannot be empty".into()));
+    }
+
+    conn.transaction(|conn| {
+        let policy = load_trust_policy_conn(conn)?;
+        let stats = ensure_user_trust_stats(conn, &policy, user_id)?;
+        let stats = sync_derived_state(conn, &policy, stats, now)?;
+
+        if let Some(reference_id_value) = normalized_reference_id.as_deref() {
+            let existing = trust_score_events::table
+                .filter(trust_score_events::user_id.eq(user_id))
+                .filter(trust_score_events::event_type.eq(normalized_event_type.as_str()))
+                .filter(trust_score_events::reference_id.eq(reference_id_value))
+                .select(TrustScoreEvent::as_select())
+                .first::<TrustScoreEvent>(conn)
+                .optional()?;
+            if existing.is_some() {
+                return Ok(ContributionEventOutcome {
+                    event: None,
+                    contribution_score: stats.contribution_score,
+                    derived_rank: stats.derived_rank,
+                    applied_delta: 0,
+                    duplicate: true,
+                    suppressed_reason: Some("duplicate_reference".to_string()),
+                });
+            }
+        }
+
+        let mut applied_delta = requested_delta;
+        let mut suppressed_reason = None;
+
+        if requested_delta > 0
+            && options.requires_meaningful_granter
+            && !granter_is_meaningful(conn, &policy, granter_user_id, now)?
+        {
+            applied_delta = 0;
+            suppressed_reason = Some("granter_not_eligible".to_string());
+        }
+
+        if requested_delta > 0 {
+            if let Some(daily_cap) = options.daily_positive_cap {
+                let positive_points_today = positive_points_earned_today(
+                    conn,
+                    user_id,
+                    normalized_event_type.as_str(),
+                    now,
+                )?;
+                let remaining = (daily_cap - positive_points_today).max(0);
+                if remaining == 0 {
+                    applied_delta = 0;
+                    suppressed_reason = Some("daily_cap_reached".to_string());
+                } else if applied_delta > remaining {
+                    applied_delta = remaining;
+                    suppressed_reason = Some("daily_cap_truncated".to_string());
+                }
+            }
+        }
+
+        let next_contribution_score = (stats.contribution_score + applied_delta).max(0);
+        let next_rank = rank_policy_for_score(&policy, next_contribution_score)
+            .rank
+            .clone();
+
+        let event_metadata = enrich_contribution_event_metadata(
+            metadata,
+            requested_delta,
+            applied_delta,
+            suppressed_reason.as_deref(),
+        );
+        let event = diesel::insert_into(trust_score_events::table)
+            .values(&NewTrustScoreEvent {
+                id: Uuid::new_v4(),
+                user_id,
+                granter_user_id,
+                event_type: normalized_event_type.clone(),
+                delta: applied_delta,
+                reference_id: normalized_reference_id.clone(),
+                metadata: event_metadata,
+            })
+            .get_result::<TrustScoreEvent>(conn)?;
+
+        diesel::update(user_trust_stats::table.find(user_id))
+            .set((
+                user_trust_stats::contribution_score.eq(next_contribution_score),
+                user_trust_stats::derived_rank.eq(next_rank.as_str()),
+                user_trust_stats::updated_at.eq(now),
+            ))
+            .execute(conn)?;
+
+        Ok(ContributionEventOutcome {
+            event: Some(event),
+            contribution_score: next_contribution_score,
+            derived_rank: next_rank,
+            applied_delta,
+            duplicate: false,
+            suppressed_reason,
+        })
+    })
+}
+
+pub fn award_validated_moderation_action(
+    pool: &Pool,
+    actor_user_id: Uuid,
+    event_type: &str,
+    reference_id: Option<&str>,
+    metadata: Value,
+) -> Result<ContributionEventOutcome, AppError> {
+    record_contribution_event(
+        pool,
+        actor_user_id,
+        None,
+        event_type,
+        VALIDATED_MODERATION_ACTION_POINTS,
+        reference_id,
+        metadata,
+        ContributionEventOptions::default(),
+    )
+}
+
 pub fn get_trust_snapshot(pool: &Pool, user_id: Uuid) -> Result<TrustSnapshot, AppError> {
     let mut conn = pool.get()?;
     let today = Utc::now().date_naive();
     let policy = load_trust_policy_conn(&mut conn)?;
     let stats = ensure_user_trust_stats(&mut conn, &policy, user_id)?;
     let stats = sync_derived_state(&mut conn, &policy, stats, Utc::now())?;
-    let sent_today = daily_message_count(&mut conn, user_id, today)?;
+    let sent_today = daily_action_count(&mut conn, user_id, ACTION_OUTBOUND_MESSAGE, today)?;
+    let attachments_sent_today =
+        daily_action_count(&mut conn, user_id, ACTION_ATTACHMENT_SEND, today)?;
 
-    Ok(build_snapshot(&policy, &stats, sent_today))
+    Ok(build_snapshot(
+        &policy,
+        &stats,
+        sent_today,
+        attachments_sent_today,
+    ))
 }
 
 pub fn record_human_activity(pool: &Pool, user_id: Uuid) -> Result<(), AppError> {
@@ -169,7 +356,9 @@ pub fn send_message_with_trust(
         } else {
             stats
         };
-        let sent_today = daily_message_count(conn, sender_id, today)?;
+        let sent_today = daily_action_count(conn, sender_id, ACTION_OUTBOUND_MESSAGE, today)?;
+        let attachments_sent_today =
+            daily_action_count(conn, sender_id, ACTION_ATTACHMENT_SEND, today)?;
         let level_policy = level_policy_for_active_days(&policy, stats.active_days);
         let rank_policy = rank_policy_for_score(&policy, stats.contribution_score);
         let limit = effective_daily_outbound_messages_limit(level_policy, rank_policy);
@@ -179,7 +368,7 @@ pub fn send_message_with_trust(
             if let Some(limit) = limit {
                 if sent_today >= limit {
                     return Ok(SendMessageWithTrustResult::Limited {
-                        trust: build_snapshot(&policy, &stats, sent_today),
+                        trust: build_snapshot(&policy, &stats, sent_today, attachments_sent_today),
                         retry_after_seconds: seconds_until_next_utc_day(now),
                     });
                 }
@@ -194,14 +383,92 @@ pub fn send_message_with_trust(
     })
 }
 
+pub fn run_attachment_action_with_trust<T, F>(
+    pool: &Pool,
+    user_id: Uuid,
+    mime_type: &str,
+    operation: F,
+) -> Result<AttachmentActionWithTrustResult<T>, AppError>
+where
+    F: FnOnce(&mut diesel::PgConnection) -> Result<T, AppError>,
+{
+    let mut conn = pool.get()?;
+    let now = Utc::now();
+    let today = now.date_naive();
+    let normalized_mime_type = mime_type.trim().to_lowercase();
+
+    conn.transaction(|conn| {
+        let policy = load_trust_policy_conn(conn)?;
+        let stats = ensure_user_trust_stats(conn, &policy, user_id)?;
+        let stats = sync_derived_state(conn, &policy, stats, now)?;
+        let (stats, assessment) = update_human_activity_state(conn, stats, today, now)?;
+        let stats = if assessment.should_advance_active_day {
+            advance_active_day_if_needed(conn, &policy, stats, today, now)?
+        } else {
+            stats
+        };
+        let outbound_messages_sent =
+            daily_action_count(conn, user_id, ACTION_OUTBOUND_MESSAGE, today)?;
+        let attachments_sent_today =
+            daily_action_count(conn, user_id, ACTION_ATTACHMENT_SEND, today)?;
+
+        if attachment_send_limit_enforced(&policy)
+            && !attachment_type_allowed(&policy, &normalized_mime_type)
+        {
+            return Ok(AttachmentActionWithTrustResult::UnsupportedMime {
+                trust: build_snapshot(
+                    &policy,
+                    &stats,
+                    outbound_messages_sent,
+                    attachments_sent_today,
+                ),
+            });
+        }
+
+        let level_policy = level_policy_for_active_days(&policy, stats.active_days);
+        let attachment_limit = effective_daily_attachment_send_limit(level_policy);
+        if attachment_send_limit_enforced(&policy) {
+            if let Some(limit) = attachment_limit {
+                if attachments_sent_today >= limit {
+                    return Ok(AttachmentActionWithTrustResult::Limited {
+                        trust: build_snapshot(
+                            &policy,
+                            &stats,
+                            outbound_messages_sent,
+                            attachments_sent_today,
+                        ),
+                        retry_after_seconds: seconds_until_next_utc_day(now),
+                    });
+                }
+            }
+        }
+
+        let value = operation(conn)?;
+        increment_daily_counter(conn, user_id, ACTION_ATTACHMENT_SEND, today)?;
+        Ok(AttachmentActionWithTrustResult::Completed { value })
+    })
+}
+
 fn outbound_message_limit_enforced(policy: &TrustPolicyConfig) -> bool {
     policy.enforcement.enabled && policy.enforcement.outbound_messages_enabled
+}
+
+fn attachment_send_limit_enforced(policy: &TrustPolicyConfig) -> bool {
+    policy.enforcement.enabled && policy.enforcement.attachment_sends_enabled
+}
+
+fn attachment_type_allowed(policy: &TrustPolicyConfig, mime_type: &str) -> bool {
+    policy
+        .safe_attachment_types
+        .iter()
+        .any(|allowed| allowed == mime_type)
 }
 
 fn build_snapshot(
     policy: &TrustPolicyConfig,
     stats: &UserTrustStats,
     daily_outbound_messages_sent: i32,
+    daily_attachment_sends_sent: i32,
 ) -> TrustSnapshot {
     let level_policy = level_policy_for_active_days(policy, stats.active_days);
     let rank_policy = rank_policy_for_score(policy, stats.contribution_score);
@@ -210,6 +477,10 @@ fn build_snapshot(
     let daily_outbound_messages_enforced = outbound_message_limit_enforced(policy);
     let daily_outbound_messages_remaining =
         daily_outbound_messages_limit.map(|limit| (limit - daily_outbound_messages_sent).max(0));
+    let daily_attachment_send_limit = effective_daily_attachment_send_limit(level_policy);
+    let daily_attachment_sends_enforced = attachment_send_limit_enforced(policy);
+    let daily_attachment_sends_remaining =
+        daily_attachment_send_limit.map(|limit| (limit - daily_attachment_sends_sent).max(0));
 
     TrustSnapshot {
         active_days: stats.active_days,
@@ -226,7 +497,58 @@ fn build_snapshot(
         daily_outbound_messages_limit,
         daily_outbound_messages_sent,
         daily_outbound_messages_remaining,
+        daily_attachment_sends_enforced,
+        daily_attachment_send_limit,
+        daily_attachment_sends_sent,
+        daily_attachment_sends_remaining,
+        allowed_attachment_types: policy.safe_attachment_types.clone(),
     }
+}
+
+fn enrich_contribution_event_metadata(
+    metadata: Value,
+    requested_delta: i32,
+    applied_delta: i32,
+    suppressed_reason: Option<&str>,
+) -> Value {
+    let mut object = match metadata {
+        Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("input".to_string(), other);
+            map
+        }
+    };
+    object.insert(
+        "requested_delta".to_string(),
+        serde_json::json!(requested_delta),
+    );
+    object.insert(
+        "applied_delta".to_string(),
+        serde_json::json!(applied_delta),
+    );
+    if let Some(reason) = suppressed_reason {
+        object.insert("suppressed_reason".to_string(), serde_json::json!(reason));
+    }
+    Value::Object(object)
+}
+
+fn insert_system_audit_log(
+    conn: &mut diesel::PgConnection,
+    action: &str,
+    target: Option<&str>,
+    details: Value,
+) -> Result<(), AppError> {
+    diesel::insert_into(admin_audit_logs::table)
+        .values(&NewAdminAuditLog {
+            id: Uuid::new_v4(),
+            actor_user_id: None,
+            action: action.to_string(),
+            target: target.map(ToString::to_string),
+            details,
+        })
+        .execute(conn)?;
+    Ok(())
 }
 
 fn ensure_user_trust_stats(
@@ -300,6 +622,19 @@ fn update_human_activity_state(
         ))
         .get_result::<UserTrustStats>(conn)
         .map_err(AppError::from)?;
+    if stats.automation_review_state != updated.automation_review_state {
+        insert_system_audit_log(
+            conn,
+            "trust.review_state.changed",
+            Some(&stats.user_id.to_string()),
+            serde_json::json!({
+                "previous_state": stats.automation_review_state,
+                "new_state": updated.automation_review_state,
+                "suspicious_activity_streak": updated.suspicious_activity_streak,
+                "active_days": updated.active_days,
+            }),
+        )?;
+    }
     Ok((updated, assessment))
 }
 
@@ -393,14 +728,15 @@ fn advance_active_day_if_needed(
         .map_err(AppError::from)
 }
 
-fn daily_message_count(
+fn daily_action_count(
     conn: &mut diesel::PgConnection,
     user_id: Uuid,
+    action_key_value: &str,
     today: NaiveDate,
 ) -> Result<i32, AppError> {
     daily_action_counters::table
         .filter(daily_action_counters::user_id.eq(user_id))
-        .filter(daily_action_counters::action_key.eq(ACTION_OUTBOUND_MESSAGE))
+        .filter(daily_action_counters::action_key.eq(action_key_value))
         .filter(daily_action_counters::day_bucket.eq(today))
         .select(daily_action_counters::count)
         .first::<i32>(conn)
@@ -434,6 +770,58 @@ fn increment_daily_counter(
         ))
         .execute(conn)?;
     Ok(())
+}
+
+fn granter_is_meaningful(
+    conn: &mut diesel::PgConnection,
+    policy: &TrustPolicyConfig,
+    granter_user_id: Option<Uuid>,
+    now: DateTime<Utc>,
+) -> Result<bool, AppError> {
+    let Some(granter_user_id) = granter_user_id else {
+        return Ok(false);
+    };
+
+    let granter_role = users::table
+        .find(granter_user_id)
+        .select(users::role)
+        .first::<String>(conn)
+        .optional()?;
+
+    let Some(granter_role) = granter_role else {
+        return Ok(false);
+    };
+
+    if granter_role != "user" {
+        return Ok(true);
+    }
+
+    let granter_stats = ensure_user_trust_stats(conn, policy, granter_user_id)?;
+    let granter_stats = sync_derived_state(conn, policy, granter_stats, now)?;
+    Ok(granter_stats.derived_level >= 4 || rank_at_least(&granter_stats.derived_rank, "E"))
+}
+
+fn positive_points_earned_today(
+    conn: &mut diesel::PgConnection,
+    user_id: Uuid,
+    event_type: &str,
+    now: DateTime<Utc>,
+) -> Result<i32, AppError> {
+    let day_start = now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .expect("valid UTC midnight");
+    let day_start = DateTime::<Utc>::from_naive_utc_and_offset(day_start, Utc);
+
+    let total: Option<i64> = trust_score_events::table
+        .filter(trust_score_events::user_id.eq(user_id))
+        .filter(trust_score_events::event_type.eq(event_type))
+        .filter(trust_score_events::created_at.ge(day_start))
+        .filter(trust_score_events::delta.gt(0))
+        .select(diesel::dsl::sum(trust_score_events::delta))
+        .first(conn)?;
+
+    Ok(total.unwrap_or(0).clamp(0, i64::from(i32::MAX)) as i32)
 }
 
 fn level_policy_for_active_days(policy: &TrustPolicyConfig, active_days: i32) -> &LevelPolicy {
@@ -482,6 +870,23 @@ fn rank_policy_for_score(policy: &TrustPolicyConfig, contribution_score: i32) ->
         })
 }
 
+fn rank_at_least(rank: &str, threshold: &str) -> bool {
+    rank_order(rank).unwrap_or_default() >= rank_order(threshold).unwrap_or_default()
+}
+
+fn rank_order(rank: &str) -> Option<u8> {
+    match rank {
+        "F" => Some(0),
+        "E" => Some(1),
+        "D" => Some(2),
+        "C" => Some(3),
+        "B" => Some(4),
+        "A" => Some(5),
+        "S" => Some(6),
+        _ => None,
+    }
+}
+
 fn effective_daily_outbound_messages_limit(
     level_policy: &LevelPolicy,
     rank_policy: &RankPolicy,
@@ -496,6 +901,10 @@ fn effective_daily_outbound_messages_limit(
         (Some(limit), Some(percent), _) => Some((limit * percent) / 100),
         (limit, _, _) => limit,
     }
+}
+
+fn effective_daily_attachment_send_limit(level_policy: &LevelPolicy) -> Option<i32> {
+    level_policy.daily_attachment_send_limit
 }
 
 fn level_progress_percent(
@@ -827,7 +1236,7 @@ fn normalize_trust_policy(mut policy: TrustPolicyConfig) -> Result<TrustPolicyCo
 mod tests {
     use super::{
         assess_human_activity, build_snapshot, default_trust_policy, normalize_trust_policy,
-        outbound_message_limit_enforced, rank_policy_for_score,
+        outbound_message_limit_enforced, rank_at_least, rank_policy_for_score,
         DEFAULT_DAILY_COUNTER_RETENTION_DAYS, DEFAULT_SCORE_EVENT_RETENTION_DAYS,
         FROZEN_RECOVERY_WINDOW_HOURS, SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD,
         SUSPICIOUS_NEW_DAY_ACTIVITY_WINDOW_MINUTES,
@@ -925,6 +1334,14 @@ mod tests {
     }
 
     #[test]
+    fn rank_threshold_comparison_is_ordered_correctly() {
+        assert!(rank_at_least("E", "E"));
+        assert!(rank_at_least("A", "E"));
+        assert!(!rank_at_least("F", "E"));
+        assert!(!rank_at_least("unknown", "E"));
+    }
+
+    #[test]
     fn trust_snapshot_reports_when_message_limits_are_disabled() {
         let mut policy = default_trust_policy();
         policy.enforcement.outbound_messages_enabled = false;
@@ -943,13 +1360,20 @@ mod tests {
             updated_at: Utc::now(),
         };
 
-        let snapshot = build_snapshot(&policy, &stats, 12);
+        let snapshot = build_snapshot(&policy, &stats, 12, 3);
 
         assert!(!outbound_message_limit_enforced(&policy));
         assert!(!snapshot.daily_outbound_messages_enforced);
         assert_eq!(snapshot.daily_outbound_messages_limit, Some(50));
         assert_eq!(snapshot.daily_outbound_messages_sent, 12);
         assert_eq!(snapshot.daily_outbound_messages_remaining, Some(38));
+        assert!(snapshot.daily_attachment_sends_enforced);
+        assert_eq!(snapshot.daily_attachment_send_limit, Some(5));
+        assert_eq!(snapshot.daily_attachment_sends_sent, 3);
+        assert_eq!(snapshot.daily_attachment_sends_remaining, Some(2));
+        assert!(snapshot
+            .allowed_attachment_types
+            .contains(&"image/gif".to_string()));
     }
 
     #[test]

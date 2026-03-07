@@ -157,6 +157,11 @@ pub struct TrustSnapshot {
     pub daily_outbound_messages_limit: Option<i32>,
     pub daily_outbound_messages_sent: i32,
     pub daily_outbound_messages_remaining: Option<i32>,
+    pub daily_attachment_sends_enforced: bool,
+    pub daily_attachment_send_limit: Option<i32>,
+    pub daily_attachment_sends_sent: i32,
+    pub daily_attachment_sends_remaining: Option<i32>,
+    pub allowed_attachment_types: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

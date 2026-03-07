@@ -17,10 +17,29 @@ use crate::services::{admin_service, server_news_service, trust_service};
 #[derive(Debug, Deserialize)]
 pub struct UserQuery {
     pub q: Option<String>,
+    pub automation_review_state: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct AuditQuery {
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TrustReviewUsersQuery {
+    pub automation_review_state: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TrustScoreEventsQuery {
+    pub user_id: Option<Uuid>,
+    pub event_type: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TrustBlockedActionsQuery {
     pub limit: Option<i64>,
 }
 
@@ -207,7 +226,11 @@ pub async fn list_users(
     _admin: AdminUser,
     query: web::Query<UserQuery>,
 ) -> Result<HttpResponse, AppError> {
-    let users = admin_service::list_users(&pool, query.q.as_deref())?;
+    let users = admin_service::list_users(
+        &pool,
+        query.q.as_deref(),
+        query.automation_review_state.as_deref(),
+    )?;
     Ok(HttpResponse::Ok().json(users))
 }
 
@@ -248,13 +271,32 @@ pub async fn suspend_user(
     admin: AdminUser,
     user_id: web::Path<Uuid>,
 ) -> Result<HttpResponse, AppError> {
+    let admin_user_id = admin.0.user_id()?;
     admin_service::set_user_active(&pool, *user_id, false)?;
+    let moderation_score = trust_service::award_validated_moderation_action(
+        &pool,
+        admin_user_id,
+        trust_service::EVENT_VALIDATED_MODERATION_USER_SUSPEND,
+        Some(&user_id.to_string()),
+        serde_json::json!({
+            "target_user_id": user_id.to_string(),
+            "action": "suspend",
+        }),
+    )?;
     admin_service::append_audit_log(
         &pool,
-        Some(admin.0.user_id()?),
+        Some(admin_user_id),
         "user.suspend",
         Some(&user_id.to_string()),
-        serde_json::json!({ "is_active": false }),
+        serde_json::json!({
+            "is_active": false,
+            "score_event_id": moderation_score.event.as_ref().map(|event| event.id),
+            "score_delta_applied": moderation_score.applied_delta,
+            "contribution_score": moderation_score.contribution_score,
+            "derived_rank": moderation_score.derived_rank,
+            "score_duplicate": moderation_score.duplicate,
+            "score_suppressed_reason": moderation_score.suppressed_reason,
+        }),
     )?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "status": "suspended" })))
 }
@@ -533,6 +575,51 @@ pub async fn audit_logs(
     Ok(HttpResponse::Ok().json(items))
 }
 
+pub async fn trust_review_users(
+    pool: web::Data<Pool>,
+    _admin: AdminUser,
+    query: web::Query<TrustReviewUsersQuery>,
+) -> Result<HttpResponse, AppError> {
+    let users = admin_service::list_trust_review_users(
+        &pool,
+        query.automation_review_state.as_deref(),
+        query.limit.unwrap_or(50),
+    )?;
+    Ok(HttpResponse::Ok().json(users))
+}
+
+pub async fn trust_score_events(
+    pool: web::Data<Pool>,
+    _admin: AdminUser,
+    query: web::Query<TrustScoreEventsQuery>,
+) -> Result<HttpResponse, AppError> {
+    let events = admin_service::list_trust_score_events(
+        &pool,
+        query.user_id,
+        query.event_type.as_deref(),
+        query.limit.unwrap_or(50),
+    )?;
+    Ok(HttpResponse::Ok().json(events))
+}
+
+pub async fn trust_blocked_actions(
+    pool: web::Data<Pool>,
+    _admin: AdminUser,
+    query: web::Query<TrustBlockedActionsQuery>,
+) -> Result<HttpResponse, AppError> {
+    let summary =
+        admin_service::list_trust_blocked_action_counts(&pool, query.limit.unwrap_or(10))?;
+    Ok(HttpResponse::Ok().json(summary))
+}
+
+pub async fn trust_review_metrics(
+    pool: web::Data<Pool>,
+    _admin: AdminUser,
+) -> Result<HttpResponse, AppError> {
+    let metrics = admin_service::trust_review_metrics(&pool)?;
+    Ok(HttpResponse::Ok().json(metrics))
+}
+
 pub async fn get_trust_policy(
     pool: web::Data<Pool>,
     _admin: AdminUser,
@@ -609,6 +696,13 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route(
             "/trust-policy/prune-history",
             web::post().to(prune_trust_history),
+        )
+        .route("/trust-review-users", web::get().to(trust_review_users))
+        .route("/trust-review-metrics", web::get().to(trust_review_metrics))
+        .route("/trust-score-events", web::get().to(trust_score_events))
+        .route(
+            "/trust-blocked-actions",
+            web::get().to(trust_blocked_actions),
         )
         .route("/audit-logs", web::get().to(audit_logs));
 }

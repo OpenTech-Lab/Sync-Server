@@ -125,7 +125,10 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/auth")
                     .wrap(Governor::new(&auth_governor))
-                    .route("/altcha", web::get().to(routes::altcha::get_altcha_challenge))
+                    .route(
+                        "/altcha",
+                        web::get().to(routes::altcha::get_altcha_challenge),
+                    )
                     .configure(routes::auth::configure),
             )
             // ── Messaging REST API: 60 req/s, burst 100 ───────────────────

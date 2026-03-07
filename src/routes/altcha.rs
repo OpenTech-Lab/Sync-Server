@@ -30,12 +30,16 @@ pub async fn get_altcha_challenge(config: web::Data<Config>) -> Result<HttpRespo
         // Keep proof-of-work bounded for responsive browser-side verification.
         max_number: Some(ALTCHA_MAX_NUMBER),
         expires: Some(chrono::Utc::now() + chrono::Duration::minutes(5)), // 5 mins expiration
-        salt_length: None, // use default
+        salt_length: None,                                                // use default
         ..Default::default()
     };
 
-    let challenge = create_challenge(options)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to generate altcha challenge: {}", e)))?;
+    let challenge = create_challenge(options).map_err(|e| {
+        AppError::Internal(anyhow::anyhow!(
+            "Failed to generate altcha challenge: {}",
+            e
+        ))
+    })?;
 
     Ok(HttpResponse::Ok().json(AltchaChallengeResponse {
         algorithm: challenge.algorithm.to_string(),

@@ -1,19 +1,29 @@
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use diesel::prelude::*;
 use diesel::Connection;
+use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::message::Message;
 use crate::models::trust::{
-    NewDailyActionCounter, NewUserTrustStats, TrustSnapshot, UserTrustStats,
+    LevelPolicy, NewDailyActionCounter, NewTrustScoreEvent, NewUserTrustStats, RankPolicy,
+    TrustPolicyConfig, TrustScoreEvent, TrustSnapshot, UserTrustStats,
 };
-use crate::schema::{daily_action_counters, user_trust_stats};
-use crate::services::message_service;
+use crate::schema::{admin_settings, daily_action_counters, trust_score_events, user_trust_stats};
+use crate::services::{admin_service, message_service};
 
 const ACTION_OUTBOUND_MESSAGE: &str = "outbound_message";
 const DEFAULT_AUTOMATION_REVIEW_STATE: &str = "clear";
+const DEFAULT_SAFE_ATTACHMENT_TYPES: &[&str] = &[
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "text/plain",
+    "video/mp4",
+];
 
 #[derive(Debug, Clone)]
 pub enum SendMessageWithTrustResult {
@@ -26,31 +36,56 @@ pub enum SendMessageWithTrustResult {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct LevelBand {
-    level: u8,
-    min_active_days: i32,
-    next_level_active_days: Option<i32>,
-    daily_outbound_messages_limit: Option<i32>,
+pub fn read_trust_policy(pool: &Pool) -> Result<TrustPolicyConfig, AppError> {
+    let mut conn = pool.get()?;
+    load_trust_policy_conn(&mut conn)
+}
+
+pub fn save_trust_policy(
+    pool: &Pool,
+    policy: &TrustPolicyConfig,
+) -> Result<TrustPolicyConfig, AppError> {
+    let normalized = normalize_trust_policy(policy.clone())?;
+    let encoded = serde_json::to_string(&normalized)
+        .map_err(|error| AppError::Internal(anyhow::anyhow!("trust policy encode: {}", error)))?;
+    admin_service::set_setting(pool, admin_service::SETTING_TRUST_POLICY, &encoded)?;
+    Ok(normalized)
+}
+
+#[allow(dead_code)]
+pub fn record_score_event(
+    pool: &Pool,
+    user_id: Uuid,
+    granter_user_id: Option<Uuid>,
+    event_type: &str,
+    delta: i32,
+    reference_id: Option<&str>,
+    metadata: serde_json::Value,
+) -> Result<TrustScoreEvent, AppError> {
+    let mut conn = pool.get()?;
+    diesel::insert_into(trust_score_events::table)
+        .values(&NewTrustScoreEvent {
+            id: Uuid::new_v4(),
+            user_id,
+            granter_user_id,
+            event_type: event_type.trim().to_string(),
+            delta,
+            reference_id: reference_id.map(ToString::to_string),
+            metadata,
+        })
+        .get_result::<TrustScoreEvent>(&mut conn)
+        .map_err(AppError::from)
 }
 
 pub fn get_trust_snapshot(pool: &Pool, user_id: Uuid) -> Result<TrustSnapshot, AppError> {
     let mut conn = pool.get()?;
     let today = Utc::now().date_naive();
-    let stats = user_trust_stats::table
-        .find(user_id)
-        .select(UserTrustStats::as_select())
-        .first::<UserTrustStats>(&mut conn)
-        .optional()?;
-
-    let active_days = stats.as_ref().map(|value| value.active_days).unwrap_or(0);
-    let contribution_score = stats
-        .as_ref()
-        .map(|value| value.contribution_score)
-        .unwrap_or(0);
+    let policy = load_trust_policy_conn(&mut conn)?;
+    let stats = ensure_user_trust_stats(&mut conn, &policy, user_id)?;
+    let stats = sync_derived_state(&mut conn, &policy, stats, Utc::now())?;
     let sent_today = daily_message_count(&mut conn, user_id, today)?;
 
-    Ok(build_snapshot(active_days, contribution_score, sent_today))
+    Ok(build_snapshot(&policy, &stats, sent_today))
 }
 
 pub fn record_human_activity(pool: &Pool, user_id: Uuid) -> Result<(), AppError> {
@@ -58,8 +93,10 @@ pub fn record_human_activity(pool: &Pool, user_id: Uuid) -> Result<(), AppError>
     let today = Utc::now().date_naive();
     let now = Utc::now();
     conn.transaction(|conn| {
-        let stats = ensure_user_trust_stats(conn, user_id)?;
-        let _ = advance_active_day_if_needed(conn, stats, today, now)?;
+        let policy = load_trust_policy_conn(conn)?;
+        let stats = ensure_user_trust_stats(conn, &policy, user_id)?;
+        let stats = sync_derived_state(conn, &policy, stats, now)?;
+        let _ = advance_active_day_if_needed(conn, &policy, stats, today, now)?;
         Ok(())
     })
 }
@@ -75,15 +112,19 @@ pub fn send_message_with_trust(
     let today = now.date_naive();
 
     conn.transaction(|conn| {
-        let stats = ensure_user_trust_stats(conn, sender_id)?;
-        let stats = advance_active_day_if_needed(conn, stats, today, now)?;
+        let policy = load_trust_policy_conn(conn)?;
+        let stats = ensure_user_trust_stats(conn, &policy, sender_id)?;
+        let stats = sync_derived_state(conn, &policy, stats, now)?;
+        let stats = advance_active_day_if_needed(conn, &policy, stats, today, now)?;
         let sent_today = daily_message_count(conn, sender_id, today)?;
-        let band = level_band_for_active_days(stats.active_days);
+        let level_policy = level_policy_for_active_days(&policy, stats.active_days);
+        let rank_policy = rank_policy_for_score(&policy, stats.contribution_score);
+        let limit = effective_daily_outbound_messages_limit(level_policy, rank_policy);
 
-        if let Some(limit) = band.daily_outbound_messages_limit {
+        if let Some(limit) = limit {
             if sent_today >= limit {
                 return Ok(SendMessageWithTrustResult::Limited {
-                    trust: build_snapshot(stats.active_days, stats.contribution_score, sent_today),
+                    trust: build_snapshot(&policy, &stats, sent_today),
                     retry_after_seconds: seconds_until_next_utc_day(now),
                 });
             }
@@ -98,23 +139,29 @@ pub fn send_message_with_trust(
 }
 
 fn build_snapshot(
-    active_days: i32,
-    contribution_score: i32,
+    policy: &TrustPolicyConfig,
+    stats: &UserTrustStats,
     daily_outbound_messages_sent: i32,
 ) -> TrustSnapshot {
-    let level_band = level_band_for_active_days(active_days);
-    let daily_outbound_messages_remaining = level_band
-        .daily_outbound_messages_limit
-        .map(|limit| (limit - daily_outbound_messages_sent).max(0));
+    let level_policy = level_policy_for_active_days(policy, stats.active_days);
+    let rank_policy = rank_policy_for_score(policy, stats.contribution_score);
+    let daily_outbound_messages_limit =
+        effective_daily_outbound_messages_limit(level_policy, rank_policy);
+    let daily_outbound_messages_remaining =
+        daily_outbound_messages_limit.map(|limit| (limit - daily_outbound_messages_sent).max(0));
 
     TrustSnapshot {
-        active_days,
-        level: level_band.level,
-        contribution_score,
-        rank: rank_for_contribution_score(contribution_score).to_string(),
-        next_level_active_days: level_band.next_level_active_days,
-        level_progress_percent: level_progress_percent(active_days, level_band),
-        daily_outbound_messages_limit: level_band.daily_outbound_messages_limit,
+        active_days: stats.active_days,
+        level: stats.derived_level.clamp(1, 10) as u8,
+        contribution_score: stats.contribution_score,
+        rank: stats.derived_rank.clone(),
+        next_level_active_days: next_level_active_days(policy, level_policy.level),
+        level_progress_percent: level_progress_percent(
+            stats.active_days,
+            level_policy.min_active_days,
+            next_level_active_days(policy, level_policy.level),
+        ),
+        daily_outbound_messages_limit,
         daily_outbound_messages_sent,
         daily_outbound_messages_remaining,
     }
@@ -122,13 +169,18 @@ fn build_snapshot(
 
 fn ensure_user_trust_stats(
     conn: &mut diesel::PgConnection,
+    policy: &TrustPolicyConfig,
     user_id: Uuid,
 ) -> Result<UserTrustStats, AppError> {
+    let level_policy = level_policy_for_active_days(policy, 0);
+    let rank_policy = rank_policy_for_score(policy, 0);
     diesel::insert_into(user_trust_stats::table)
         .values(&NewUserTrustStats {
             user_id,
             active_days: 0,
             contribution_score: 0,
+            derived_level: i32::from(level_policy.level),
+            derived_rank: rank_policy.rank.clone(),
             last_active_day: None,
             automation_review_state: DEFAULT_AUTOMATION_REVIEW_STATE.to_string(),
         })
@@ -143,8 +195,34 @@ fn ensure_user_trust_stats(
         .map_err(AppError::from)
 }
 
+fn sync_derived_state(
+    conn: &mut diesel::PgConnection,
+    policy: &TrustPolicyConfig,
+    stats: UserTrustStats,
+    now: DateTime<Utc>,
+) -> Result<UserTrustStats, AppError> {
+    let level_policy = level_policy_for_active_days(policy, stats.active_days);
+    let rank_policy = rank_policy_for_score(policy, stats.contribution_score);
+
+    if stats.derived_level == i32::from(level_policy.level)
+        && stats.derived_rank == rank_policy.rank
+    {
+        return Ok(stats);
+    }
+
+    diesel::update(user_trust_stats::table.find(stats.user_id))
+        .set((
+            user_trust_stats::derived_level.eq(i32::from(level_policy.level)),
+            user_trust_stats::derived_rank.eq(rank_policy.rank.as_str()),
+            user_trust_stats::updated_at.eq(now),
+        ))
+        .get_result::<UserTrustStats>(conn)
+        .map_err(AppError::from)
+}
+
 fn advance_active_day_if_needed(
     conn: &mut diesel::PgConnection,
+    policy: &TrustPolicyConfig,
     stats: UserTrustStats,
     today: NaiveDate,
     now: DateTime<Utc>,
@@ -153,9 +231,14 @@ fn advance_active_day_if_needed(
         return Ok(stats);
     }
 
+    let next_active_days = stats.active_days + 1;
+    let level_policy = level_policy_for_active_days(policy, next_active_days);
+    let rank_policy = rank_policy_for_score(policy, stats.contribution_score);
     diesel::update(user_trust_stats::table.find(stats.user_id))
         .set((
-            user_trust_stats::active_days.eq(stats.active_days + 1),
+            user_trust_stats::active_days.eq(next_active_days),
+            user_trust_stats::derived_level.eq(i32::from(level_policy.level)),
+            user_trust_stats::derived_rank.eq(rank_policy.rank.as_str()),
             user_trust_stats::last_active_day.eq(Some(today)),
             user_trust_stats::updated_at.eq(now),
         ))
@@ -206,79 +289,80 @@ fn increment_daily_counter(
     Ok(())
 }
 
-fn level_band_for_active_days(active_days: i32) -> LevelBand {
-    match active_days {
-        i32::MIN..=6 => LevelBand {
-            level: 1,
-            min_active_days: 0,
-            next_level_active_days: Some(7),
-            daily_outbound_messages_limit: Some(50),
-        },
-        7..=13 => LevelBand {
-            level: 2,
-            min_active_days: 7,
-            next_level_active_days: Some(14),
-            daily_outbound_messages_limit: Some(100),
-        },
-        14..=29 => LevelBand {
-            level: 3,
-            min_active_days: 14,
-            next_level_active_days: Some(30),
-            daily_outbound_messages_limit: Some(200),
-        },
-        30..=59 => LevelBand {
-            level: 4,
-            min_active_days: 30,
-            next_level_active_days: Some(60),
-            daily_outbound_messages_limit: Some(500),
-        },
-        60..=89 => LevelBand {
-            level: 5,
-            min_active_days: 60,
-            next_level_active_days: Some(90),
-            daily_outbound_messages_limit: Some(1_000),
-        },
-        90..=119 => LevelBand {
-            level: 6,
-            min_active_days: 90,
-            next_level_active_days: Some(120),
-            daily_outbound_messages_limit: None,
-        },
-        120..=179 => LevelBand {
-            level: 7,
-            min_active_days: 120,
-            next_level_active_days: Some(180),
-            daily_outbound_messages_limit: None,
-        },
-        _ => LevelBand {
-            level: 8,
-            min_active_days: 180,
-            next_level_active_days: None,
-            daily_outbound_messages_limit: None,
-        },
+fn level_policy_for_active_days(policy: &TrustPolicyConfig, active_days: i32) -> &LevelPolicy {
+    policy
+        .level_policies
+        .iter()
+        .find(|entry| {
+            active_days >= entry.min_active_days
+                && entry
+                    .max_active_days
+                    .map(|max_active_days| active_days <= max_active_days)
+                    .unwrap_or(true)
+        })
+        .unwrap_or_else(|| {
+            policy
+                .level_policies
+                .last()
+                .expect("trust policy must contain level policies")
+        })
+}
+
+fn next_level_active_days(policy: &TrustPolicyConfig, level: u8) -> Option<i32> {
+    policy
+        .level_policies
+        .iter()
+        .find(|entry| entry.level > level)
+        .map(|entry| entry.min_active_days)
+}
+
+fn rank_policy_for_score(policy: &TrustPolicyConfig, contribution_score: i32) -> &RankPolicy {
+    policy
+        .rank_policies
+        .iter()
+        .find(|entry| {
+            contribution_score >= entry.min_score
+                && entry
+                    .max_score
+                    .map(|max_score| contribution_score <= max_score)
+                    .unwrap_or(true)
+        })
+        .unwrap_or_else(|| {
+            policy
+                .rank_policies
+                .last()
+                .expect("trust policy must contain rank policies")
+        })
+}
+
+fn effective_daily_outbound_messages_limit(
+    level_policy: &LevelPolicy,
+    rank_policy: &RankPolicy,
+) -> Option<i32> {
+    match (
+        level_policy.daily_outbound_messages_limit,
+        rank_policy.daily_outbound_messages_limit_multiplier_percent,
+        rank_policy.overrides_level_limits,
+    ) {
+        (None, _, _) => None,
+        (_, None, true) => None,
+        (Some(limit), Some(percent), _) => Some((limit * percent) / 100),
+        (limit, _, _) => limit,
     }
 }
 
-fn level_progress_percent(active_days: i32, level_band: LevelBand) -> u8 {
-    let Some(next_level_active_days) = level_band.next_level_active_days else {
+fn level_progress_percent(
+    active_days: i32,
+    min_active_days: i32,
+    next_level_active_days: Option<i32>,
+) -> u8 {
+    let Some(next_level_active_days) = next_level_active_days else {
         return 100;
     };
 
-    let span = (next_level_active_days - level_band.min_active_days).max(1);
-    let progressed = (active_days - level_band.min_active_days).clamp(0, span);
+    let span = (next_level_active_days - min_active_days).max(1);
+    let progressed = (active_days - min_active_days).clamp(0, span);
     ((progressed * 100) / span) as u8
-}
-
-fn rank_for_contribution_score(contribution_score: i32) -> &'static str {
-    match contribution_score {
-        i32::MIN..=99 => "F",
-        100..=499 => "E",
-        500..=999 => "D",
-        1_000..=2_499 => "C",
-        2_500..=4_999 => "B",
-        5_000..=9_999 => "A",
-        _ => "S",
-    }
 }
 
 fn seconds_until_next_utc_day(now: DateTime<Utc>) -> i64 {
@@ -288,34 +372,338 @@ fn seconds_until_next_utc_day(now: DateTime<Utc>) -> i64 {
     (next_day - now.naive_utc()).num_seconds().max(1)
 }
 
+fn default_trust_policy() -> TrustPolicyConfig {
+    TrustPolicyConfig {
+        level_policies: vec![
+            LevelPolicy {
+                level: 1,
+                min_active_days: 0,
+                max_active_days: Some(6),
+                daily_outbound_messages_limit: Some(50),
+                daily_friend_add_limit: Some(5),
+                daily_attachment_send_limit: Some(5),
+            },
+            LevelPolicy {
+                level: 2,
+                min_active_days: 7,
+                max_active_days: Some(13),
+                daily_outbound_messages_limit: Some(100),
+                daily_friend_add_limit: Some(10),
+                daily_attachment_send_limit: Some(5),
+            },
+            LevelPolicy {
+                level: 3,
+                min_active_days: 14,
+                max_active_days: Some(29),
+                daily_outbound_messages_limit: Some(200),
+                daily_friend_add_limit: Some(20),
+                daily_attachment_send_limit: Some(10),
+            },
+            LevelPolicy {
+                level: 4,
+                min_active_days: 30,
+                max_active_days: Some(59),
+                daily_outbound_messages_limit: Some(500),
+                daily_friend_add_limit: Some(30),
+                daily_attachment_send_limit: None,
+            },
+            LevelPolicy {
+                level: 5,
+                min_active_days: 60,
+                max_active_days: Some(89),
+                daily_outbound_messages_limit: Some(1_000),
+                daily_friend_add_limit: Some(30),
+                daily_attachment_send_limit: None,
+            },
+            LevelPolicy {
+                level: 6,
+                min_active_days: 90,
+                max_active_days: Some(119),
+                daily_outbound_messages_limit: None,
+                daily_friend_add_limit: Some(30),
+                daily_attachment_send_limit: None,
+            },
+            LevelPolicy {
+                level: 7,
+                min_active_days: 120,
+                max_active_days: Some(179),
+                daily_outbound_messages_limit: None,
+                daily_friend_add_limit: Some(50),
+                daily_attachment_send_limit: None,
+            },
+            LevelPolicy {
+                level: 8,
+                min_active_days: 180,
+                max_active_days: None,
+                daily_outbound_messages_limit: None,
+                daily_friend_add_limit: Some(50),
+                daily_attachment_send_limit: None,
+            },
+        ],
+        rank_policies: vec![
+            RankPolicy {
+                rank: "F".to_string(),
+                min_score: 0,
+                max_score: Some(99),
+                daily_outbound_messages_limit_multiplier_percent: None,
+                overrides_level_limits: false,
+            },
+            RankPolicy {
+                rank: "E".to_string(),
+                min_score: 100,
+                max_score: Some(499),
+                daily_outbound_messages_limit_multiplier_percent: None,
+                overrides_level_limits: false,
+            },
+            RankPolicy {
+                rank: "D".to_string(),
+                min_score: 500,
+                max_score: Some(999),
+                daily_outbound_messages_limit_multiplier_percent: Some(120),
+                overrides_level_limits: false,
+            },
+            RankPolicy {
+                rank: "C".to_string(),
+                min_score: 1_000,
+                max_score: Some(2_499),
+                daily_outbound_messages_limit_multiplier_percent: None,
+                overrides_level_limits: false,
+            },
+            RankPolicy {
+                rank: "B".to_string(),
+                min_score: 2_500,
+                max_score: Some(4_999),
+                daily_outbound_messages_limit_multiplier_percent: Some(150),
+                overrides_level_limits: false,
+            },
+            RankPolicy {
+                rank: "A".to_string(),
+                min_score: 5_000,
+                max_score: Some(9_999),
+                daily_outbound_messages_limit_multiplier_percent: None,
+                overrides_level_limits: true,
+            },
+            RankPolicy {
+                rank: "S".to_string(),
+                min_score: 10_000,
+                max_score: None,
+                daily_outbound_messages_limit_multiplier_percent: None,
+                overrides_level_limits: true,
+            },
+        ],
+        community_upvote_daily_cap: 100,
+        safe_attachment_types: DEFAULT_SAFE_ATTACHMENT_TYPES
+            .iter()
+            .map(|entry| (*entry).to_string())
+            .collect(),
+    }
+}
+
+fn load_trust_policy_conn(conn: &mut diesel::PgConnection) -> Result<TrustPolicyConfig, AppError> {
+    let raw = admin_settings::table
+        .filter(admin_settings::key.eq(admin_service::SETTING_TRUST_POLICY))
+        .select(admin_settings::value)
+        .first::<String>(conn)
+        .optional()?;
+
+    let Some(raw) = raw else {
+        return Ok(default_trust_policy());
+    };
+
+    match serde_json::from_str::<TrustPolicyConfig>(&raw) {
+        Ok(policy) => match normalize_trust_policy(policy) {
+            Ok(normalized) => Ok(normalized),
+            Err(error) => {
+                tracing::warn!(error = %error, "Invalid stored trust policy; using defaults");
+                Ok(default_trust_policy())
+            }
+        },
+        Err(error) => {
+            tracing::warn!(error = %error, "Could not decode stored trust policy; using defaults");
+            Ok(default_trust_policy())
+        }
+    }
+}
+
+fn normalize_trust_policy(mut policy: TrustPolicyConfig) -> Result<TrustPolicyConfig, AppError> {
+    if policy.level_policies.is_empty() {
+        return Err(AppError::BadRequest(
+            "trust policy must define at least one level policy".into(),
+        ));
+    }
+    if policy.rank_policies.is_empty() {
+        return Err(AppError::BadRequest(
+            "trust policy must define at least one rank policy".into(),
+        ));
+    }
+    if policy.community_upvote_daily_cap < 0 {
+        return Err(AppError::BadRequest(
+            "community_upvote_daily_cap must be >= 0".into(),
+        ));
+    }
+
+    policy.safe_attachment_types = policy
+        .safe_attachment_types
+        .into_iter()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    policy
+        .level_policies
+        .sort_by_key(|entry| entry.min_active_days);
+    let mut seen_levels = BTreeSet::new();
+    for (index, entry) in policy.level_policies.iter().enumerate() {
+        if entry.level == 0 || entry.level > 10 {
+            return Err(AppError::BadRequest(
+                "level policy level must be between 1 and 10".into(),
+            ));
+        }
+        if !seen_levels.insert(entry.level) {
+            return Err(AppError::BadRequest(
+                "level policy levels must be unique".into(),
+            ));
+        }
+        if entry.min_active_days < 0 {
+            return Err(AppError::BadRequest(
+                "level policy min_active_days must be >= 0".into(),
+            ));
+        }
+        if let Some(max_active_days) = entry.max_active_days {
+            if max_active_days < entry.min_active_days {
+                return Err(AppError::BadRequest(
+                    "level policy max_active_days must be >= min_active_days".into(),
+                ));
+            }
+            if let Some(next_entry) = policy.level_policies.get(index + 1) {
+                if next_entry.min_active_days <= max_active_days {
+                    return Err(AppError::BadRequest(
+                        "level policy day ranges must not overlap".into(),
+                    ));
+                }
+            }
+        } else if index + 1 != policy.level_policies.len() {
+            return Err(AppError::BadRequest(
+                "only the final level policy may be open-ended".into(),
+            ));
+        }
+        for limit in [
+            entry.daily_outbound_messages_limit,
+            entry.daily_friend_add_limit,
+            entry.daily_attachment_send_limit,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if limit < 0 {
+                return Err(AppError::BadRequest(
+                    "level policy limits must be >= 0".into(),
+                ));
+            }
+        }
+    }
+    if policy.level_policies[0].min_active_days != 0 {
+        return Err(AppError::BadRequest(
+            "the first level policy must start at 0 active days".into(),
+        ));
+    }
+
+    policy.rank_policies.sort_by_key(|entry| entry.min_score);
+    let mut seen_ranks = BTreeSet::new();
+    for (index, entry) in policy.rank_policies.iter().enumerate() {
+        if !matches!(entry.rank.as_str(), "F" | "E" | "D" | "C" | "B" | "A" | "S") {
+            return Err(AppError::BadRequest(
+                "rank policy rank must be one of F, E, D, C, B, A, S".into(),
+            ));
+        }
+        if !seen_ranks.insert(entry.rank.clone()) {
+            return Err(AppError::BadRequest(
+                "rank policy ranks must be unique".into(),
+            ));
+        }
+        if entry.min_score < 0 {
+            return Err(AppError::BadRequest(
+                "rank policy min_score must be >= 0".into(),
+            ));
+        }
+        if let Some(max_score) = entry.max_score {
+            if max_score < entry.min_score {
+                return Err(AppError::BadRequest(
+                    "rank policy max_score must be >= min_score".into(),
+                ));
+            }
+            if let Some(next_entry) = policy.rank_policies.get(index + 1) {
+                if next_entry.min_score <= max_score {
+                    return Err(AppError::BadRequest(
+                        "rank policy score ranges must not overlap".into(),
+                    ));
+                }
+            }
+        } else if index + 1 != policy.rank_policies.len() {
+            return Err(AppError::BadRequest(
+                "only the final rank policy may be open-ended".into(),
+            ));
+        }
+        if let Some(percent) = entry.daily_outbound_messages_limit_multiplier_percent {
+            if percent <= 0 {
+                return Err(AppError::BadRequest(
+                    "rank policy multiplier percent must be > 0".into(),
+                ));
+            }
+        }
+    }
+    if policy.rank_policies[0].min_score != 0 {
+        return Err(AppError::BadRequest(
+            "the first rank policy must start at 0 score".into(),
+        ));
+    }
+
+    Ok(policy)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_snapshot, level_band_for_active_days, rank_for_contribution_score};
+    use super::{default_trust_policy, normalize_trust_policy, rank_policy_for_score};
 
     #[test]
-    fn level_bands_match_mvp_thresholds() {
-        assert_eq!(level_band_for_active_days(0).level, 1);
-        assert_eq!(level_band_for_active_days(6).level, 1);
-        assert_eq!(level_band_for_active_days(7).level, 2);
-        assert_eq!(level_band_for_active_days(30).level, 4);
-        assert_eq!(level_band_for_active_days(90).level, 6);
-        assert_eq!(level_band_for_active_days(180).level, 8);
+    fn default_policy_covers_expected_thresholds() {
+        let policy = default_trust_policy();
+        assert_eq!(
+            policy.level_policies[0].daily_outbound_messages_limit,
+            Some(50)
+        );
+        assert_eq!(policy.level_policies[3].level, 4);
+        assert_eq!(policy.level_policies[3].min_active_days, 30);
+        assert_eq!(rank_policy_for_score(&policy, 0).rank, "F");
+        assert_eq!(rank_policy_for_score(&policy, 5_000).rank, "A");
     }
 
     #[test]
-    fn contribution_score_maps_to_rank() {
-        assert_eq!(rank_for_contribution_score(0), "F");
-        assert_eq!(rank_for_contribution_score(499), "E");
-        assert_eq!(rank_for_contribution_score(5_000), "A");
-        assert_eq!(rank_for_contribution_score(10_000), "S");
+    fn trust_policy_normalization_rejects_overlapping_ranges() {
+        let mut policy = default_trust_policy();
+        policy.level_policies[1].min_active_days = 6;
+        let error = normalize_trust_policy(policy).expect_err("policy should be invalid");
+        assert!(error
+            .to_string()
+            .contains("level policy day ranges must not overlap"));
     }
 
     #[test]
-    fn snapshot_reports_remaining_messages() {
-        let snapshot = build_snapshot(7, 0, 40);
-        assert_eq!(snapshot.level, 2);
-        assert_eq!(snapshot.daily_outbound_messages_limit, Some(100));
-        assert_eq!(snapshot.daily_outbound_messages_remaining, Some(60));
-        assert_eq!(snapshot.rank, "F");
+    fn trust_policy_normalization_sorts_and_deduplicates() {
+        let mut policy = default_trust_policy();
+        policy.safe_attachment_types = vec![
+            "image/png".into(),
+            " image/png ".into(),
+            "application/pdf".into(),
+        ];
+        policy.level_policies.reverse();
+        let normalized = normalize_trust_policy(policy).expect("policy should normalize");
+        assert_eq!(normalized.level_policies[0].level, 1);
+        assert_eq!(
+            normalized.safe_attachment_types,
+            vec!["application/pdf".to_string(), "image/png".to_string()]
+        );
     }
 }

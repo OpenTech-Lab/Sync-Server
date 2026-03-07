@@ -11,7 +11,8 @@ use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::server_news::ServerNews;
-use crate::services::{admin_service, server_news_service};
+use crate::models::trust::TrustPolicyConfig;
+use crate::services::{admin_service, server_news_service, trust_service};
 
 #[derive(Debug, Deserialize)]
 pub struct UserQuery {
@@ -482,11 +483,7 @@ pub async fn update_config(
 
     if let Some(require_approval) = body.require_approval {
         if require_approval {
-            admin_service::set_setting(
-                &pool,
-                admin_service::SETTING_REQUIRE_APPROVAL,
-                "true",
-            )?;
+            admin_service::set_setting(&pool, admin_service::SETTING_REQUIRE_APPROVAL, "true")?;
         } else {
             admin_service::clear_setting(&pool, admin_service::SETTING_REQUIRE_APPROVAL)?;
         }
@@ -536,6 +533,35 @@ pub async fn audit_logs(
     Ok(HttpResponse::Ok().json(items))
 }
 
+pub async fn get_trust_policy(
+    pool: web::Data<Pool>,
+    _admin: AdminUser,
+) -> Result<HttpResponse, AppError> {
+    let policy = trust_service::read_trust_policy(&pool)?;
+    Ok(HttpResponse::Ok().json(policy))
+}
+
+pub async fn update_trust_policy(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    body: web::Json<TrustPolicyConfig>,
+) -> Result<HttpResponse, AppError> {
+    let policy = trust_service::save_trust_policy(&pool, &body)?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin.0.user_id()?),
+        "trust_policy.update",
+        None,
+        serde_json::json!({
+            "levels": policy.level_policies.len(),
+            "ranks": policy.rank_policies.len(),
+            "safe_attachment_types": policy.safe_attachment_types.len(),
+            "community_upvote_daily_cap": policy.community_upvote_daily_cap,
+        }),
+    )?;
+    Ok(HttpResponse::Ok().json(policy))
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/overview", web::get().to(overview))
         .route("/users", web::get().to(list_users))
@@ -552,5 +578,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         )
         .route("/config", web::get().to(get_config))
         .route("/config", web::put().to(update_config))
+        .route("/trust-policy", web::get().to(get_trust_policy))
+        .route("/trust-policy", web::put().to(update_trust_policy))
         .route("/audit-logs", web::get().to(audit_logs));
 }

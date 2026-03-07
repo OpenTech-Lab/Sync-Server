@@ -85,10 +85,27 @@ diesel::table! {
         user_id -> Uuid,
         active_days -> Int4,
         contribution_score -> Int4,
+        derived_level -> Int4,
+        derived_rank -> Text,
         last_active_day -> Nullable<Date>,
         automation_review_state -> Text,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    trust_score_events (id) {
+        id -> Uuid,
+        user_id -> Uuid,
+        granter_user_id -> Nullable<Uuid>,
+        event_type -> Text,
+        delta -> Int4,
+        reference_id -> Nullable<Text>,
+        metadata -> Jsonb,
+        created_at -> Timestamptz,
     }
 }
 
@@ -222,12 +239,14 @@ diesel::joinable!(stickers -> users (uploader_id));
 diesel::joinable!(device_push_tokens -> users (user_id));
 diesel::joinable!(encrypted_backups -> users (user_id));
 diesel::joinable!(server_news -> users (created_by));
+diesel::joinable!(trust_score_events -> users (user_id));
 diesel::joinable!(user_trust_stats -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     admin_settings,
     admin_audit_logs,
     daily_action_counters,
+    trust_score_events,
     users,
     user_trust_stats,
     encrypted_backups,

@@ -10,8 +10,7 @@ use crate::services::{admin_service, apns_service, push_token_service};
 /// configured a custom `notification_webhook_url` will forward iOS push
 /// payloads here so that APNs delivery works for the official mobile app
 /// without each operator having to supply their own APNs credentials.
-const DEFAULT_RELAY_WEBHOOK_URL: &str =
-    "https://push.sync.icyanstudio.net/v1/push/webhook";
+const DEFAULT_RELAY_WEBHOOK_URL: &str = "https://push.sync.icyanstudio.net/v1/push/webhook";
 
 #[derive(Debug, Clone)]
 struct PushTargetData {
@@ -212,8 +211,6 @@ fn is_relay_deliverable_platform(platform: &str) -> bool {
     let p = platform.trim().to_lowercase();
     matches!(p.as_str(), "android" | "fcm")
 }
-
-
 
 fn truncate_preview(content: &str, max_chars: usize) -> String {
     if is_encrypted_payload(content) {

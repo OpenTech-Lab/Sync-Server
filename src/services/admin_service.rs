@@ -19,6 +19,7 @@ pub const SETTING_PLANET_DESCRIPTION: &str = "planet_description";
 pub const SETTING_PLANET_IMAGE_BASE64: &str = "planet_image_base64";
 pub const SETTING_LINKED_PLANETS: &str = "linked_planets";
 pub const SETTING_REQUIRE_APPROVAL: &str = "registration_requires_approval";
+pub const SETTING_TRUST_POLICY: &str = "trust_policy";
 
 #[derive(Debug, serde::Serialize)]
 pub struct AdminOverview {
@@ -144,10 +145,7 @@ pub fn list_users(pool: &Pool, query: Option<&str>) -> Result<Vec<AdminUserView>
 pub fn approve_user(pool: &Pool, user_id: Uuid) -> Result<(), AppError> {
     let mut conn = pool.get()?;
     let changed = diesel::update(user_dsl::users.find(user_id))
-        .set((
-            user_dsl::is_approved.eq(true),
-            user_dsl::is_active.eq(true),
-        ))
+        .set((user_dsl::is_approved.eq(true), user_dsl::is_active.eq(true)))
         .execute(&mut conn)?;
     if changed == 0 {
         return Err(AppError::NotFound);

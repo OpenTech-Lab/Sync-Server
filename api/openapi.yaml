@@ -131,6 +131,99 @@ components:
         display_handle:
           type: string
 
+    TrustSnapshot:
+      type: object
+      required:
+        - active_days
+        - level
+        - contribution_score
+        - rank
+        - level_progress_percent
+        - daily_outbound_messages_enforced
+        - daily_outbound_messages_sent
+        - daily_attachment_sends_enforced
+        - daily_attachment_sends_sent
+        - allowed_attachment_types
+      properties:
+        active_days:
+          type: integer
+        level:
+          type: integer
+          minimum: 1
+          maximum: 10
+        contribution_score:
+          type: integer
+        rank:
+          type: string
+          enum: [F, E, D, C, B, A, S]
+        next_level_active_days:
+          type: integer
+          nullable: true
+        level_progress_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        daily_outbound_messages_enforced:
+          type: boolean
+        daily_outbound_messages_limit:
+          type: integer
+          nullable: true
+        daily_outbound_messages_sent:
+          type: integer
+        daily_outbound_messages_remaining:
+          type: integer
+          nullable: true
+        daily_attachment_sends_enforced:
+          type: boolean
+        daily_attachment_send_limit:
+          type: integer
+          nullable: true
+        daily_attachment_sends_sent:
+          type: integer
+        daily_attachment_sends_remaining:
+          type: integer
+          nullable: true
+        allowed_attachment_types:
+          type: array
+          items:
+            type: string
+
+    UserProfilePublic:
+      type: object
+      required: [id, username]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        avatar_base64:
+          type: string
+          nullable: true
+        message_public_key:
+          type: string
+          nullable: true
+        trust:
+          allOf:
+            - $ref: '#/components/schemas/TrustSnapshot'
+          nullable: true
+          description: Returned for `/api/profile/me`; omitted for public profile lookups.
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          nullable: true
+        avatar_base64:
+          type: string
+          nullable: true
+          description: Base64-encoded avatar image. Pass `null` to clear the avatar.
+        message_public_key:
+          type: string
+          nullable: true
+          description: Base64-encoded 32-byte public key for message encryption.
+
     UnreadCounts:
       type: object
       description: Map of partner_user_id (UUID string) → unread message count
@@ -398,6 +491,75 @@ paths:
           description: Session revoked successfully
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  /api/profile/me:
+    get:
+      operationId: getMyProfile
+      summary: Get the current user's profile
+      tags: [profile]
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfilePublic'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      operationId: updateMyProfile
+      summary: Update the current user's profile
+      tags: [profile]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Updated user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfilePublic'
+        '400':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      operationId: deleteMyProfile
+      summary: Delete the current user's account
+      tags: [profile]
+      responses:
+        '204':
+          description: Account deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/profile/{user_id}:
+    get:
+      operationId: getUserProfile
+      summary: Get a public user profile by ID
+      tags: [profile]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfilePublic'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /api/messages:
     post:
@@ -729,6 +891,8 @@ tags:
     description: Liveness and readiness probes
   - name: auth
     description: Registration, login, token refresh, and logout
+  - name: profile
+    description: Current-user profile management and public profile lookups
   - name: messages
     description: Send, receive, paginate, and mark messages
   - name: planet-news

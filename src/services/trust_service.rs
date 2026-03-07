@@ -1377,6 +1377,61 @@ mod tests {
     }
 
     #[test]
+    fn trust_snapshot_applies_rank_multiplier_to_message_caps() {
+        let policy = default_trust_policy();
+        let now = Utc::now();
+        let stats = UserTrustStats {
+            user_id: Uuid::new_v4(),
+            active_days: 20,
+            contribution_score: 750,
+            derived_level: 3,
+            derived_rank: "D".to_string(),
+            last_active_day: Some(now.date_naive()),
+            last_human_activity_at: Some(now),
+            suspicious_activity_streak: 0,
+            automation_review_state: "clear".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let snapshot = build_snapshot(&policy, &stats, 40, 2);
+
+        assert!(snapshot.daily_outbound_messages_enforced);
+        assert_eq!(snapshot.daily_outbound_messages_limit, Some(240));
+        assert_eq!(snapshot.daily_outbound_messages_remaining, Some(200));
+        assert_eq!(snapshot.daily_attachment_send_limit, Some(10));
+        assert_eq!(snapshot.daily_attachment_sends_remaining, Some(8));
+        assert_eq!(snapshot.next_level_active_days, Some(30));
+    }
+
+    #[test]
+    fn trust_snapshot_uses_rank_overrides_for_unlimited_message_caps() {
+        let policy = default_trust_policy();
+        let now = Utc::now();
+        let stats = UserTrustStats {
+            user_id: Uuid::new_v4(),
+            active_days: 5,
+            contribution_score: 6_000,
+            derived_level: 1,
+            derived_rank: "A".to_string(),
+            last_active_day: Some(now.date_naive()),
+            last_human_activity_at: Some(now),
+            suspicious_activity_streak: 0,
+            automation_review_state: "clear".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let snapshot = build_snapshot(&policy, &stats, 99, 4);
+
+        assert_eq!(snapshot.daily_outbound_messages_limit, None);
+        assert_eq!(snapshot.daily_outbound_messages_remaining, None);
+        assert_eq!(snapshot.daily_attachment_send_limit, Some(5));
+        assert_eq!(snapshot.daily_attachment_sends_remaining, Some(1));
+        assert_eq!(snapshot.rank, "A");
+    }
+
+    #[test]
     fn suspicious_rollover_activity_is_challenged_and_not_counted() {
         let now = Utc::now();
         let today = now.date_naive();

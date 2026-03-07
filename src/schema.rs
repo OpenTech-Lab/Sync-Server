@@ -14,6 +14,18 @@ diesel::table! {
 diesel::table! {
     use diesel::sql_types::*;
 
+    daily_action_counters (user_id, action_key, day_bucket) {
+        user_id -> Uuid,
+        action_key -> Text,
+        day_bucket -> Date,
+        count -> Int4,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
     server_news (id) {
         id -> Uuid,
         title -> Text,
@@ -63,6 +75,20 @@ diesel::table! {
         target -> Nullable<Text>,
         details -> Jsonb,
         created_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    user_trust_stats (user_id) {
+        user_id -> Uuid,
+        active_days -> Int4,
+        contribution_score -> Int4,
+        last_active_day -> Nullable<Date>,
+        automation_review_state -> Text,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
     }
 }
 
@@ -191,15 +217,19 @@ diesel::table! {
 diesel::joinable!(refresh_tokens -> users (user_id));
 diesel::joinable!(messages -> users (sender_id));
 diesel::joinable!(admin_audit_logs -> users (actor_user_id));
+diesel::joinable!(daily_action_counters -> users (user_id));
 diesel::joinable!(stickers -> users (uploader_id));
 diesel::joinable!(device_push_tokens -> users (user_id));
 diesel::joinable!(encrypted_backups -> users (user_id));
 diesel::joinable!(server_news -> users (created_by));
+diesel::joinable!(user_trust_stats -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     admin_settings,
     admin_audit_logs,
+    daily_action_counters,
     users,
+    user_trust_stats,
     encrypted_backups,
     device_push_tokens,
     refresh_tokens,

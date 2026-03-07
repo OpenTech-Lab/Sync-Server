@@ -7,7 +7,7 @@ use crate::auth::AuthUser;
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::user::UserProfilePublic;
-use crate::services::user_service;
+use crate::services::{trust_service, user_service};
 
 const USERNAME_MIN_LEN: usize = 3;
 const USERNAME_MAX_LEN: usize = 32;
@@ -58,7 +58,10 @@ fn validate_message_public_key(message_public_key: &str) -> Result<(), AppError>
 
 pub async fn me(pool: web::Data<Pool>, auth: AuthUser) -> Result<HttpResponse, AppError> {
     let user = user_service::find_by_id(&pool, auth.0.user_id()?)?.ok_or(AppError::Unauthorized)?;
-    Ok(HttpResponse::Ok().json(UserProfilePublic::from(user)))
+    let trust = trust_service::get_trust_snapshot(&pool, user.id)?;
+    let mut profile = UserProfilePublic::from(user);
+    profile.trust = Some(trust);
+    Ok(HttpResponse::Ok().json(profile))
 }
 
 pub async fn update_me(

@@ -3,6 +3,7 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::models::trust::TrustSnapshot;
 use crate::schema::users;
 
 #[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
@@ -54,6 +55,8 @@ pub struct UserProfilePublic {
     pub username: String,
     pub avatar_base64: Option<String>,
     pub message_public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust: Option<TrustSnapshot>,
 }
 
 impl From<User> for UserPublic {
@@ -78,6 +81,7 @@ impl From<User> for UserProfilePublic {
             username: u.username,
             avatar_base64: u.avatar_base64,
             message_public_key: u.message_public_key,
+            trust: None,
         }
     }
 }

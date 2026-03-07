@@ -1,5 +1,6 @@
 use chrono::Utc;
 use diesel::prelude::*;
+use diesel::PgConnection;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -16,16 +17,24 @@ pub fn send_message(
     body: String,
 ) -> Result<Message, AppError> {
     let mut conn = pool.get()?;
+    insert_message_conn(&mut conn, sender, recipient, &body).map_err(AppError::Database)
+}
+
+pub(crate) fn insert_message_conn(
+    conn: &mut PgConnection,
+    sender: Uuid,
+    recipient: Uuid,
+    body: &str,
+) -> Result<Message, diesel::result::Error> {
     let new_msg = NewMessage {
         id: Uuid::new_v4(),
         sender_id: sender,
         recipient_id: recipient,
-        content: body,
+        content: body.to_string(),
     };
     diesel::insert_into(crate::schema::messages::table)
         .values(&new_msg)
-        .get_result::<Message>(&mut conn)
-        .map_err(AppError::Database)
+        .get_result::<Message>(conn)
 }
 
 /// Keyset-paginated conversation between two users.

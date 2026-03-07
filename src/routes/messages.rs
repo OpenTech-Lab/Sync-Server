@@ -6,9 +6,10 @@ use crate::auth::AuthUser;
 use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
+use crate::models::trust::TrustSnapshot;
 use crate::routes::federation;
 use crate::services::user_service;
-use crate::services::{message_service, push_dispatch_service, redis_pubsub};
+use crate::services::{message_service, push_dispatch_service, redis_pubsub, trust_service};
 
 // ── Request DTOs ─────────────────────────────────────────────────────────────
 
@@ -37,6 +38,14 @@ pub struct ResolveContactResponse {
     pub recipient_id: String,
     pub recipient_server_url: String,
     pub display_handle: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct MessageLimitExceededResponse {
+    error: &'static str,
+    code: &'static str,
+    retry_after_seconds: i64,
+    trust: TrustSnapshot,
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -221,7 +230,24 @@ pub async fn send_message(
         user_service::find_by_id(&pool, local_id)?.ok_or(AppError::NotFound)?
     };
 
-    let message = message_service::send_message(&pool, sender_id, recipient_user.id, content)?;
+    let message =
+        match trust_service::send_message_with_trust(&pool, sender_id, recipient_user.id, content)?
+        {
+            trust_service::SendMessageWithTrustResult::Sent { message } => message,
+            trust_service::SendMessageWithTrustResult::Limited {
+                trust,
+                retry_after_seconds,
+            } => {
+                return Ok(
+                    HttpResponse::TooManyRequests().json(MessageLimitExceededResponse {
+                        error: "Daily outbound message limit reached for your current trust level.",
+                        code: "daily_message_limit_reached",
+                        retry_after_seconds,
+                        trust,
+                    }),
+                );
+            }
+        };
     publish_new_message_event(&redis, sender_id, recipient_user.id, &message).await;
 
     let federated_target = user_service::federated_identity_for_user(&recipient_user);
@@ -286,6 +312,7 @@ pub async fn mark_read(
 ) -> Result<HttpResponse, AppError> {
     let viewer_id = auth.0.user_id()?;
     let count = message_service::mark_read(&pool, viewer_id, *partner_id)?;
+    trust_service::record_human_activity(&pool, viewer_id)?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "count": count })))
 }
 

@@ -6,6 +6,7 @@ pub mod message;
 pub mod refresh_token;
 pub mod server_news;
 pub mod sticker;
+pub mod trust;
 pub mod user;
 
 #[allow(unused_imports)]
@@ -28,5 +29,9 @@ pub use refresh_token::{NewRefreshToken, RefreshToken};
 pub use server_news::{NewServerNews, ServerNews};
 #[allow(unused_imports)]
 pub use sticker::{NewSticker, Sticker, StickerDetail, StickerListItem};
+#[allow(unused_imports)]
+pub use trust::{
+    DailyActionCounter, NewDailyActionCounter, NewUserTrustStats, TrustSnapshot, UserTrustStats,
+};
 #[allow(unused_imports)]
 pub use user::{NewUser, User, UserPublic};

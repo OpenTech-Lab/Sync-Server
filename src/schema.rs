@@ -88,6 +88,8 @@ diesel::table! {
         derived_level -> Int4,
         derived_rank -> Text,
         last_active_day -> Nullable<Date>,
+        last_human_activity_at -> Nullable<Timestamptz>,
+        suspicious_activity_streak -> Int4,
         automation_review_state -> Text,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,

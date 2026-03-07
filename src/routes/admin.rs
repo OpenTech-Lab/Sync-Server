@@ -553,6 +553,10 @@ pub async fn update_trust_policy(
         "trust_policy.update",
         None,
         serde_json::json!({
+            "enforcement_enabled": policy.enforcement.enabled,
+            "outbound_messages_enabled": policy.enforcement.outbound_messages_enabled,
+            "friend_adds_enabled": policy.enforcement.friend_adds_enabled,
+            "attachment_sends_enabled": policy.enforcement.attachment_sends_enabled,
             "levels": policy.level_policies.len(),
             "ranks": policy.rank_policies.len(),
             "safe_attachment_types": policy.safe_attachment_types.len(),
@@ -560,6 +564,28 @@ pub async fn update_trust_policy(
         }),
     )?;
     Ok(HttpResponse::Ok().json(policy))
+}
+
+pub async fn prune_trust_history(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+) -> Result<HttpResponse, AppError> {
+    let result = trust_service::prune_trust_history(&pool)?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin.0.user_id()?),
+        "trust_history.prune",
+        None,
+        serde_json::json!({
+            "daily_counter_retention_days": result.daily_counter_retention_days,
+            "score_event_retention_days": result.score_event_retention_days,
+            "pruned_before_day": result.pruned_before_day,
+            "pruned_before_timestamp": result.pruned_before_timestamp,
+            "daily_action_counters_deleted": result.daily_action_counters_deleted,
+            "trust_score_events_deleted": result.trust_score_events_deleted,
+        }),
+    )?;
+    Ok(HttpResponse::Ok().json(result))
 }
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
@@ -580,5 +606,9 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/config", web::put().to(update_config))
         .route("/trust-policy", web::get().to(get_trust_policy))
         .route("/trust-policy", web::put().to(update_trust_policy))
+        .route(
+            "/trust-policy/prune-history",
+            web::post().to(prune_trust_history),
+        )
         .route("/audit-logs", web::get().to(audit_logs));
 }

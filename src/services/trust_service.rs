@@ -9,13 +9,20 @@ use crate::errors::AppError;
 use crate::models::message::Message;
 use crate::models::trust::{
     LevelPolicy, NewDailyActionCounter, NewTrustScoreEvent, NewUserTrustStats, RankPolicy,
-    TrustPolicyConfig, TrustScoreEvent, TrustSnapshot, UserTrustStats,
+    TrustEnforcementConfig, TrustHistoryPruneResult, TrustPolicyConfig, TrustScoreEvent,
+    TrustSnapshot, UserTrustStats, DEFAULT_DAILY_COUNTER_RETENTION_DAYS,
+    DEFAULT_SCORE_EVENT_RETENTION_DAYS,
 };
 use crate::schema::{admin_settings, daily_action_counters, trust_score_events, user_trust_stats};
 use crate::services::{admin_service, message_service};
 
 const ACTION_OUTBOUND_MESSAGE: &str = "outbound_message";
 const DEFAULT_AUTOMATION_REVIEW_STATE: &str = "clear";
+const AUTOMATION_REVIEW_STATE_CHALLENGED: &str = "challenged";
+const AUTOMATION_REVIEW_STATE_FROZEN: &str = "frozen";
+const SUSPICIOUS_NEW_DAY_ACTIVITY_WINDOW_MINUTES: i64 = 10;
+const SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD: i32 = 3;
+const FROZEN_RECOVERY_WINDOW_HOURS: i64 = 24;
 const DEFAULT_SAFE_ATTACHMENT_TYPES: &[&str] = &[
     "application/pdf",
     "image/jpeg",
@@ -36,6 +43,13 @@ pub enum SendMessageWithTrustResult {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HumanActivityAssessment {
+    should_advance_active_day: bool,
+    suspicious_activity_streak: i32,
+    automation_review_state: &'static str,
+}
+
 pub fn read_trust_policy(pool: &Pool) -> Result<TrustPolicyConfig, AppError> {
     let mut conn = pool.get()?;
     load_trust_policy_conn(&mut conn)
@@ -50,6 +64,37 @@ pub fn save_trust_policy(
         .map_err(|error| AppError::Internal(anyhow::anyhow!("trust policy encode: {}", error)))?;
     admin_service::set_setting(pool, admin_service::SETTING_TRUST_POLICY, &encoded)?;
     Ok(normalized)
+}
+
+pub fn prune_trust_history(pool: &Pool) -> Result<TrustHistoryPruneResult, AppError> {
+    let mut conn = pool.get()?;
+    let policy = load_trust_policy_conn(&mut conn)?;
+    let now = Utc::now();
+    let pruned_before_day =
+        now.date_naive() - Duration::days(i64::from(policy.daily_counter_retention_days));
+    let pruned_before_timestamp =
+        now - Duration::days(i64::from(policy.score_event_retention_days));
+
+    let daily_action_counters_deleted = diesel::delete(
+        daily_action_counters::table
+            .filter(daily_action_counters::day_bucket.lt(pruned_before_day)),
+    )
+    .execute(&mut conn)? as i64;
+
+    let trust_score_events_deleted = diesel::delete(
+        trust_score_events::table
+            .filter(trust_score_events::created_at.lt(pruned_before_timestamp)),
+    )
+    .execute(&mut conn)? as i64;
+
+    Ok(TrustHistoryPruneResult {
+        daily_counter_retention_days: policy.daily_counter_retention_days,
+        score_event_retention_days: policy.score_event_retention_days,
+        pruned_before_day,
+        pruned_before_timestamp,
+        daily_action_counters_deleted,
+        trust_score_events_deleted,
+    })
 }
 
 #[allow(dead_code)]
@@ -96,7 +141,10 @@ pub fn record_human_activity(pool: &Pool, user_id: Uuid) -> Result<(), AppError>
         let policy = load_trust_policy_conn(conn)?;
         let stats = ensure_user_trust_stats(conn, &policy, user_id)?;
         let stats = sync_derived_state(conn, &policy, stats, now)?;
-        let _ = advance_active_day_if_needed(conn, &policy, stats, today, now)?;
+        let (stats, assessment) = update_human_activity_state(conn, stats, today, now)?;
+        if assessment.should_advance_active_day {
+            let _ = advance_active_day_if_needed(conn, &policy, stats, today, now)?;
+        }
         Ok(())
     })
 }
@@ -115,18 +163,26 @@ pub fn send_message_with_trust(
         let policy = load_trust_policy_conn(conn)?;
         let stats = ensure_user_trust_stats(conn, &policy, sender_id)?;
         let stats = sync_derived_state(conn, &policy, stats, now)?;
-        let stats = advance_active_day_if_needed(conn, &policy, stats, today, now)?;
+        let (stats, assessment) = update_human_activity_state(conn, stats, today, now)?;
+        let stats = if assessment.should_advance_active_day {
+            advance_active_day_if_needed(conn, &policy, stats, today, now)?
+        } else {
+            stats
+        };
         let sent_today = daily_message_count(conn, sender_id, today)?;
         let level_policy = level_policy_for_active_days(&policy, stats.active_days);
         let rank_policy = rank_policy_for_score(&policy, stats.contribution_score);
         let limit = effective_daily_outbound_messages_limit(level_policy, rank_policy);
+        let limit_enforced = outbound_message_limit_enforced(&policy);
 
-        if let Some(limit) = limit {
-            if sent_today >= limit {
-                return Ok(SendMessageWithTrustResult::Limited {
-                    trust: build_snapshot(&policy, &stats, sent_today),
-                    retry_after_seconds: seconds_until_next_utc_day(now),
-                });
+        if limit_enforced {
+            if let Some(limit) = limit {
+                if sent_today >= limit {
+                    return Ok(SendMessageWithTrustResult::Limited {
+                        trust: build_snapshot(&policy, &stats, sent_today),
+                        retry_after_seconds: seconds_until_next_utc_day(now),
+                    });
+                }
             }
         }
 
@@ -138,6 +194,10 @@ pub fn send_message_with_trust(
     })
 }
 
+fn outbound_message_limit_enforced(policy: &TrustPolicyConfig) -> bool {
+    policy.enforcement.enabled && policy.enforcement.outbound_messages_enabled
+}
+
 fn build_snapshot(
     policy: &TrustPolicyConfig,
     stats: &UserTrustStats,
@@ -147,6 +207,7 @@ fn build_snapshot(
     let rank_policy = rank_policy_for_score(policy, stats.contribution_score);
     let daily_outbound_messages_limit =
         effective_daily_outbound_messages_limit(level_policy, rank_policy);
+    let daily_outbound_messages_enforced = outbound_message_limit_enforced(policy);
     let daily_outbound_messages_remaining =
         daily_outbound_messages_limit.map(|limit| (limit - daily_outbound_messages_sent).max(0));
 
@@ -161,6 +222,7 @@ fn build_snapshot(
             level_policy.min_active_days,
             next_level_active_days(policy, level_policy.level),
         ),
+        daily_outbound_messages_enforced,
         daily_outbound_messages_limit,
         daily_outbound_messages_sent,
         daily_outbound_messages_remaining,
@@ -182,6 +244,8 @@ fn ensure_user_trust_stats(
             derived_level: i32::from(level_policy.level),
             derived_rank: rank_policy.rank.clone(),
             last_active_day: None,
+            last_human_activity_at: None,
+            suspicious_activity_streak: 0,
             automation_review_state: DEFAULT_AUTOMATION_REVIEW_STATE.to_string(),
         })
         .on_conflict(user_trust_stats::user_id)
@@ -218,6 +282,89 @@ fn sync_derived_state(
         ))
         .get_result::<UserTrustStats>(conn)
         .map_err(AppError::from)
+}
+
+fn update_human_activity_state(
+    conn: &mut diesel::PgConnection,
+    stats: UserTrustStats,
+    today: NaiveDate,
+    now: DateTime<Utc>,
+) -> Result<(UserTrustStats, HumanActivityAssessment), AppError> {
+    let assessment = assess_human_activity(&stats, today, now);
+    let updated = diesel::update(user_trust_stats::table.find(stats.user_id))
+        .set((
+            user_trust_stats::last_human_activity_at.eq(Some(now)),
+            user_trust_stats::suspicious_activity_streak.eq(assessment.suspicious_activity_streak),
+            user_trust_stats::automation_review_state.eq(assessment.automation_review_state),
+            user_trust_stats::updated_at.eq(now),
+        ))
+        .get_result::<UserTrustStats>(conn)
+        .map_err(AppError::from)?;
+    Ok((updated, assessment))
+}
+
+fn assess_human_activity(
+    stats: &UserTrustStats,
+    today: NaiveDate,
+    now: DateTime<Utc>,
+) -> HumanActivityAssessment {
+    if stats.automation_review_state == AUTOMATION_REVIEW_STATE_FROZEN {
+        let can_recover_from_frozen = stats
+            .last_human_activity_at
+            .map(|last_human_activity_at| {
+                now.signed_duration_since(last_human_activity_at)
+                    >= Duration::hours(FROZEN_RECOVERY_WINDOW_HOURS)
+            })
+            .unwrap_or(true)
+            && stats.last_active_day != Some(today);
+
+        if can_recover_from_frozen {
+            return HumanActivityAssessment {
+                should_advance_active_day: true,
+                suspicious_activity_streak: 0,
+                automation_review_state: DEFAULT_AUTOMATION_REVIEW_STATE,
+            };
+        }
+
+        return HumanActivityAssessment {
+            should_advance_active_day: false,
+            suspicious_activity_streak: stats.suspicious_activity_streak,
+            automation_review_state: AUTOMATION_REVIEW_STATE_FROZEN,
+        };
+    }
+
+    let attempting_new_day = stats.last_active_day != Some(today);
+    let suspicious_new_day_attempt = attempting_new_day
+        && stats
+            .last_human_activity_at
+            .map(|last_human_activity_at| {
+                now.signed_duration_since(last_human_activity_at)
+                    < Duration::minutes(SUSPICIOUS_NEW_DAY_ACTIVITY_WINDOW_MINUTES)
+            })
+            .unwrap_or(false);
+
+    let suspicious_activity_streak = if suspicious_new_day_attempt {
+        stats.suspicious_activity_streak.saturating_add(1)
+    } else if attempting_new_day {
+        stats.suspicious_activity_streak.saturating_sub(1)
+    } else {
+        stats.suspicious_activity_streak
+    };
+
+    let automation_review_state =
+        if suspicious_activity_streak >= SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD {
+            AUTOMATION_REVIEW_STATE_FROZEN
+        } else if suspicious_activity_streak > 0 {
+            AUTOMATION_REVIEW_STATE_CHALLENGED
+        } else {
+            DEFAULT_AUTOMATION_REVIEW_STATE
+        };
+
+    HumanActivityAssessment {
+        should_advance_active_day: attempting_new_day && !suspicious_new_day_attempt,
+        suspicious_activity_streak,
+        automation_review_state,
+    }
 }
 
 fn advance_active_day_if_needed(
@@ -374,6 +521,9 @@ fn seconds_until_next_utc_day(now: DateTime<Utc>) -> i64 {
 
 fn default_trust_policy() -> TrustPolicyConfig {
     TrustPolicyConfig {
+        enforcement: TrustEnforcementConfig::default(),
+        daily_counter_retention_days: DEFAULT_DAILY_COUNTER_RETENTION_DAYS,
+        score_event_retention_days: DEFAULT_SCORE_EVENT_RETENTION_DAYS,
         level_policies: vec![
             LevelPolicy {
                 level: 1,
@@ -541,6 +691,16 @@ fn normalize_trust_policy(mut policy: TrustPolicyConfig) -> Result<TrustPolicyCo
             "community_upvote_daily_cap must be >= 0".into(),
         ));
     }
+    if policy.daily_counter_retention_days <= 0 {
+        return Err(AppError::BadRequest(
+            "daily_counter_retention_days must be > 0".into(),
+        ));
+    }
+    if policy.score_event_retention_days <= 0 {
+        return Err(AppError::BadRequest(
+            "score_event_retention_days must be > 0".into(),
+        ));
+    }
 
     policy.safe_attachment_types = policy
         .safe_attachment_types
@@ -665,11 +825,30 @@ fn normalize_trust_policy(mut policy: TrustPolicyConfig) -> Result<TrustPolicyCo
 
 #[cfg(test)]
 mod tests {
-    use super::{default_trust_policy, normalize_trust_policy, rank_policy_for_score};
+    use super::{
+        assess_human_activity, build_snapshot, default_trust_policy, normalize_trust_policy,
+        outbound_message_limit_enforced, rank_policy_for_score,
+        DEFAULT_DAILY_COUNTER_RETENTION_DAYS, DEFAULT_SCORE_EVENT_RETENTION_DAYS,
+        FROZEN_RECOVERY_WINDOW_HOURS, SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD,
+        SUSPICIOUS_NEW_DAY_ACTIVITY_WINDOW_MINUTES,
+    };
+    use crate::models::trust::{TrustPolicyConfig, UserTrustStats};
+    use chrono::{Duration, Utc};
+    use uuid::Uuid;
 
     #[test]
     fn default_policy_covers_expected_thresholds() {
         let policy = default_trust_policy();
+        assert!(policy.enforcement.enabled);
+        assert!(policy.enforcement.outbound_messages_enabled);
+        assert_eq!(
+            policy.daily_counter_retention_days,
+            DEFAULT_DAILY_COUNTER_RETENTION_DAYS
+        );
+        assert_eq!(
+            policy.score_event_retention_days,
+            DEFAULT_SCORE_EVENT_RETENTION_DAYS
+        );
         assert_eq!(
             policy.level_policies[0].daily_outbound_messages_limit,
             Some(50)
@@ -705,5 +884,176 @@ mod tests {
             normalized.safe_attachment_types,
             vec!["application/pdf".to_string(), "image/png".to_string()]
         );
+    }
+
+    #[test]
+    fn trust_policy_deserialization_defaults_enforcement_flags() {
+        let policy = default_trust_policy();
+        let mut raw = serde_json::to_value(policy).expect("policy should serialize");
+        let object = raw
+            .as_object_mut()
+            .expect("trust policy should serialize into an object");
+        object.remove("enforcement");
+        object.remove("daily_counter_retention_days");
+        object.remove("score_event_retention_days");
+
+        let parsed: TrustPolicyConfig =
+            serde_json::from_value(raw).expect("legacy trust policy should deserialize");
+
+        assert!(parsed.enforcement.enabled);
+        assert!(parsed.enforcement.outbound_messages_enabled);
+        assert!(parsed.enforcement.friend_adds_enabled);
+        assert!(parsed.enforcement.attachment_sends_enabled);
+        assert_eq!(
+            parsed.daily_counter_retention_days,
+            DEFAULT_DAILY_COUNTER_RETENTION_DAYS
+        );
+        assert_eq!(
+            parsed.score_event_retention_days,
+            DEFAULT_SCORE_EVENT_RETENTION_DAYS
+        );
+    }
+
+    #[test]
+    fn trust_policy_normalization_rejects_invalid_retention_settings() {
+        let mut policy = default_trust_policy();
+        policy.daily_counter_retention_days = 0;
+        let error = normalize_trust_policy(policy).expect_err("policy should be invalid");
+        assert!(error
+            .to_string()
+            .contains("daily_counter_retention_days must be > 0"));
+    }
+
+    #[test]
+    fn trust_snapshot_reports_when_message_limits_are_disabled() {
+        let mut policy = default_trust_policy();
+        policy.enforcement.outbound_messages_enabled = false;
+
+        let stats = UserTrustStats {
+            user_id: Uuid::new_v4(),
+            active_days: 3,
+            contribution_score: 0,
+            derived_level: 1,
+            derived_rank: "F".to_string(),
+            last_active_day: None,
+            last_human_activity_at: None,
+            suspicious_activity_streak: 0,
+            automation_review_state: "clear".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let snapshot = build_snapshot(&policy, &stats, 12);
+
+        assert!(!outbound_message_limit_enforced(&policy));
+        assert!(!snapshot.daily_outbound_messages_enforced);
+        assert_eq!(snapshot.daily_outbound_messages_limit, Some(50));
+        assert_eq!(snapshot.daily_outbound_messages_sent, 12);
+        assert_eq!(snapshot.daily_outbound_messages_remaining, Some(38));
+    }
+
+    #[test]
+    fn suspicious_rollover_activity_is_challenged_and_not_counted() {
+        let now = Utc::now();
+        let today = now.date_naive();
+        let stats = UserTrustStats {
+            user_id: Uuid::new_v4(),
+            active_days: 7,
+            contribution_score: 0,
+            derived_level: 2,
+            derived_rank: "F".to_string(),
+            last_active_day: Some(today.pred_opt().expect("previous day should exist")),
+            last_human_activity_at: Some(now - Duration::minutes(5)),
+            suspicious_activity_streak: 0,
+            automation_review_state: "clear".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let assessment = assess_human_activity(&stats, today, now);
+
+        assert!(!assessment.should_advance_active_day);
+        assert_eq!(assessment.suspicious_activity_streak, 1);
+        assert_eq!(assessment.automation_review_state, "challenged");
+    }
+
+    #[test]
+    fn legitimate_new_day_activity_reduces_suspicion_and_advances() {
+        let now = Utc::now();
+        let today = now.date_naive();
+        let stats = UserTrustStats {
+            user_id: Uuid::new_v4(),
+            active_days: 7,
+            contribution_score: 0,
+            derived_level: 2,
+            derived_rank: "F".to_string(),
+            last_active_day: Some(today.pred_opt().expect("previous day should exist")),
+            last_human_activity_at: Some(
+                now - Duration::minutes(SUSPICIOUS_NEW_DAY_ACTIVITY_WINDOW_MINUTES + 5),
+            ),
+            suspicious_activity_streak: 1,
+            automation_review_state: "challenged".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let assessment = assess_human_activity(&stats, today, now);
+
+        assert!(assessment.should_advance_active_day);
+        assert_eq!(assessment.suspicious_activity_streak, 0);
+        assert_eq!(assessment.automation_review_state, "clear");
+    }
+
+    #[test]
+    fn repeated_suspicious_attempts_escalate_to_frozen() {
+        let now = Utc::now();
+        let today = now.date_naive();
+        let stats = UserTrustStats {
+            user_id: Uuid::new_v4(),
+            active_days: 7,
+            contribution_score: 0,
+            derived_level: 2,
+            derived_rank: "F".to_string(),
+            last_active_day: Some(today.pred_opt().expect("previous day should exist")),
+            last_human_activity_at: Some(now - Duration::minutes(5)),
+            suspicious_activity_streak: SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD - 1,
+            automation_review_state: "challenged".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let assessment = assess_human_activity(&stats, today, now);
+
+        assert!(!assessment.should_advance_active_day);
+        assert_eq!(
+            assessment.suspicious_activity_streak,
+            SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD
+        );
+        assert_eq!(assessment.automation_review_state, "frozen");
+    }
+
+    #[test]
+    fn frozen_accounts_recover_after_quiet_period() {
+        let now = Utc::now();
+        let today = now.date_naive();
+        let stats = UserTrustStats {
+            user_id: Uuid::new_v4(),
+            active_days: 42,
+            contribution_score: 0,
+            derived_level: 4,
+            derived_rank: "F".to_string(),
+            last_active_day: Some(today.pred_opt().expect("previous day should exist")),
+            last_human_activity_at: Some(now - Duration::hours(FROZEN_RECOVERY_WINDOW_HOURS + 1)),
+            suspicious_activity_streak: SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD,
+            automation_review_state: "frozen".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let assessment = assess_human_activity(&stats, today, now);
+
+        assert!(assessment.should_advance_active_day);
+        assert_eq!(assessment.suspicious_activity_streak, 0);
+        assert_eq!(assessment.automation_review_state, "clear");
     }
 }

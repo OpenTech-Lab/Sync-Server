@@ -6,6 +6,17 @@ use uuid::Uuid;
 
 use crate::schema::{daily_action_counters, trust_score_events, user_trust_stats};
 
+pub const DEFAULT_DAILY_COUNTER_RETENTION_DAYS: i32 = 45;
+pub const DEFAULT_SCORE_EVENT_RETENTION_DAYS: i32 = 180;
+
+fn default_daily_counter_retention_days() -> i32 {
+    DEFAULT_DAILY_COUNTER_RETENTION_DAYS
+}
+
+fn default_score_event_retention_days() -> i32 {
+    DEFAULT_SCORE_EVENT_RETENTION_DAYS
+}
+
 #[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
 #[diesel(table_name = user_trust_stats)]
 #[diesel(primary_key(user_id))]
@@ -16,6 +27,8 @@ pub struct UserTrustStats {
     pub derived_level: i32,
     pub derived_rank: String,
     pub last_active_day: Option<NaiveDate>,
+    pub last_human_activity_at: Option<DateTime<Utc>>,
+    pub suspicious_activity_streak: i32,
     pub automation_review_state: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -30,6 +43,8 @@ pub struct NewUserTrustStats {
     pub derived_level: i32,
     pub derived_rank: String,
     pub last_active_day: Option<NaiveDate>,
+    pub last_human_activity_at: Option<DateTime<Utc>>,
+    pub suspicious_activity_streak: i32,
     pub automation_review_state: String,
 }
 
@@ -98,7 +113,32 @@ pub struct RankPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrustEnforcementConfig {
+    pub enabled: bool,
+    pub outbound_messages_enabled: bool,
+    pub friend_adds_enabled: bool,
+    pub attachment_sends_enabled: bool,
+}
+
+impl Default for TrustEnforcementConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            outbound_messages_enabled: true,
+            friend_adds_enabled: true,
+            attachment_sends_enabled: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TrustPolicyConfig {
+    #[serde(default = "TrustEnforcementConfig::default")]
+    pub enforcement: TrustEnforcementConfig,
+    #[serde(default = "default_daily_counter_retention_days")]
+    pub daily_counter_retention_days: i32,
+    #[serde(default = "default_score_event_retention_days")]
+    pub score_event_retention_days: i32,
     pub level_policies: Vec<LevelPolicy>,
     pub rank_policies: Vec<RankPolicy>,
     pub community_upvote_daily_cap: i32,
@@ -113,7 +153,18 @@ pub struct TrustSnapshot {
     pub rank: String,
     pub next_level_active_days: Option<i32>,
     pub level_progress_percent: u8,
+    pub daily_outbound_messages_enforced: bool,
     pub daily_outbound_messages_limit: Option<i32>,
     pub daily_outbound_messages_sent: i32,
     pub daily_outbound_messages_remaining: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TrustHistoryPruneResult {
+    pub daily_counter_retention_days: i32,
+    pub score_event_retention_days: i32,
+    pub pruned_before_day: NaiveDate,
+    pub pruned_before_timestamp: DateTime<Utc>,
+    pub daily_action_counters_deleted: i64,
+    pub trust_score_events_deleted: i64,
 }

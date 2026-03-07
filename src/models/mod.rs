@@ -32,7 +32,8 @@ pub use sticker::{NewSticker, Sticker, StickerDetail, StickerListItem};
 #[allow(unused_imports)]
 pub use trust::{
     DailyActionCounter, LevelPolicy, NewDailyActionCounter, NewTrustScoreEvent, NewUserTrustStats,
-    RankPolicy, TrustPolicyConfig, TrustScoreEvent, TrustSnapshot, UserTrustStats,
+    RankPolicy, TrustEnforcementConfig, TrustHistoryPruneResult, TrustPolicyConfig,
+    TrustScoreEvent, TrustSnapshot, UserTrustStats,
 };
 #[allow(unused_imports)]
 pub use user::{NewUser, User, UserPublic};

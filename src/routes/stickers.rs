@@ -6,7 +6,7 @@ use crate::auth::{AdminUser, AuthUser};
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::services::admin_service;
-use crate::services::{sticker_service, guild_service};
+use crate::services::{guild_service, sticker_service};
 
 #[derive(Debug, Deserialize)]
 pub struct UploadStickerRequest {

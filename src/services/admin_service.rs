@@ -102,23 +102,27 @@ impl AdminUserView {
             is_approved: value.is_approved,
             created_at: value.created_at,
             last_seen_at: value.last_seen_at,
-            guild: Some(guild.map(|guild| AdminTrustReviewView {
-                active_days: guild.active_days,
-                derived_level: guild.derived_level,
-                derived_rank: guild.derived_rank,
-                automation_review_state: guild.automation_review_state,
-                suspicious_activity_streak: guild.suspicious_activity_streak,
-                last_human_activity_at: guild.last_human_activity_at,
-                last_active_day: guild.last_active_day,
-            }).unwrap_or_else(|| AdminTrustReviewView {
-                active_days: 0,
-                derived_level: 0,
-                derived_rank: "F".to_string(),
-                automation_review_state: "clear".to_string(),
-                suspicious_activity_streak: 0,
-                last_human_activity_at: None,
-                last_active_day: None,
-            })),
+            guild: Some(
+                guild
+                    .map(|guild| AdminTrustReviewView {
+                        active_days: guild.active_days,
+                        derived_level: guild.derived_level,
+                        derived_rank: guild.derived_rank,
+                        automation_review_state: guild.automation_review_state,
+                        suspicious_activity_streak: guild.suspicious_activity_streak,
+                        last_human_activity_at: guild.last_human_activity_at,
+                        last_active_day: guild.last_active_day,
+                    })
+                    .unwrap_or_else(|| AdminTrustReviewView {
+                        active_days: 0,
+                        derived_level: 0,
+                        derived_rank: "F".to_string(),
+                        automation_review_state: "clear".to_string(),
+                        suspicious_activity_streak: 0,
+                        last_human_activity_at: None,
+                        last_active_day: None,
+                    }),
+            ),
         }
     }
 }

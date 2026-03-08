@@ -163,6 +163,42 @@ diesel::table! {
 diesel::table! {
     use diesel::sql_types::*;
 
+    rooms (id) {
+        id -> Uuid,
+        name -> Text,
+        created_by -> Uuid,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    room_members (room_id, user_id) {
+        room_id -> Uuid,
+        user_id -> Uuid,
+        role -> Text,
+        joined_at -> Timestamptz,
+        last_read_at -> Nullable<Timestamptz>,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    room_messages (id) {
+        id -> Uuid,
+        room_id -> Uuid,
+        sender_id -> Uuid,
+        content -> Text,
+        created_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
     device_push_tokens (id) {
         id -> Uuid,
         user_id -> Uuid,
@@ -235,6 +271,11 @@ diesel::table! {
 
 diesel::joinable!(refresh_tokens -> users (user_id));
 diesel::joinable!(messages -> users (sender_id));
+diesel::joinable!(rooms -> users (created_by));
+diesel::joinable!(room_members -> rooms (room_id));
+diesel::joinable!(room_members -> users (user_id));
+diesel::joinable!(room_messages -> rooms (room_id));
+diesel::joinable!(room_messages -> users (sender_id));
 diesel::joinable!(admin_audit_logs -> users (actor_user_id));
 diesel::joinable!(daily_action_counters -> users (user_id));
 diesel::joinable!(stickers -> users (uploader_id));
@@ -255,6 +296,9 @@ diesel::allow_tables_to_appear_in_same_query!(
     device_push_tokens,
     refresh_tokens,
     messages,
+    rooms,
+    room_members,
+    room_messages,
     federation_actor_keys,
     federation_inbox_activities,
     federation_deliveries,

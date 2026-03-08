@@ -10,7 +10,7 @@ use crate::models::guild::GuildSnapshot;
 use crate::routes::federation;
 use crate::services::user_service;
 use crate::services::{
-    admin_service, message_service, push_dispatch_service, redis_pubsub, guild_service,
+    admin_service, guild_service, message_service, push_dispatch_service, redis_pubsub,
 };
 
 // ── Request DTOs ─────────────────────────────────────────────────────────────

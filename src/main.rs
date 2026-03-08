@@ -138,6 +138,11 @@ async fn main() -> std::io::Result<()> {
                     .configure(routes::messages::configure),
             )
             .service(
+                web::scope("/api/rooms")
+                    .wrap(Governor::new(&api_governor))
+                    .configure(routes::rooms::configure),
+            )
+            .service(
                 web::scope("/api/backup")
                     .wrap(Governor::new(&api_governor))
                     .configure(routes::backup::configure),

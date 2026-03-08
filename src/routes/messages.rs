@@ -50,6 +50,14 @@ struct MessageLimitExceededResponse {
     trust: TrustSnapshot,
 }
 
+#[derive(Debug, serde::Serialize)]
+struct FriendAddLimitExceededResponse {
+    error: &'static str,
+    code: &'static str,
+    retry_after_seconds: i64,
+    trust: TrustSnapshot,
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 fn instance_host(instance_domain: &str) -> String {
@@ -152,7 +160,22 @@ pub async fn resolve_contact(
     auth: AuthUser,
     body: web::Json<ResolveContactRequest>,
 ) -> Result<HttpResponse, AppError> {
-    let _ = auth.0.user_id()?;
+    let user_id = auth.0.user_id()?;
+
+    match trust_service::resolve_contact_with_trust(&pool, user_id)? {
+        trust_service::ResolveContactWithTrustResult::Limited {
+            trust,
+            retry_after_seconds,
+        } => {
+            return Ok(HttpResponse::TooManyRequests().json(FriendAddLimitExceededResponse {
+                error: "Daily friend add limit reached.",
+                code: "friend_add_limit_exceeded",
+                retry_after_seconds,
+                trust,
+            }));
+        }
+        trust_service::ResolveContactWithTrustResult::Allowed => {}
+    }
 
     let recipient_id = body.recipient_id.trim().to_lowercase();
     if recipient_id.is_empty() {

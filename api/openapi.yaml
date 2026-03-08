@@ -144,6 +144,9 @@ components:
         - daily_attachment_sends_enforced
         - daily_attachment_sends_sent
         - allowed_attachment_types
+        - daily_friend_adds_enforced
+        - daily_friend_adds_sent
+        - challenge_state
       properties:
         active_days:
           type: integer
@@ -187,6 +190,24 @@ components:
           type: array
           items:
             type: string
+        daily_friend_adds_enforced:
+          type: boolean
+        daily_friend_add_limit:
+          type: integer
+          nullable: true
+        daily_friend_adds_sent:
+          type: integer
+        daily_friend_adds_remaining:
+          type: integer
+          nullable: true
+        challenge_state:
+          type: string
+          enum: [none, challenged, frozen]
+          description: >
+            Client-visible progression challenge state.
+            "none" – no challenge active.
+            "challenged" – suspicious activity detected; progression paused pending clean activity.
+            "frozen" – repeated suspicious attempts; progression frozen until review or quiet-period clears.
 
     UserProfilePublic:
       type: object
@@ -239,6 +260,28 @@ components:
       properties:
         error:
           type: string
+
+    TrustLimitExceededResponse:
+      type: object
+      description: >
+        Returned with HTTP 429 when a trust-level action cap is reached.
+        The `trust` snapshot lets clients explain the limit and when it resets.
+      required: [error, code, retry_after_seconds, trust]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+        code:
+          type: string
+          enum:
+            - daily_message_limit_reached
+            - friend_add_limit_exceeded
+          description: Machine-readable error code.
+        retry_after_seconds:
+          type: integer
+          description: Seconds until the daily counter resets (start of next UTC day).
+        trust:
+          $ref: '#/components/schemas/TrustSnapshot'
 
   responses:
     Unauthorized:
@@ -595,6 +638,12 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          description: Daily outbound message limit reached for the sender's current trust level.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustLimitExceededResponse'
 
   /api/messages/resolve-contact:
     post:
@@ -626,6 +675,12 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Daily friend-add limit reached for the sender's current trust level.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustLimitExceededResponse'
 
   /api/messages/unread-counts:
     get:

@@ -675,6 +675,175 @@ pub async fn prune_trust_history(
     Ok(HttpResponse::Ok().json(result))
 }
 
+// ── Trust penalty / moderation action request bodies ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ScoreClawbackRequest {
+    pub delta: i32,
+    pub reason: String,
+    pub reference_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FreezeProgressionRequest {
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnfreezeProgressionRequest {
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VerifyAbuseReportRequest {
+    pub reporter_user_id: Uuid,
+    pub report_reference_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DismissAbuseReportRequest {
+    pub reporter_user_id: Uuid,
+    pub report_reference_id: Option<String>,
+}
+
+// ── Trust penalty handlers ─────────────────────────────────────────────────
+
+/// POST /api/admin/users/{user_id}/trust/clawback-score
+/// Apply a negative score adjustment (admin-issued clawback).
+pub async fn clawback_score(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    user_id: web::Path<Uuid>,
+    body: web::Json<ScoreClawbackRequest>,
+) -> Result<HttpResponse, AppError> {
+    if body.delta > 0 {
+        return Err(AppError::BadRequest(
+            "delta must be zero or negative for a score clawback".into(),
+        ));
+    }
+    let admin_id = admin.0.user_id()?;
+    let outcome = trust_service::clawback_contribution_score(
+        &pool,
+        *user_id,
+        body.delta,
+        body.reference_id.as_deref(),
+        serde_json::json!({ "reason": body.reason, "admin_user_id": admin_id.to_string() }),
+    )?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_id),
+        "trust.admin.clawback_score",
+        Some(&user_id.to_string()),
+        serde_json::json!({
+            "delta": body.delta,
+            "reason": body.reason,
+            "reference_id": body.reference_id,
+            "applied_delta": outcome.applied_delta,
+        }),
+    )?;
+    Ok(HttpResponse::Ok().json(outcome))
+}
+
+/// POST /api/admin/users/{user_id}/trust/freeze
+/// Freeze a user's trust progression.
+pub async fn freeze_progression(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    user_id: web::Path<Uuid>,
+    body: web::Json<FreezeProgressionRequest>,
+) -> Result<HttpResponse, AppError> {
+    let admin_id = admin.0.user_id()?;
+    trust_service::freeze_trust_progression(
+        &pool,
+        Some(admin_id),
+        *user_id,
+        &body.reason,
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "frozen": true })))
+}
+
+/// POST /api/admin/users/{user_id}/trust/unfreeze
+/// Unfreeze a user's trust progression.
+pub async fn unfreeze_progression(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    user_id: web::Path<Uuid>,
+    body: web::Json<UnfreezeProgressionRequest>,
+) -> Result<HttpResponse, AppError> {
+    let admin_id = admin.0.user_id()?;
+    trust_service::unfreeze_trust_progression(
+        &pool,
+        admin_id,
+        *user_id,
+        &body.reason,
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "frozen": false })))
+}
+
+/// POST /api/admin/users/{user_id}/trust/verify-report
+/// Mark an abuse report as verified: award score to the reporter and record the event.
+pub async fn verify_abuse_report(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    user_id: web::Path<Uuid>,
+    body: web::Json<VerifyAbuseReportRequest>,
+) -> Result<HttpResponse, AppError> {
+    let admin_id = admin.0.user_id()?;
+    let outcome = trust_service::award_verified_abuse_report(
+        &pool,
+        body.reporter_user_id,
+        body.report_reference_id.as_deref(),
+        serde_json::json!({
+            "reported_user_id": user_id.to_string(),
+            "admin_user_id": admin_id.to_string(),
+        }),
+    )?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_id),
+        "trust.admin.verified_abuse_report",
+        Some(&user_id.to_string()),
+        serde_json::json!({
+            "reporter_user_id": body.reporter_user_id.to_string(),
+            "reference_id": body.report_reference_id,
+            "applied_delta": outcome.applied_delta,
+        }),
+    )?;
+    Ok(HttpResponse::Ok().json(outcome))
+}
+
+/// POST /api/admin/users/{user_id}/trust/dismiss-report
+/// Dismiss an abuse report as false: apply score penalty to the reporter.
+pub async fn dismiss_abuse_report(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    user_id: web::Path<Uuid>,
+    body: web::Json<DismissAbuseReportRequest>,
+) -> Result<HttpResponse, AppError> {
+    let admin_id = admin.0.user_id()?;
+    let outcome = trust_service::penalize_false_report(
+        &pool,
+        body.reporter_user_id,
+        body.report_reference_id.as_deref(),
+        serde_json::json!({
+            "reported_user_id": user_id.to_string(),
+            "admin_user_id": admin_id.to_string(),
+        }),
+    )?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_id),
+        "trust.admin.dismissed_false_report",
+        Some(&user_id.to_string()),
+        serde_json::json!({
+            "reporter_user_id": body.reporter_user_id.to_string(),
+            "reference_id": body.report_reference_id,
+            "applied_delta": outcome.applied_delta,
+        }),
+    )?;
+    Ok(HttpResponse::Ok().json(outcome))
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/overview", web::get().to(overview))
         .route("/users", web::get().to(list_users))
@@ -704,5 +873,25 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             "/trust-blocked-actions",
             web::get().to(trust_blocked_actions),
         )
-        .route("/audit-logs", web::get().to(audit_logs));
+        .route("/audit-logs", web::get().to(audit_logs))
+        .route(
+            "/users/{user_id}/trust/clawback-score",
+            web::post().to(clawback_score),
+        )
+        .route(
+            "/users/{user_id}/trust/freeze",
+            web::post().to(freeze_progression),
+        )
+        .route(
+            "/users/{user_id}/trust/unfreeze",
+            web::post().to(unfreeze_progression),
+        )
+        .route(
+            "/users/{user_id}/trust/verify-report",
+            web::post().to(verify_abuse_report),
+        )
+        .route(
+            "/users/{user_id}/trust/dismiss-report",
+            web::post().to(dismiss_abuse_report),
+        );
 }

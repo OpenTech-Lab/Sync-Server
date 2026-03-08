@@ -112,12 +112,21 @@ pub struct RankPolicy {
     pub overrides_level_limits: bool,
 }
 
+fn rank_engine_enabled_default() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TrustEnforcementConfig {
     pub enabled: bool,
     pub outbound_messages_enabled: bool,
     pub friend_adds_enabled: bool,
     pub attachment_sends_enabled: bool,
+    /// When false, rank perks (score multipliers, overrides_level_limits) are not
+    /// applied to limit calculations.  Level gating remains active.  Defaults to
+    /// true so the rank engine is on unless explicitly disabled via config.
+    #[serde(default = "rank_engine_enabled_default")]
+    pub rank_engine_enabled: bool,
 }
 
 impl Default for TrustEnforcementConfig {
@@ -127,6 +136,7 @@ impl Default for TrustEnforcementConfig {
             outbound_messages_enabled: true,
             friend_adds_enabled: true,
             attachment_sends_enabled: true,
+            rank_engine_enabled: true,
         }
     }
 }
@@ -162,6 +172,14 @@ pub struct TrustSnapshot {
     pub daily_attachment_sends_sent: i32,
     pub daily_attachment_sends_remaining: Option<i32>,
     pub allowed_attachment_types: Vec<String>,
+    pub daily_friend_adds_enforced: bool,
+    pub daily_friend_add_limit: Option<i32>,
+    pub daily_friend_adds_sent: i32,
+    pub daily_friend_adds_remaining: Option<i32>,
+    /// Client-visible progression challenge state.
+    /// One of: "none", "challenged", "frozen".
+    /// Does NOT expose internal automation_review_state labels beyond what the user needs.
+    pub challenge_state: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

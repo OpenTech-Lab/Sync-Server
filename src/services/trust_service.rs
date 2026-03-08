@@ -234,7 +234,13 @@ pub fn record_contribution_event(
             if granter_user_id == Some(user_id) {
                 applied_delta = 0;
                 suppressed_reason = Some("self_vote".to_string());
-            } else if is_reciprocal_vote(conn, user_id, granter_user_id, &normalized_event_type, now)? {
+            } else if is_reciprocal_vote(
+                conn,
+                user_id,
+                granter_user_id,
+                &normalized_event_type,
+                now,
+            )? {
                 applied_delta = 0;
                 suppressed_reason = Some("reciprocal_vote".to_string());
             } else if is_clustered_vote(conn, user_id, &normalized_event_type, now)? {
@@ -419,8 +425,7 @@ pub fn freeze_trust_progression(
     let now = Utc::now();
     diesel::update(user_trust_stats::table.find(target_user_id))
         .set((
-            user_trust_stats::automation_review_state
-                .eq(AUTOMATION_REVIEW_STATE_FROZEN),
+            user_trust_stats::automation_review_state.eq(AUTOMATION_REVIEW_STATE_FROZEN),
             user_trust_stats::updated_at.eq(now),
         ))
         .execute(&mut conn)?;
@@ -460,8 +465,7 @@ pub fn unfreeze_trust_progression(
     let now = Utc::now();
     diesel::update(user_trust_stats::table.find(target_user_id))
         .set((
-            user_trust_stats::automation_review_state
-                .eq(DEFAULT_AUTOMATION_REVIEW_STATE),
+            user_trust_stats::automation_review_state.eq(DEFAULT_AUTOMATION_REVIEW_STATE),
             user_trust_stats::suspicious_activity_streak.eq(0),
             user_trust_stats::updated_at.eq(now),
         ))
@@ -488,8 +492,7 @@ pub fn get_trust_snapshot(pool: &Pool, user_id: Uuid) -> Result<TrustSnapshot, A
     let sent_today = daily_action_count(&mut conn, user_id, ACTION_OUTBOUND_MESSAGE, today)?;
     let attachments_sent_today =
         daily_action_count(&mut conn, user_id, ACTION_ATTACHMENT_SEND, today)?;
-    let friend_adds_today =
-        daily_action_count(&mut conn, user_id, ACTION_FRIEND_ADD, today)?;
+    let friend_adds_today = daily_action_count(&mut conn, user_id, ACTION_FRIEND_ADD, today)?;
 
     Ok(build_snapshot(
         &policy,
@@ -541,8 +544,7 @@ pub fn send_message_with_trust(
         let sent_today = daily_action_count(conn, sender_id, ACTION_OUTBOUND_MESSAGE, today)?;
         let attachments_sent_today =
             daily_action_count(conn, sender_id, ACTION_ATTACHMENT_SEND, today)?;
-        let friend_adds_today =
-            daily_action_count(conn, sender_id, ACTION_FRIEND_ADD, today)?;
+        let friend_adds_today = daily_action_count(conn, sender_id, ACTION_FRIEND_ADD, today)?;
         let level_policy = level_policy_for_active_days(&policy, stats.active_days);
         let rank_policy = rank_policy_for_limits(&policy, stats.contribution_score);
         let limit = effective_daily_outbound_messages_limit(level_policy, &rank_policy);
@@ -554,7 +556,15 @@ pub fn send_message_with_trust(
                     let cur_level = stats.derived_level.clamp(1, 10) as u8;
                     let cur_rank = stats.derived_rank.clone();
                     return Ok(SendMessageWithTrustResult::Limited {
-                        trust: build_snapshot(&policy, &stats, sent_today, attachments_sent_today, friend_adds_today, cur_level, &cur_rank),
+                        trust: build_snapshot(
+                            &policy,
+                            &stats,
+                            sent_today,
+                            attachments_sent_today,
+                            friend_adds_today,
+                            cur_level,
+                            &cur_rank,
+                        ),
                         retry_after_seconds: seconds_until_next_utc_day(now),
                     });
                 }
@@ -597,8 +607,7 @@ where
             daily_action_count(conn, user_id, ACTION_OUTBOUND_MESSAGE, today)?;
         let attachments_sent_today =
             daily_action_count(conn, user_id, ACTION_ATTACHMENT_SEND, today)?;
-        let friend_adds_today =
-            daily_action_count(conn, user_id, ACTION_FRIEND_ADD, today)?;
+        let friend_adds_today = daily_action_count(conn, user_id, ACTION_FRIEND_ADD, today)?;
 
         if attachment_send_limit_enforced(&policy)
             && !attachment_type_allowed(&policy, &normalized_mime_type)
@@ -619,7 +628,8 @@ where
         }
 
         let level_policy = level_policy_for_active_days(&policy, stats.active_days);
-        let attachment_limit = effective_daily_attachment_send_limit(level_policy);
+        let rank_policy = rank_policy_for_limits(&policy, stats.contribution_score);
+        let attachment_limit = effective_daily_attachment_send_limit(level_policy, &rank_policy);
         if attachment_send_limit_enforced(&policy) {
             if let Some(limit) = attachment_limit {
                 if attachments_sent_today >= limit {
@@ -674,7 +684,8 @@ pub fn resolve_contact_with_trust(
 
         if friend_add_limit_enforced(&policy) {
             let level_policy = level_policy_for_active_days(&policy, stats.active_days);
-            let limit = level_policy.daily_friend_add_limit;
+            let rank_policy = rank_policy_for_limits(&policy, stats.contribution_score);
+            let limit = effective_daily_friend_add_limit(level_policy, &rank_policy);
             if let Some(limit) = limit {
                 if friend_adds_today >= limit {
                     let cur_level = stats.derived_level.clamp(1, 10) as u8;
@@ -743,11 +754,12 @@ fn build_snapshot(
     let daily_outbound_messages_enforced = outbound_message_limit_enforced(policy);
     let daily_outbound_messages_remaining =
         daily_outbound_messages_limit.map(|limit| (limit - daily_outbound_messages_sent).max(0));
-    let daily_attachment_send_limit = effective_daily_attachment_send_limit(level_policy);
+    let daily_attachment_send_limit =
+        effective_daily_attachment_send_limit(level_policy, &rank_policy);
     let daily_attachment_sends_enforced = attachment_send_limit_enforced(policy);
     let daily_attachment_sends_remaining =
         daily_attachment_send_limit.map(|limit| (limit - daily_attachment_sends_sent).max(0));
-    let daily_friend_add_limit = level_policy.daily_friend_add_limit;
+    let daily_friend_add_limit = effective_daily_friend_add_limit(level_policy, &rank_policy);
     let daily_friend_adds_enforced = friend_add_limit_enforced(policy);
     let daily_friend_adds_remaining =
         daily_friend_add_limit.map(|limit| (limit - daily_friend_adds_sent).max(0));
@@ -769,7 +781,10 @@ fn build_snapshot(
             kind: MilestoneKind::RankUp,
             badge_label: format!("Rank {current_rank}"),
             headline_key: "trust.milestone.rank_up".to_string(),
-            detail_key: format!("trust.milestone.rank_{}_detail", current_rank.to_lowercase()),
+            detail_key: format!(
+                "trust.milestone.rank_{}_detail",
+                current_rank.to_lowercase()
+            ),
             unlocked_value: None,
             new_value: current_rank.clone(),
         })
@@ -1248,6 +1263,8 @@ fn rank_policy_for_limits(
             min_score: 0,
             max_score: None,
             daily_outbound_messages_limit_multiplier_percent: None,
+            daily_friend_add_limit_multiplier_percent: None,
+            daily_attachment_send_limit_multiplier_percent: None,
             overrides_level_limits: false,
         })
     }
@@ -1270,15 +1287,12 @@ fn rank_order(rank: &str) -> Option<u8> {
     }
 }
 
-fn effective_daily_outbound_messages_limit(
-    level_policy: &LevelPolicy,
-    rank_policy: &RankPolicy,
+fn effective_daily_limit(
+    level_limit: Option<i32>,
+    multiplier_percent: Option<i32>,
+    overrides_level_limits: bool,
 ) -> Option<i32> {
-    match (
-        level_policy.daily_outbound_messages_limit,
-        rank_policy.daily_outbound_messages_limit_multiplier_percent,
-        rank_policy.overrides_level_limits,
-    ) {
+    match (level_limit, multiplier_percent, overrides_level_limits) {
         (None, _, _) => None,
         (_, None, true) => None,
         (Some(limit), Some(percent), _) => Some((limit * percent) / 100),
@@ -1286,8 +1300,37 @@ fn effective_daily_outbound_messages_limit(
     }
 }
 
-fn effective_daily_attachment_send_limit(level_policy: &LevelPolicy) -> Option<i32> {
-    level_policy.daily_attachment_send_limit
+fn effective_daily_outbound_messages_limit(
+    level_policy: &LevelPolicy,
+    rank_policy: &RankPolicy,
+) -> Option<i32> {
+    effective_daily_limit(
+        level_policy.daily_outbound_messages_limit,
+        rank_policy.daily_outbound_messages_limit_multiplier_percent,
+        rank_policy.overrides_level_limits,
+    )
+}
+
+fn effective_daily_friend_add_limit(
+    level_policy: &LevelPolicy,
+    rank_policy: &RankPolicy,
+) -> Option<i32> {
+    effective_daily_limit(
+        level_policy.daily_friend_add_limit,
+        rank_policy.daily_friend_add_limit_multiplier_percent,
+        rank_policy.overrides_level_limits,
+    )
+}
+
+fn effective_daily_attachment_send_limit(
+    level_policy: &LevelPolicy,
+    rank_policy: &RankPolicy,
+) -> Option<i32> {
+    effective_daily_limit(
+        level_policy.daily_attachment_send_limit,
+        rank_policy.daily_attachment_send_limit_multiplier_percent,
+        rank_policy.overrides_level_limits,
+    )
 }
 
 fn level_progress_percent(
@@ -1388,6 +1431,8 @@ fn default_trust_policy() -> TrustPolicyConfig {
                 min_score: 0,
                 max_score: Some(99),
                 daily_outbound_messages_limit_multiplier_percent: None,
+                daily_friend_add_limit_multiplier_percent: None,
+                daily_attachment_send_limit_multiplier_percent: None,
                 overrides_level_limits: false,
             },
             RankPolicy {
@@ -1395,6 +1440,8 @@ fn default_trust_policy() -> TrustPolicyConfig {
                 min_score: 100,
                 max_score: Some(499),
                 daily_outbound_messages_limit_multiplier_percent: None,
+                daily_friend_add_limit_multiplier_percent: None,
+                daily_attachment_send_limit_multiplier_percent: None,
                 overrides_level_limits: false,
             },
             RankPolicy {
@@ -1402,6 +1449,8 @@ fn default_trust_policy() -> TrustPolicyConfig {
                 min_score: 500,
                 max_score: Some(999),
                 daily_outbound_messages_limit_multiplier_percent: Some(120),
+                daily_friend_add_limit_multiplier_percent: Some(120),
+                daily_attachment_send_limit_multiplier_percent: Some(120),
                 overrides_level_limits: false,
             },
             RankPolicy {
@@ -1409,6 +1458,8 @@ fn default_trust_policy() -> TrustPolicyConfig {
                 min_score: 1_000,
                 max_score: Some(2_499),
                 daily_outbound_messages_limit_multiplier_percent: None,
+                daily_friend_add_limit_multiplier_percent: None,
+                daily_attachment_send_limit_multiplier_percent: None,
                 overrides_level_limits: false,
             },
             RankPolicy {
@@ -1416,6 +1467,8 @@ fn default_trust_policy() -> TrustPolicyConfig {
                 min_score: 2_500,
                 max_score: Some(4_999),
                 daily_outbound_messages_limit_multiplier_percent: Some(150),
+                daily_friend_add_limit_multiplier_percent: Some(150),
+                daily_attachment_send_limit_multiplier_percent: Some(150),
                 overrides_level_limits: false,
             },
             RankPolicy {
@@ -1423,6 +1476,8 @@ fn default_trust_policy() -> TrustPolicyConfig {
                 min_score: 5_000,
                 max_score: Some(9_999),
                 daily_outbound_messages_limit_multiplier_percent: None,
+                daily_friend_add_limit_multiplier_percent: None,
+                daily_attachment_send_limit_multiplier_percent: None,
                 overrides_level_limits: true,
             },
             RankPolicy {
@@ -1430,6 +1485,8 @@ fn default_trust_policy() -> TrustPolicyConfig {
                 min_score: 10_000,
                 max_score: None,
                 daily_outbound_messages_limit_multiplier_percent: None,
+                daily_friend_add_limit_multiplier_percent: None,
+                daily_attachment_send_limit_multiplier_percent: None,
                 overrides_level_limits: true,
             },
         ],
@@ -1598,7 +1655,14 @@ fn normalize_trust_policy(mut policy: TrustPolicyConfig) -> Result<TrustPolicyCo
                 "only the final rank policy may be open-ended".into(),
             ));
         }
-        if let Some(percent) = entry.daily_outbound_messages_limit_multiplier_percent {
+        for percent in [
+            entry.daily_outbound_messages_limit_multiplier_percent,
+            entry.daily_friend_add_limit_multiplier_percent,
+            entry.daily_attachment_send_limit_multiplier_percent,
+        ]
+        .into_iter()
+        .flatten()
+        {
             if percent <= 0 {
                 return Err(AppError::BadRequest(
                     "rank policy multiplier percent must be > 0".into(),

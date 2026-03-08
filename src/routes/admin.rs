@@ -753,12 +753,7 @@ pub async fn freeze_progression(
     body: web::Json<FreezeProgressionRequest>,
 ) -> Result<HttpResponse, AppError> {
     let admin_id = admin.0.user_id()?;
-    trust_service::freeze_trust_progression(
-        &pool,
-        Some(admin_id),
-        *user_id,
-        &body.reason,
-    )?;
+    trust_service::freeze_trust_progression(&pool, Some(admin_id), *user_id, &body.reason)?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "frozen": true })))
 }
 
@@ -771,12 +766,7 @@ pub async fn unfreeze_progression(
     body: web::Json<UnfreezeProgressionRequest>,
 ) -> Result<HttpResponse, AppError> {
     let admin_id = admin.0.user_id()?;
-    trust_service::unfreeze_trust_progression(
-        &pool,
-        admin_id,
-        *user_id,
-        &body.reason,
-    )?;
+    trust_service::unfreeze_trust_progression(&pool, admin_id, *user_id, &body.reason)?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "frozen": false })))
 }
 

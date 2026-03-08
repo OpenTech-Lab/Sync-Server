@@ -167,12 +167,14 @@ pub async fn resolve_contact(
             trust,
             retry_after_seconds,
         } => {
-            return Ok(HttpResponse::TooManyRequests().json(FriendAddLimitExceededResponse {
-                error: "Daily friend add limit reached.",
-                code: "friend_add_limit_exceeded",
-                retry_after_seconds,
-                trust,
-            }));
+            return Ok(
+                HttpResponse::TooManyRequests().json(FriendAddLimitExceededResponse {
+                    error: "Daily friend add limit reached.",
+                    code: "friend_add_limit_exceeded",
+                    retry_after_seconds,
+                    trust,
+                }),
+            );
         }
         trust_service::ResolveContactWithTrustResult::Allowed => {}
     }

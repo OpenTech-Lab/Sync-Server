@@ -5,10 +5,10 @@
 
 use super::{
     assess_human_activity, build_snapshot, default_trust_policy, level_policy_for_active_days,
-    normalize_trust_policy, outbound_message_limit_enforced, rank_at_least,
-    rank_policy_for_score, DEFAULT_DAILY_COUNTER_RETENTION_DAYS,
-    DEFAULT_SCORE_EVENT_RETENTION_DAYS, FROZEN_RECOVERY_WINDOW_HOURS,
-    SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD, SUSPICIOUS_NEW_DAY_ACTIVITY_WINDOW_MINUTES,
+    normalize_trust_policy, outbound_message_limit_enforced, rank_at_least, rank_policy_for_score,
+    DEFAULT_DAILY_COUNTER_RETENTION_DAYS, DEFAULT_SCORE_EVENT_RETENTION_DAYS,
+    FROZEN_RECOVERY_WINDOW_HOURS, SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD,
+    SUSPICIOUS_NEW_DAY_ACTIVITY_WINDOW_MINUTES,
 };
 use crate::models::trust::TrustEnforcementConfig;
 use crate::models::trust::{TrustPolicyConfig, UserTrustStats};
@@ -130,7 +130,15 @@ fn trust_snapshot_reports_when_message_limits_are_disabled() {
         updated_at: Utc::now(),
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 12, 3, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        12,
+        3,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
 
     assert!(!outbound_message_limit_enforced(&policy));
     assert!(!snapshot.daily_outbound_messages_enforced);
@@ -164,13 +172,23 @@ fn trust_snapshot_applies_rank_multiplier_to_message_caps() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 40, 2, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        40,
+        2,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
 
     assert!(snapshot.daily_outbound_messages_enforced);
     assert_eq!(snapshot.daily_outbound_messages_limit, Some(240));
     assert_eq!(snapshot.daily_outbound_messages_remaining, Some(200));
-    assert_eq!(snapshot.daily_attachment_send_limit, Some(10));
-    assert_eq!(snapshot.daily_attachment_sends_remaining, Some(8));
+    assert_eq!(snapshot.daily_attachment_send_limit, Some(12));
+    assert_eq!(snapshot.daily_attachment_sends_remaining, Some(10));
+    assert_eq!(snapshot.daily_friend_add_limit, Some(24));
+    assert_eq!(snapshot.daily_friend_adds_remaining, Some(24));
     assert_eq!(snapshot.next_level_active_days, Some(30));
 }
 
@@ -192,12 +210,22 @@ fn trust_snapshot_uses_rank_overrides_for_unlimited_message_caps() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 99, 4, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        99,
+        4,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
 
     assert_eq!(snapshot.daily_outbound_messages_limit, None);
     assert_eq!(snapshot.daily_outbound_messages_remaining, None);
-    assert_eq!(snapshot.daily_attachment_send_limit, Some(5));
-    assert_eq!(snapshot.daily_attachment_sends_remaining, Some(1));
+    assert_eq!(snapshot.daily_attachment_send_limit, None);
+    assert_eq!(snapshot.daily_attachment_sends_remaining, None);
+    assert_eq!(snapshot.daily_friend_add_limit, None);
+    assert_eq!(snapshot.daily_friend_adds_remaining, None);
     assert_eq!(snapshot.rank, "A");
 }
 
@@ -329,7 +357,15 @@ fn make_stats_with_review_state(automation_review_state: &str) -> UserTrustStats
 fn challenge_state_clear_maps_to_none() {
     let policy = default_trust_policy();
     let stats = make_stats_with_review_state("clear");
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        0,
+        0,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
     assert_eq!(snapshot.challenge_state, "none");
 }
 
@@ -337,7 +373,15 @@ fn challenge_state_clear_maps_to_none() {
 fn challenge_state_challenged_maps_to_challenged() {
     let policy = default_trust_policy();
     let stats = make_stats_with_review_state("challenged");
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        0,
+        0,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
     assert_eq!(snapshot.challenge_state, "challenged");
 }
 
@@ -345,7 +389,15 @@ fn challenge_state_challenged_maps_to_challenged() {
 fn challenge_state_frozen_maps_to_frozen() {
     let policy = default_trust_policy();
     let stats = make_stats_with_review_state("frozen");
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        0,
+        0,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
     assert_eq!(snapshot.challenge_state, "frozen");
 }
 
@@ -353,7 +405,15 @@ fn challenge_state_frozen_maps_to_frozen() {
 fn challenge_state_unknown_value_maps_to_none() {
     let policy = default_trust_policy();
     let stats = make_stats_with_review_state("some_internal_state_unknown_to_client");
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        0,
+        0,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
     assert_eq!(snapshot.challenge_state, "none");
 }
 
@@ -420,7 +480,15 @@ fn daily_outbound_messages_remaining_clamps_at_zero_when_over_limit() {
     };
 
     // Level 1 limit is 50; send 9999 to simulate an over-limit state.
-    let snapshot = build_snapshot(&policy, &stats, 9999, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        9999,
+        0,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
     assert_eq!(snapshot.daily_outbound_messages_remaining, Some(0));
     assert_eq!(snapshot.daily_outbound_messages_sent, 9999);
 }
@@ -444,7 +512,15 @@ fn daily_attachment_sends_remaining_clamps_at_zero_when_over_limit() {
     };
 
     // Level 1 attachment limit is 5; send 9999 to simulate an over-limit state.
-    let snapshot = build_snapshot(&policy, &stats, 0, 9999, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        0,
+        9999,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
     assert_eq!(snapshot.daily_attachment_sends_remaining, Some(0));
     assert_eq!(snapshot.daily_attachment_sends_sent, 9999);
 }
@@ -467,7 +543,15 @@ fn daily_friend_adds_remaining_clamps_at_zero_when_over_limit() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 9999, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        0,
+        0,
+        9999,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
     assert_eq!(snapshot.daily_friend_adds_remaining, Some(0));
     assert_eq!(snapshot.daily_friend_adds_sent, 9999);
 }
@@ -492,7 +576,15 @@ fn level_1_attachment_types_are_restricted_to_safe_image_video() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        0,
+        0,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
     assert!(!snapshot.allowed_attachment_types.is_empty());
     // Level 1 must not allow arbitrary document types.
     assert!(!snapshot
@@ -535,8 +627,24 @@ fn higher_level_allows_more_attachment_types_than_level_1() {
         updated_at: now,
     };
 
-    let snapshot1 = build_snapshot(&policy, &level1_stats, 0, 0, 0, level1_stats.derived_level.clamp(1, 10) as u8, &level1_stats.derived_rank);
-    let snapshot5 = build_snapshot(&policy, &level5_stats, 0, 0, 0, level5_stats.derived_level.clamp(1, 10) as u8, &level5_stats.derived_rank);
+    let snapshot1 = build_snapshot(
+        &policy,
+        &level1_stats,
+        0,
+        0,
+        0,
+        level1_stats.derived_level.clamp(1, 10) as u8,
+        &level1_stats.derived_rank,
+    );
+    let snapshot5 = build_snapshot(
+        &policy,
+        &level5_stats,
+        0,
+        0,
+        0,
+        level5_stats.derived_level.clamp(1, 10) as u8,
+        &level5_stats.derived_rank,
+    );
 
     assert!(
         snapshot5.allowed_attachment_types.len() >= snapshot1.allowed_attachment_types.len(),
@@ -565,7 +673,15 @@ fn daily_outbound_limit_is_none_for_unlimited_rank() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 100, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        100,
+        0,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
     assert_eq!(
         snapshot.daily_outbound_messages_limit, None,
         "S-rank should have no message limit"
@@ -602,7 +718,15 @@ fn rank_engine_disabled_ignores_rank_perks_for_limit_calculations() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        0,
+        0,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
 
     // With rank_engine_enabled = false the rank perk (overrides_level_limits)
     // is suppressed, so level 1's cap should apply instead of unlimited.
@@ -614,6 +738,24 @@ fn rank_engine_disabled_ignores_rank_perks_for_limit_calculations() {
     assert_eq!(
         snapshot.daily_outbound_messages_limit, level1_limit,
         "rank perks should be suppressed when rank_engine_enabled is false"
+    );
+    let level1_friend_limit = policy
+        .level_policies
+        .iter()
+        .find(|p| p.level == 1)
+        .and_then(|p| p.daily_friend_add_limit);
+    assert_eq!(
+        snapshot.daily_friend_add_limit, level1_friend_limit,
+        "friend add rank perks should also be suppressed when rank_engine_enabled is false"
+    );
+    let level1_attachment_limit = policy
+        .level_policies
+        .iter()
+        .find(|p| p.level == 1)
+        .and_then(|p| p.daily_attachment_send_limit);
+    assert_eq!(
+        snapshot.daily_attachment_send_limit, level1_attachment_limit,
+        "attachment rank perks should also be suppressed when rank_engine_enabled is false"
     );
 
     // Displayed rank is still the user's earned rank (not the neutral F).
@@ -628,7 +770,10 @@ fn rank_engine_disabled_ignores_rank_perks_for_limit_calculations() {
 #[test]
 fn rank_engine_enabled_applies_rank_perks() {
     let policy = default_trust_policy();
-    assert!(policy.enforcement.rank_engine_enabled, "should default to true");
+    assert!(
+        policy.enforcement.rank_engine_enabled,
+        "should default to true"
+    );
 
     let now = Utc::now();
     let stats = UserTrustStats {
@@ -645,7 +790,15 @@ fn rank_engine_enabled_applies_rank_perks() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
+    let snapshot = build_snapshot(
+        &policy,
+        &stats,
+        0,
+        0,
+        0,
+        stats.derived_level.clamp(1, 10) as u8,
+        &stats.derived_rank,
+    );
     assert_eq!(
         snapshot.daily_outbound_messages_limit, None,
         "S-rank with rank engine enabled should get unlimited messages"

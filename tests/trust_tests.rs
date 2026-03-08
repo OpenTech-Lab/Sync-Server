@@ -183,10 +183,7 @@ async fn send_message_decrements_daily_messages_remaining() {
     // Message should succeed (201) or be limit-blocked (429).
     // Either way the counter should have changed.
     let status = res.status().as_u16();
-    assert!(
-        status == 201 || status == 429,
-        "unexpected status {status}"
-    );
+    assert!(status == 201 || status == 429, "unexpected status {status}");
 
     if status == 201 {
         let trust_after = get_trust_snapshot(&client, &base, &token_a).await;
@@ -221,7 +218,9 @@ async fn send_message_decrements_daily_messages_remaining() {
 #[tokio::test]
 async fn verify_report_increases_reporter_score() {
     let Some(base) = base_url() else { return };
-    let Some(admin_tok) = admin_token() else { return };
+    let Some(admin_tok) = admin_token() else {
+        return;
+    };
     let client = Client::new();
 
     let (reporter_token, reporter_id) = register_and_login(&client, &base).await;
@@ -269,7 +268,9 @@ async fn verify_report_increases_reporter_score() {
 #[tokio::test]
 async fn dismiss_report_penalises_reporter_score() {
     let Some(base) = base_url() else { return };
-    let Some(admin_tok) = admin_token() else { return };
+    let Some(admin_tok) = admin_token() else {
+        return;
+    };
     let client = Client::new();
 
     let (reporter_token, reporter_id) = register_and_login(&client, &base).await;
@@ -317,7 +318,9 @@ async fn dismiss_report_penalises_reporter_score() {
 #[tokio::test]
 async fn verify_report_is_idempotent_for_same_reference_id() {
     let Some(base) = base_url() else { return };
-    let Some(admin_tok) = admin_token() else { return };
+    let Some(admin_tok) = admin_token() else {
+        return;
+    };
     let client = Client::new();
 
     let (_reporter_token, reporter_id) = register_and_login(&client, &base).await;
@@ -377,7 +380,9 @@ async fn verify_report_is_idempotent_for_same_reference_id() {
 #[tokio::test]
 async fn freeze_sets_challenge_state_frozen() {
     let Some(base) = base_url() else { return };
-    let Some(admin_tok) = admin_token() else { return };
+    let Some(admin_tok) = admin_token() else {
+        return;
+    };
     let client = Client::new();
 
     let (user_token, user_id) = register_and_login(&client, &base).await;
@@ -416,7 +421,9 @@ async fn freeze_sets_challenge_state_frozen() {
 #[tokio::test]
 async fn unfreeze_clears_challenge_state() {
     let Some(base) = base_url() else { return };
-    let Some(admin_tok) = admin_token() else { return };
+    let Some(admin_tok) = admin_token() else {
+        return;
+    };
     let client = Client::new();
 
     let (user_token, user_id) = register_and_login(&client, &base).await;
@@ -545,10 +552,7 @@ async fn burner_account_has_enforced_message_limits() {
     let trust = get_trust_snapshot(&client, &base, &token).await;
 
     // A brand-new Level 1 account must have enforcement active.
-    assert_eq!(
-        trust["level"], 1,
-        "burner account should start at Level 1"
-    );
+    assert_eq!(trust["level"], 1, "burner account should start at Level 1");
     assert_eq!(
         trust["daily_outbound_messages_enforced"], true,
         "outbound message limits must be enforced for a new (burner) account"
@@ -652,7 +656,9 @@ async fn scripted_message_sends_are_blocked_at_cap() {
 #[tokio::test]
 async fn frozen_account_does_not_gain_active_days_passively() {
     let Some(base) = base_url() else { return };
-    let Some(admin_tok) = admin_token() else { return };
+    let Some(admin_tok) = admin_token() else {
+        return;
+    };
     let client = Client::new();
 
     let (user_token, user_id) = register_and_login(&client, &base).await;
@@ -698,7 +704,9 @@ async fn frozen_account_does_not_gain_active_days_passively() {
 #[tokio::test]
 async fn low_trust_bot_farm_cannot_inflate_target_score() {
     let Some(base) = base_url() else { return };
-    let Some(admin_tok) = admin_token() else { return };
+    let Some(admin_tok) = admin_token() else {
+        return;
+    };
     let client = Client::new();
 
     // Register the target user.

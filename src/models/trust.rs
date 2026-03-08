@@ -109,6 +109,8 @@ pub struct RankPolicy {
     pub min_score: i32,
     pub max_score: Option<i32>,
     pub daily_outbound_messages_limit_multiplier_percent: Option<i32>,
+    pub daily_friend_add_limit_multiplier_percent: Option<i32>,
+    pub daily_attachment_send_limit_multiplier_percent: Option<i32>,
     pub overrides_level_limits: bool,
 }
 

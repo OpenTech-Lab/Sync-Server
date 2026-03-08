@@ -280,9 +280,9 @@ components:
            The rank policy fully replaces the level policy limit for that action.
            Anti-flood rate limits at the infrastructure layer are not overridden.
 
-        5. **Rank multiplier** (`daily_outbound_messages_limit_multiplier_percent`):
-           Applied on top of the level-based limit.  A 150 % multiplier on a level-4 cap of
-           100 messages yields an effective cap of 150.
+        5. **Rank multiplier** (`daily_*_limit_multiplier_percent`):
+           Applied on top of the level-based limit for any configured action class.  A 150 %
+           multiplier on a level-4 cap of 100 messages yields an effective cap of 150.
 
         6. **Level policy limit** (`daily_outbound_messages_limit`, `daily_friend_add_limit`,
            `daily_attachment_send_limit`):

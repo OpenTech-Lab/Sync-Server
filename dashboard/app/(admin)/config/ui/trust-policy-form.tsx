@@ -32,6 +32,8 @@ type TrustPolicyConfig = {
     min_score: number;
     max_score: number | null;
     daily_outbound_messages_limit_multiplier_percent: number | null;
+    daily_friend_add_limit_multiplier_percent: number | null;
+    daily_attachment_send_limit_multiplier_percent: number | null;
     overrides_level_limits: boolean;
   }>;
   community_upvote_daily_cap: number;

@@ -107,7 +107,15 @@ pub async fn get_user(
     user_id: web::Path<Uuid>,
 ) -> Result<HttpResponse, AppError> {
     let user = user_service::find_by_id(&pool, *user_id)?.ok_or(AppError::NotFound)?;
-    Ok(HttpResponse::Ok().json(UserProfilePublic::from(user)))
+    let mut resp = serde_json::to_value(&UserProfilePublic::from(user.clone()))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+    if let Ok(snapshot) = trust_service::get_trust_snapshot(&pool, user.id) {
+        resp["trust"] = serde_json::json!({
+            "level": snapshot.level,
+            "rank":  snapshot.rank
+        });
+    }
+    Ok(HttpResponse::Ok().json(resp))
 }
 
 pub async fn delete_me(pool: web::Data<Pool>, auth: AuthUser) -> Result<HttpResponse, AppError> {

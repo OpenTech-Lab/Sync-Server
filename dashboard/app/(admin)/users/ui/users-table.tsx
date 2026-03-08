@@ -23,6 +23,7 @@ type UserItem = {
   is_approved: boolean;
   created_at: string;
   last_seen_at: string | null;
+  trust?: { derived_level: number; derived_rank: string } | null;
 };
 
 export function UsersTable({ users }: { users: UserItem[] }) {
@@ -72,13 +73,16 @@ export function UsersTable({ users }: { users: UserItem[] }) {
             <TableHead>Role</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Last seen</TableHead>
+            <TableHead>Level</TableHead>
+            <TableHead>Rank</TableHead>
+            <TableHead>Joined</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {users.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                 No users found.
               </TableCell>
             </TableRow>
@@ -95,6 +99,15 @@ export function UsersTable({ users }: { users: UserItem[] }) {
                 {user.last_seen_at
                   ? new Date(user.last_seen_at).toLocaleString()
                   : "never"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {user.trust?.derived_level ?? 0}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {user.trust?.derived_rank || "—"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {new Date(user.created_at).toLocaleDateString()}
               </TableCell>
               <TableCell className="text-right">
                 {!user.is_approved ? (

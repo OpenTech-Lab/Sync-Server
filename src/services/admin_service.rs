@@ -102,7 +102,7 @@ impl AdminUserView {
             is_approved: value.is_approved,
             created_at: value.created_at,
             last_seen_at: value.last_seen_at,
-            trust: trust.map(|trust| AdminTrustReviewView {
+            trust: Some(trust.map(|trust| AdminTrustReviewView {
                 active_days: trust.active_days,
                 derived_level: trust.derived_level,
                 derived_rank: trust.derived_rank,
@@ -110,7 +110,15 @@ impl AdminUserView {
                 suspicious_activity_streak: trust.suspicious_activity_streak,
                 last_human_activity_at: trust.last_human_activity_at,
                 last_active_day: trust.last_active_day,
-            }),
+            }).unwrap_or_else(|| AdminTrustReviewView {
+                active_days: 0,
+                derived_level: 0,
+                derived_rank: "F".to_string(),
+                automation_review_state: "clear".to_string(),
+                suspicious_activity_streak: 0,
+                last_human_activity_at: None,
+                last_active_day: None,
+            })),
         }
     }
 }

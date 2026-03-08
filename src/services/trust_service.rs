@@ -997,7 +997,7 @@ fn assess_human_activity(
     let suspicious_activity_streak = if suspicious_new_day_attempt {
         stats.suspicious_activity_streak.saturating_add(1)
     } else if attempting_new_day {
-        stats.suspicious_activity_streak.saturating_sub(1)
+        stats.suspicious_activity_streak.saturating_sub(1).max(0)
     } else {
         stats.suspicious_activity_streak
     };

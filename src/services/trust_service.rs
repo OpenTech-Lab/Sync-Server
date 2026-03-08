@@ -10,10 +10,10 @@ use crate::errors::AppError;
 use crate::models::admin::NewAdminAuditLog;
 use crate::models::message::Message;
 use crate::models::trust::{
-    LevelPolicy, NewDailyActionCounter, NewTrustScoreEvent, NewUserTrustStats, RankPolicy,
-    TrustEnforcementConfig, TrustHistoryPruneResult, TrustPolicyConfig, TrustScoreEvent,
-    TrustSnapshot, UserTrustStats, DEFAULT_DAILY_COUNTER_RETENTION_DAYS,
-    DEFAULT_SCORE_EVENT_RETENTION_DAYS,
+    LevelPolicy, MilestoneKind, NewDailyActionCounter, NewTrustScoreEvent, NewUserTrustStats,
+    RankPolicy, TrustEnforcementConfig, TrustHistoryPruneResult, TrustMilestoneNotification,
+    TrustPolicyConfig, TrustScoreEvent, TrustSnapshot, UserTrustStats,
+    DEFAULT_DAILY_COUNTER_RETENTION_DAYS, DEFAULT_SCORE_EVENT_RETENTION_DAYS,
 };
 use crate::schema::{
     admin_audit_logs, admin_settings, daily_action_counters, trust_score_events, user_trust_stats,
@@ -481,6 +481,9 @@ pub fn get_trust_snapshot(pool: &Pool, user_id: Uuid) -> Result<TrustSnapshot, A
     let today = Utc::now().date_naive();
     let policy = load_trust_policy_conn(&mut conn)?;
     let stats = ensure_user_trust_stats(&mut conn, &policy, user_id)?;
+    // Capture pre-sync level/rank to detect milestone transitions this request.
+    let prev_level = stats.derived_level.clamp(1, 10) as u8;
+    let prev_rank = stats.derived_rank.clone();
     let stats = sync_derived_state(&mut conn, &policy, stats, Utc::now())?;
     let sent_today = daily_action_count(&mut conn, user_id, ACTION_OUTBOUND_MESSAGE, today)?;
     let attachments_sent_today =
@@ -494,6 +497,8 @@ pub fn get_trust_snapshot(pool: &Pool, user_id: Uuid) -> Result<TrustSnapshot, A
         sent_today,
         attachments_sent_today,
         friend_adds_today,
+        prev_level,
+        &prev_rank,
     ))
 }
 
@@ -546,8 +551,10 @@ pub fn send_message_with_trust(
         if limit_enforced {
             if let Some(limit) = limit {
                 if sent_today >= limit {
+                    let cur_level = stats.derived_level.clamp(1, 10) as u8;
+                    let cur_rank = stats.derived_rank.clone();
                     return Ok(SendMessageWithTrustResult::Limited {
-                        trust: build_snapshot(&policy, &stats, sent_today, attachments_sent_today, friend_adds_today),
+                        trust: build_snapshot(&policy, &stats, sent_today, attachments_sent_today, friend_adds_today, cur_level, &cur_rank),
                         retry_after_seconds: seconds_until_next_utc_day(now),
                     });
                 }
@@ -596,6 +603,8 @@ where
         if attachment_send_limit_enforced(&policy)
             && !attachment_type_allowed(&policy, &normalized_mime_type)
         {
+            let cur_level = stats.derived_level.clamp(1, 10) as u8;
+            let cur_rank = stats.derived_rank.clone();
             return Ok(AttachmentActionWithTrustResult::UnsupportedMime {
                 trust: build_snapshot(
                     &policy,
@@ -603,6 +612,8 @@ where
                     outbound_messages_sent,
                     attachments_sent_today,
                     friend_adds_today,
+                    cur_level,
+                    &cur_rank,
                 ),
             });
         }
@@ -612,6 +623,8 @@ where
         if attachment_send_limit_enforced(&policy) {
             if let Some(limit) = attachment_limit {
                 if attachments_sent_today >= limit {
+                    let cur_level = stats.derived_level.clamp(1, 10) as u8;
+                    let cur_rank = stats.derived_rank.clone();
                     return Ok(AttachmentActionWithTrustResult::Limited {
                         trust: build_snapshot(
                             &policy,
@@ -619,6 +632,8 @@ where
                             outbound_messages_sent,
                             attachments_sent_today,
                             friend_adds_today,
+                            cur_level,
+                            &cur_rank,
                         ),
                         retry_after_seconds: seconds_until_next_utc_day(now),
                     });
@@ -662,6 +677,8 @@ pub fn resolve_contact_with_trust(
             let limit = level_policy.daily_friend_add_limit;
             if let Some(limit) = limit {
                 if friend_adds_today >= limit {
+                    let cur_level = stats.derived_level.clamp(1, 10) as u8;
+                    let cur_rank = stats.derived_rank.clone();
                     return Ok(ResolveContactWithTrustResult::Limited {
                         trust: build_snapshot(
                             &policy,
@@ -669,6 +686,8 @@ pub fn resolve_contact_with_trust(
                             outbound_messages_sent,
                             attachments_sent_today,
                             friend_adds_today,
+                            cur_level,
+                            &cur_rank,
                         ),
                         retry_after_seconds: seconds_until_next_utc_day(now),
                     });
@@ -714,6 +733,8 @@ fn build_snapshot(
     daily_outbound_messages_sent: i32,
     daily_attachment_sends_sent: i32,
     daily_friend_adds_sent: i32,
+    prev_level: u8,
+    prev_rank: &str,
 ) -> TrustSnapshot {
     let level_policy = level_policy_for_active_days(policy, stats.active_days);
     let rank_policy = rank_policy_for_limits(policy, stats.contribution_score);
@@ -731,11 +752,36 @@ fn build_snapshot(
     let daily_friend_adds_remaining =
         daily_friend_add_limit.map(|limit| (limit - daily_friend_adds_sent).max(0));
 
+    let current_level = stats.derived_level.clamp(1, 10) as u8;
+    let current_rank = &stats.derived_rank;
+
+    let pending_milestone_notification = if current_level > prev_level {
+        Some(TrustMilestoneNotification {
+            kind: MilestoneKind::LevelUp,
+            badge_label: format!("Level {current_level}"),
+            headline_key: "trust.milestone.level_up".to_string(),
+            detail_key: format!("trust.milestone.level_{current_level}_detail"),
+            unlocked_value: None,
+            new_value: current_level.to_string(),
+        })
+    } else if rank_order(current_rank) > rank_order(prev_rank) {
+        Some(TrustMilestoneNotification {
+            kind: MilestoneKind::RankUp,
+            badge_label: format!("Rank {current_rank}"),
+            headline_key: "trust.milestone.rank_up".to_string(),
+            detail_key: format!("trust.milestone.rank_{}_detail", current_rank.to_lowercase()),
+            unlocked_value: None,
+            new_value: current_rank.clone(),
+        })
+    } else {
+        None
+    };
+
     TrustSnapshot {
         active_days: stats.active_days,
-        level: stats.derived_level.clamp(1, 10) as u8,
+        level: current_level,
         contribution_score: stats.contribution_score,
-        rank: stats.derived_rank.clone(),
+        rank: current_rank.clone(),
         next_level_active_days: next_level_active_days(policy, level_policy.level),
         level_progress_percent: level_progress_percent(
             stats.active_days,
@@ -756,6 +802,7 @@ fn build_snapshot(
         daily_friend_adds_sent,
         daily_friend_adds_remaining,
         challenge_state: challenge_state_for_client(&stats.automation_review_state),
+        pending_milestone_notification,
     }
 }
 

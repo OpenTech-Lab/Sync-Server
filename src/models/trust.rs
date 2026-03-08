@@ -155,6 +155,36 @@ pub struct TrustPolicyConfig {
     pub safe_attachment_types: Vec<String>,
 }
 
+/// Kind of progression milestone that triggered a client notification.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MilestoneKind {
+    LevelUp,
+    RankUp,
+    UnlockAttachmentType,
+}
+
+/// Payload the client uses to render a milestone toast, badge, or unlock animation.
+/// Returned as `pending_milestone_notification` in `TrustSnapshot` when a server-side
+/// progression event was detected on this request.  Null when no milestone is pending.
+///
+/// The client is responsible for dismissing / persisting the notification locally;
+/// the server does not maintain per-user notification state.  It is safe to ignore.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustMilestoneNotification {
+    pub kind: MilestoneKind,
+    /// Human-readable badge label, e.g. "Level 5" or "Rank D".
+    pub badge_label: String,
+    /// Localisation key for the unlock headline, e.g. "trust.milestone.level_up".
+    pub headline_key: String,
+    /// Localisation key for the unlock sub-copy, e.g. "trust.milestone.level_5_detail".
+    pub detail_key: String,
+    /// Optional specific thing unlocked, e.g. "application/pdf".
+    pub unlocked_value: Option<String>,
+    /// New level or rank value after the milestone.
+    pub new_value: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustSnapshot {
     pub active_days: i32,
@@ -180,6 +210,10 @@ pub struct TrustSnapshot {
     /// One of: "none", "challenged", "frozen".
     /// Does NOT expose internal automation_review_state labels beyond what the user needs.
     pub challenge_state: String,
+    /// Non-null when a level-up, rank-up, or attachment-type unlock was detected on this
+    /// request.  The client is responsible for dismissing the notification locally; the
+    /// server does not persist per-user notification state.  Safe to ignore.
+    pub pending_milestone_notification: Option<TrustMilestoneNotification>,
 }
 
 #[derive(Debug, Clone, Serialize)]

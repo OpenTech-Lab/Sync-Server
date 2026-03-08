@@ -208,6 +208,101 @@ components:
             "none" – no challenge active.
             "challenged" – suspicious activity detected; progression paused pending clean activity.
             "frozen" – repeated suspicious attempts; progression frozen until review or quiet-period clears.
+        pending_milestone_notification:
+          allOf:
+            - $ref: '#/components/schemas/TrustMilestoneNotification'
+          nullable: true
+          description: >
+            Non-null when a level-up, rank-up, or attachment-type unlock was detected on this
+            request.  The client is responsible for dismissing the notification locally; the server
+            does not persist per-user notification state.  Safe to ignore.
+
+    TrustMilestoneNotification:
+      type: object
+      description: >
+        Payload the client uses to render a milestone toast, badge, or unlock animation.
+        Returned as `pending_milestone_notification` in `TrustSnapshot` when a server-side
+        progression event was detected on this request.  Null when no milestone is pending.
+        The client is responsible for dismissing / persisting the notification locally;
+        the server does not maintain per-user notification state.
+      required:
+        - kind
+        - badge_label
+        - headline_key
+        - detail_key
+        - new_value
+      properties:
+        kind:
+          type: string
+          enum: [level_up, rank_up, unlock_attachment_type]
+          description: >
+            Kind of progression milestone that triggered this notification.
+            "level_up" – the user reached a new trust level on this request.
+            "rank_up" – the user's contribution score crossed a rank threshold.
+            "unlock_attachment_type" – a new attachment MIME type became available.
+        badge_label:
+          type: string
+          description: Human-readable badge label, e.g. "Level 5" or "Rank D".
+        headline_key:
+          type: string
+          description: Localisation key for the unlock headline, e.g. "trust.milestone.level_up".
+        detail_key:
+          type: string
+          description: Localisation key for the unlock sub-copy, e.g. "trust.milestone.level_5_detail".
+        unlocked_value:
+          type: string
+          nullable: true
+          description: >
+            Optional specific thing unlocked, e.g. "application/pdf" for an attachment-type unlock.
+            Null for level-up and rank-up milestones.
+        new_value:
+          type: string
+          description: >
+            New level or rank value after the milestone, e.g. "5" for a level-up or "D" for a rank-up.
+
+    LimitPrecedenceNote:
+      description: >
+        Trust limit precedence and fallback rules (informational — not a request/response schema).
+
+        **Evaluation order** (highest-priority first):
+
+        1. **Global enforcement disabled** (`enforcement.enabled = false`):
+           All trust limits are bypassed.  No level or rank checks are applied.
+
+        2. **Action-class disabled** (e.g. `outbound_messages_enabled = false`):
+           The specific action class is not enforced.  Other classes may still be enforced.
+
+        3. **Rank engine disabled** (`rank_engine_enabled = false`):
+           Rank perks (score multipliers, `overrides_level_limits`) are ignored.
+           Level-based caps still apply.
+
+        4. **Rank override** (`overrides_level_limits = true` on the user's current rank):
+           The rank policy fully replaces the level policy limit for that action.
+           Anti-flood rate limits at the infrastructure layer are not overridden.
+
+        5. **Rank multiplier** (`daily_outbound_messages_limit_multiplier_percent`):
+           Applied on top of the level-based limit.  A 150 % multiplier on a level-4 cap of
+           100 messages yields an effective cap of 150.
+
+        6. **Level policy limit** (`daily_outbound_messages_limit`, `daily_friend_add_limit`,
+           `daily_attachment_send_limit`):
+           Base cap determined by the user's current `derived_level`.
+
+        7. **No cap** (level policy limit is `null`):
+           The action is unrestricted for that level.  Infrastructure anti-flood still applies.
+
+        **Fallback behaviour:**
+        - If a user has no `user_trust_stats` row, a row is created with level 1 / rank F defaults
+          on the first authenticated human-like action.
+        - If the policy config is missing or invalid, the server rejects startup — there is no
+          silent fallback to permissive defaults at runtime.
+        - `daily_outbound_messages_remaining` / `daily_friend_adds_remaining` /
+          `daily_attachment_sends_remaining` are `null` when no cap is in effect for the tier;
+          clients must treat `null` as "unlimited".
+        - `allowed_attachment_types` is always present (may be empty list for level 1 if the
+          safe allowlist is empty, though a well-formed policy will contain at least image/* types).
+      type: object
+      properties: {}
 
     UserProfilePublic:
       type: object

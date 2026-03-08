@@ -130,7 +130,7 @@ fn trust_snapshot_reports_when_message_limits_are_disabled() {
         updated_at: Utc::now(),
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 12, 3, 0);
+    let snapshot = build_snapshot(&policy, &stats, 12, 3, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
 
     assert!(!outbound_message_limit_enforced(&policy));
     assert!(!snapshot.daily_outbound_messages_enforced);
@@ -164,7 +164,7 @@ fn trust_snapshot_applies_rank_multiplier_to_message_caps() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 40, 2, 0);
+    let snapshot = build_snapshot(&policy, &stats, 40, 2, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
 
     assert!(snapshot.daily_outbound_messages_enforced);
     assert_eq!(snapshot.daily_outbound_messages_limit, Some(240));
@@ -192,7 +192,7 @@ fn trust_snapshot_uses_rank_overrides_for_unlimited_message_caps() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 99, 4, 0);
+    let snapshot = build_snapshot(&policy, &stats, 99, 4, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
 
     assert_eq!(snapshot.daily_outbound_messages_limit, None);
     assert_eq!(snapshot.daily_outbound_messages_remaining, None);
@@ -329,7 +329,7 @@ fn make_stats_with_review_state(automation_review_state: &str) -> UserTrustStats
 fn challenge_state_clear_maps_to_none() {
     let policy = default_trust_policy();
     let stats = make_stats_with_review_state("clear");
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0);
+    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
     assert_eq!(snapshot.challenge_state, "none");
 }
 
@@ -337,7 +337,7 @@ fn challenge_state_clear_maps_to_none() {
 fn challenge_state_challenged_maps_to_challenged() {
     let policy = default_trust_policy();
     let stats = make_stats_with_review_state("challenged");
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0);
+    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
     assert_eq!(snapshot.challenge_state, "challenged");
 }
 
@@ -345,7 +345,7 @@ fn challenge_state_challenged_maps_to_challenged() {
 fn challenge_state_frozen_maps_to_frozen() {
     let policy = default_trust_policy();
     let stats = make_stats_with_review_state("frozen");
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0);
+    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
     assert_eq!(snapshot.challenge_state, "frozen");
 }
 
@@ -353,7 +353,7 @@ fn challenge_state_frozen_maps_to_frozen() {
 fn challenge_state_unknown_value_maps_to_none() {
     let policy = default_trust_policy();
     let stats = make_stats_with_review_state("some_internal_state_unknown_to_client");
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0);
+    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
     assert_eq!(snapshot.challenge_state, "none");
 }
 
@@ -420,7 +420,7 @@ fn daily_outbound_messages_remaining_clamps_at_zero_when_over_limit() {
     };
 
     // Level 1 limit is 50; send 9999 to simulate an over-limit state.
-    let snapshot = build_snapshot(&policy, &stats, 9999, 0, 0);
+    let snapshot = build_snapshot(&policy, &stats, 9999, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
     assert_eq!(snapshot.daily_outbound_messages_remaining, Some(0));
     assert_eq!(snapshot.daily_outbound_messages_sent, 9999);
 }
@@ -444,7 +444,7 @@ fn daily_attachment_sends_remaining_clamps_at_zero_when_over_limit() {
     };
 
     // Level 1 attachment limit is 5; send 9999 to simulate an over-limit state.
-    let snapshot = build_snapshot(&policy, &stats, 0, 9999, 0);
+    let snapshot = build_snapshot(&policy, &stats, 0, 9999, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
     assert_eq!(snapshot.daily_attachment_sends_remaining, Some(0));
     assert_eq!(snapshot.daily_attachment_sends_sent, 9999);
 }
@@ -467,7 +467,7 @@ fn daily_friend_adds_remaining_clamps_at_zero_when_over_limit() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 9999);
+    let snapshot = build_snapshot(&policy, &stats, 0, 0, 9999, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
     assert_eq!(snapshot.daily_friend_adds_remaining, Some(0));
     assert_eq!(snapshot.daily_friend_adds_sent, 9999);
 }
@@ -492,7 +492,7 @@ fn level_1_attachment_types_are_restricted_to_safe_image_video() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0);
+    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
     assert!(!snapshot.allowed_attachment_types.is_empty());
     // Level 1 must not allow arbitrary document types.
     assert!(!snapshot
@@ -535,8 +535,8 @@ fn higher_level_allows_more_attachment_types_than_level_1() {
         updated_at: now,
     };
 
-    let snapshot1 = build_snapshot(&policy, &level1_stats, 0, 0, 0);
-    let snapshot5 = build_snapshot(&policy, &level5_stats, 0, 0, 0);
+    let snapshot1 = build_snapshot(&policy, &level1_stats, 0, 0, 0, level1_stats.derived_level.clamp(1, 10) as u8, &level1_stats.derived_rank);
+    let snapshot5 = build_snapshot(&policy, &level5_stats, 0, 0, 0, level5_stats.derived_level.clamp(1, 10) as u8, &level5_stats.derived_rank);
 
     assert!(
         snapshot5.allowed_attachment_types.len() >= snapshot1.allowed_attachment_types.len(),
@@ -565,7 +565,7 @@ fn daily_outbound_limit_is_none_for_unlimited_rank() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 100, 0, 0);
+    let snapshot = build_snapshot(&policy, &stats, 100, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
     assert_eq!(
         snapshot.daily_outbound_messages_limit, None,
         "S-rank should have no message limit"
@@ -602,7 +602,7 @@ fn rank_engine_disabled_ignores_rank_perks_for_limit_calculations() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0);
+    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
 
     // With rank_engine_enabled = false the rank perk (overrides_level_limits)
     // is suppressed, so level 1's cap should apply instead of unlimited.
@@ -645,10 +645,177 @@ fn rank_engine_enabled_applies_rank_perks() {
         updated_at: now,
     };
 
-    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0);
+    let snapshot = build_snapshot(&policy, &stats, 0, 0, 0, stats.derived_level.clamp(1, 10) as u8, &stats.derived_rank);
     assert_eq!(
         snapshot.daily_outbound_messages_limit, None,
         "S-rank with rank engine enabled should get unlimited messages"
+    );
+}
+
+// ── Phase 6: Abuse simulations ────────────────────────────────────────────────
+
+/// Sleeper-account passive aging: an account whose `last_active_day` is already
+/// today should never advance active_days again on the same UTC day, regardless
+/// of how many times activity is triggered.  This exercises the idempotency
+/// guard that prevents passive account aging.
+#[test]
+fn sleeper_account_cannot_earn_active_day_same_utc_day() {
+    let now = Utc::now();
+    let today = now.date_naive();
+    let stats = UserTrustStats {
+        user_id: Uuid::new_v4(),
+        active_days: 90,
+        contribution_score: 0,
+        derived_level: 6,
+        derived_rank: "F".to_string(),
+        // Already counted today — simulates a dormant account that logged in once.
+        last_active_day: Some(today),
+        last_human_activity_at: Some(now - Duration::hours(1)),
+        suspicious_activity_streak: 0,
+        automation_review_state: "clear".to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+
+    // Repeated activity calls on the same day must not advance active_days.
+    let assessment = assess_human_activity(&stats, today, now);
+
+    assert!(
+        !assessment.should_advance_active_day,
+        "active_day must not advance again on the same UTC day (sleeper-account guard)"
+    );
+    // No new suspicion — same-day repeat is normal, not suspicious.
+    assert_eq!(
+        assessment.suspicious_activity_streak, 0,
+        "same-day repeat should not increment suspicious_activity_streak"
+    );
+    assert_eq!(
+        assessment.automation_review_state, "clear",
+        "same-day repeat should not flag clear account as suspicious"
+    );
+}
+
+/// Low-trust vote farms: a granter at level 1 (below the level-4 threshold)
+/// and rank F (below the rank-E threshold) is below the minimum eligibility
+/// bar.  The rank_at_least helper must confirm this ordering correctly so that
+/// the eligibility check `level >= 4 || rank_at_least(rank, "E")` returns false
+/// for every rank below E.
+#[test]
+fn low_trust_granter_ranks_below_eligibility_threshold() {
+    // Rank order is F < E < D < C < B < A < S.
+    // The granter eligibility threshold is rank >= "E" (rank_order >= 1).
+    // Only rank F is below it.
+    let ineligible_ranks = ["F"];
+    for rank in &ineligible_ranks {
+        assert!(
+            !rank_at_least(rank, "E"),
+            "rank {rank} should be below eligibility threshold E"
+        );
+    }
+
+    // Ranks at or above E (E, D, C, B, A, S) must pass.
+    let eligible_ranks = ["E", "D", "C", "B", "A", "S"];
+    for rank in &eligible_ranks {
+        assert!(
+            rank_at_least(rank, "E"),
+            "rank {rank} should meet or exceed eligibility threshold E"
+        );
+    }
+}
+
+/// Scripted daily progression (bot farm simulation): an account that triggers
+/// new-day activity suspiciously fast on consecutive days accumulates
+/// suspicious_activity_streak until it reaches SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD
+/// and gets frozen.  This test walks the account through the full escalation
+/// path: clear → challenged → … → frozen.
+#[test]
+fn scripted_daily_progression_escalates_to_frozen() {
+    let mut now = Utc::now();
+    let mut today = now.date_naive();
+
+    let mut stats = UserTrustStats {
+        user_id: Uuid::new_v4(),
+        active_days: 0,
+        contribution_score: 0,
+        derived_level: 1,
+        derived_rank: "F".to_string(),
+        last_active_day: None,
+        last_human_activity_at: None,
+        suspicious_activity_streak: 0,
+        automation_review_state: "clear".to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+
+    // Simulate bot: each "day" it sends activity within the suspicious window.
+    for day in 0..SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD {
+        // Advance simulated clock by one calendar day.
+        now = now + Duration::days(1);
+        today = now.date_naive();
+
+        // Bot triggers activity immediately at rollover (< SUSPICIOUS_NEW_DAY_ACTIVITY_WINDOW_MINUTES).
+        let last_human_activity =
+            now - Duration::minutes(SUSPICIOUS_NEW_DAY_ACTIVITY_WINDOW_MINUTES - 1);
+
+        stats.last_active_day = Some(today.pred_opt().expect("prev day"));
+        stats.last_human_activity_at = Some(last_human_activity);
+
+        let assessment = assess_human_activity(&stats, today, now);
+
+        // After each suspicious attempt, streak should grow.
+        let expected_streak = day + 1;
+        assert_eq!(
+            assessment.suspicious_activity_streak, expected_streak,
+            "day {day}: streak should be {expected_streak}"
+        );
+        assert!(
+            !assessment.should_advance_active_day,
+            "day {day}: suspicious attempt must not advance active_day"
+        );
+
+        // Apply assessment back to stats for the next iteration.
+        stats.suspicious_activity_streak = assessment.suspicious_activity_streak;
+        stats.automation_review_state = assessment.automation_review_state.to_string();
+    }
+
+    // After SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD suspicious days, account must be frozen.
+    assert_eq!(
+        stats.automation_review_state, "frozen",
+        "account must be frozen after {} consecutive suspicious attempts",
+        SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD
+    );
+}
+
+/// A frozen account that attempts more activity within the recovery window
+/// must remain frozen; it cannot self-clear by simply retrying.
+#[test]
+fn frozen_account_cannot_self_clear_within_recovery_window() {
+    let now = Utc::now();
+    let today = now.date_naive();
+    let stats = UserTrustStats {
+        user_id: Uuid::new_v4(),
+        active_days: 10,
+        contribution_score: 0,
+        derived_level: 2,
+        derived_rank: "F".to_string(),
+        last_active_day: Some(today.pred_opt().expect("prev day")),
+        // Last activity was LESS than the recovery window ago — not yet eligible to clear.
+        last_human_activity_at: Some(now - Duration::hours(FROZEN_RECOVERY_WINDOW_HOURS - 1)),
+        suspicious_activity_streak: SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD,
+        automation_review_state: "frozen".to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+
+    let assessment = assess_human_activity(&stats, today, now);
+
+    assert!(
+        !assessment.should_advance_active_day,
+        "frozen account within recovery window must not advance active_day"
+    );
+    assert_eq!(
+        assessment.automation_review_state, "frozen",
+        "automation_review_state must stay 'frozen' within recovery window"
     );
 }
 

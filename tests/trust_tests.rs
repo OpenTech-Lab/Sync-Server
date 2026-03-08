@@ -499,3 +499,255 @@ async fn trust_admin_endpoints_require_admin_role() {
         );
     }
 }
+
+// ── Abuse / regression scenarios ──────────────────────────────────────────────
+
+/// Passive account polling must not increment active_days.
+///
+/// Simulates a bot pattern: repeatedly call GET /api/profile/me (background
+/// sync / idle heartbeat) without any human-like write actions.  The
+/// active_days counter must stay constant across all calls because none of
+/// them represent genuine human-initiated activity.
+#[tokio::test]
+async fn passive_polling_does_not_increment_active_days() {
+    let Some(base) = base_url() else { return };
+    let client = Client::new();
+
+    let (token, _id) = register_and_login(&client, &base).await;
+
+    let trust_first = get_trust_snapshot(&client, &base, &token).await;
+    let days_first = trust_first["active_days"].as_i64().unwrap_or(-1);
+
+    // Issue many passive GET /api/profile/me requests — mimicking a bot polling loop.
+    for _ in 0..10 {
+        get_trust_snapshot(&client, &base, &token).await;
+    }
+
+    let trust_last = get_trust_snapshot(&client, &base, &token).await;
+    let days_last = trust_last["active_days"].as_i64().unwrap_or(-1);
+
+    assert_eq!(
+        days_last, days_first,
+        "active_days must not change from passive profile polling \
+         (passive-aging attempt: before={days_first}, after={days_last})"
+    );
+}
+
+/// A freshly created (burner) account must face enforced outbound message
+/// limits from the first request.  This prevents mass-account creation from
+/// being useful for amplification campaigns.
+#[tokio::test]
+async fn burner_account_has_enforced_message_limits() {
+    let Some(base) = base_url() else { return };
+    let client = Client::new();
+
+    let (token, _id) = register_and_login(&client, &base).await;
+    let trust = get_trust_snapshot(&client, &base, &token).await;
+
+    // A brand-new Level 1 account must have enforcement active.
+    assert_eq!(
+        trust["level"], 1,
+        "burner account should start at Level 1"
+    );
+    assert_eq!(
+        trust["daily_outbound_messages_enforced"], true,
+        "outbound message limits must be enforced for a new (burner) account"
+    );
+    assert_eq!(
+        trust["daily_friend_adds_enforced"], true,
+        "friend-add limits must be enforced for a new (burner) account"
+    );
+    assert_eq!(
+        trust["daily_attachment_sends_enforced"], true,
+        "attachment send limits must be enforced for a new (burner) account"
+    );
+
+    // daily limits must be non-null (i.e. actually capped, not unlimited).
+    assert!(
+        trust["daily_outbound_messages_limit"].as_i64().is_some(),
+        "new account should have a concrete daily_outbound_messages_limit"
+    );
+    assert!(
+        trust["daily_friend_add_limit"].as_i64().is_some(),
+        "new account should have a concrete daily_friend_add_limit"
+    );
+}
+
+/// Sending messages up to the daily cap and then one more must return 429.
+///
+/// This regression test guards against a code path where the counter is
+/// updated after the gate check, allowing scripted clients to fire one extra
+/// action per session.
+#[tokio::test]
+async fn scripted_message_sends_are_blocked_at_cap() {
+    let Some(base) = base_url() else { return };
+    let client = Client::new();
+
+    let (token_a, _id_a) = register_and_login(&client, &base).await;
+    let (_token_b, id_b) = register_and_login(&client, &base).await;
+
+    let trust = get_trust_snapshot(&client, &base, &token_a).await;
+
+    // Skip if enforcement is off or limit is null (uncapped tier).
+    let Some(limit) = trust["daily_outbound_messages_limit"].as_i64() else {
+        return;
+    };
+    if trust["daily_outbound_messages_enforced"] != true {
+        return;
+    }
+
+    let sent_so_far = trust["daily_outbound_messages_sent"].as_i64().unwrap_or(0);
+    let remaining = (limit - sent_so_far).max(0) as usize;
+
+    // Consume all remaining slots.
+    let mut last_successful_status = 0u16;
+    for _ in 0..remaining {
+        let res = client
+            .post(format!("{base}/api/messages"))
+            .bearer_auth(&token_a)
+            .json(&json!({ "recipient_id": id_b, "content": "cap test" }))
+            .send()
+            .await
+            .expect("send request failed");
+        last_successful_status = res.status().as_u16();
+        if last_successful_status == 429 {
+            // Already capped earlier than expected — stop.
+            break;
+        }
+    }
+
+    // If we exhausted the cap without hitting 429 yet, the very next send must
+    // return 429 (scripted overflow attempt).
+    if last_successful_status != 429 {
+        let overflow_status = client
+            .post(format!("{base}/api/messages"))
+            .bearer_auth(&token_a)
+            .json(&json!({ "recipient_id": id_b, "content": "overflow attempt" }))
+            .send()
+            .await
+            .expect("overflow send failed")
+            .status()
+            .as_u16();
+
+        assert_eq!(
+            overflow_status, 429,
+            "message send beyond daily cap must return 429 (scripted send regression)"
+        );
+    }
+
+    // Either way, the daily_remaining field must be 0 or null.
+    let trust_after = get_trust_snapshot(&client, &base, &token_a).await;
+    let remaining_after = trust_after["daily_outbound_messages_remaining"]
+        .as_i64()
+        .unwrap_or(0);
+    assert_eq!(
+        remaining_after, 0,
+        "daily_outbound_messages_remaining must be 0 after exhausting the cap"
+    );
+}
+
+/// A frozen account should still return a trust snapshot but must have
+/// challenge_state == "frozen" and must not be able to progress its active_days
+/// through passive actions.
+#[tokio::test]
+async fn frozen_account_does_not_gain_active_days_passively() {
+    let Some(base) = base_url() else { return };
+    let Some(admin_tok) = admin_token() else { return };
+    let client = Client::new();
+
+    let (user_token, user_id) = register_and_login(&client, &base).await;
+
+    let trust_before = get_trust_snapshot(&client, &base, &user_token).await;
+    let days_before = trust_before["active_days"].as_i64().unwrap_or(-1);
+
+    // Admin freezes the account.
+    client
+        .post(format!("{base}/api/admin/users/{user_id}/trust/freeze"))
+        .bearer_auth(&admin_tok)
+        .json(&json!({ "reason": "abuse regression: frozen passive aging test" }))
+        .send()
+        .await
+        .expect("freeze request failed");
+
+    // Passive polling should not change active_days for a frozen account.
+    for _ in 0..5 {
+        get_trust_snapshot(&client, &base, &user_token).await;
+    }
+
+    let trust_after = get_trust_snapshot(&client, &base, &user_token).await;
+    let days_after = trust_after["active_days"].as_i64().unwrap_or(-1);
+
+    assert_eq!(
+        trust_after["challenge_state"], "frozen",
+        "frozen account must report challenge_state 'frozen'"
+    );
+    assert_eq!(
+        days_after, days_before,
+        "frozen account must not gain active_days from passive polling"
+    );
+}
+
+/// A bot-farm pattern: multiple newly registered low-trust accounts all try to
+/// grant contribution score to the same target user.  Because all grantors are
+/// Level 1, the server must suppress or heavily discount each event.
+///
+/// This test verifies that the target's score does not increase by the naive
+/// sum of all grant attempts.  Exact suppression thresholds are internal; the
+/// test just asserts that the score gain is strictly less than
+/// `num_grantors × max_per_grant_points`.
+#[tokio::test]
+async fn low_trust_bot_farm_cannot_inflate_target_score() {
+    let Some(base) = base_url() else { return };
+    let Some(admin_tok) = admin_token() else { return };
+    let client = Client::new();
+
+    // Register the target user.
+    let (target_token, target_id) = register_and_login(&client, &base).await;
+
+    let trust_before = get_trust_snapshot(&client, &base, &target_token).await;
+    let score_before = trust_before["contribution_score"].as_i64().unwrap_or(0);
+
+    // Register a cluster of low-trust burner accounts (simulated bot farm).
+    const NUM_BOTS: usize = 5;
+    let max_per_grant = 25i64; // VERIFIED_ABUSE_REPORT_POINTS — the largest single grant
+
+    for i in 0..NUM_BOTS {
+        let (_bot_token, bot_id) = register_and_login(&client, &base).await;
+        let reference_id = format!("bot-farm-grant-{}-{}", Uuid::new_v4(), i);
+
+        // Simulate each bot triggering a positive scoring event on behalf of the target.
+        // We use verify-report (admin-triggered) as a proxy, with the bot as the reporter.
+        // Real bot-farm attacks would use the upvote / helpful-answer endpoints;
+        // this confirms the scoring path runs through low-trust suppression checks.
+        let _: Value = client
+            .post(format!(
+                "{base}/api/admin/users/{target_id}/trust/verify-report"
+            ))
+            .bearer_auth(&admin_tok)
+            .json(&json!({
+                "reporter_user_id": bot_id,
+                "report_reference_id": reference_id,
+            }))
+            .send()
+            .await
+            .expect("bot grant request failed")
+            .json()
+            .await
+            .expect("bot grant not JSON");
+    }
+
+    let trust_after = get_trust_snapshot(&client, &base, &target_token).await;
+    let score_after = trust_after["contribution_score"].as_i64().unwrap_or(0);
+
+    let naive_max = (NUM_BOTS as i64) * max_per_grant;
+    let actual_gain = score_after - score_before;
+
+    // The gain must be less than the naive unsuppressed total.
+    // If suppression is not active, this asserts false and flags the regression.
+    assert!(
+        actual_gain < naive_max,
+        "bot-farm suppression failed: target gained {actual_gain} points from \
+         {NUM_BOTS} Level-1 grantors; expected strictly less than {naive_max} \
+         (score before={score_before}, after={score_after})"
+    );
+}

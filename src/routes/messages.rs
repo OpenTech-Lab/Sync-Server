@@ -6,11 +6,11 @@ use crate::auth::AuthUser;
 use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
-use crate::models::trust::TrustSnapshot;
+use crate::models::guild::GuildSnapshot;
 use crate::routes::federation;
 use crate::services::user_service;
 use crate::services::{
-    admin_service, message_service, push_dispatch_service, redis_pubsub, trust_service,
+    admin_service, message_service, push_dispatch_service, redis_pubsub, guild_service,
 };
 
 // ── Request DTOs ─────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ struct MessageLimitExceededResponse {
     error: &'static str,
     code: &'static str,
     retry_after_seconds: i64,
-    trust: TrustSnapshot,
+    guild: GuildSnapshot,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -55,7 +55,7 @@ struct FriendAddLimitExceededResponse {
     error: &'static str,
     code: &'static str,
     retry_after_seconds: i64,
-    trust: TrustSnapshot,
+    guild: GuildSnapshot,
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -162,9 +162,9 @@ pub async fn resolve_contact(
 ) -> Result<HttpResponse, AppError> {
     let user_id = auth.0.user_id()?;
 
-    match trust_service::resolve_contact_with_trust(&pool, user_id)? {
-        trust_service::ResolveContactWithTrustResult::Limited {
-            trust,
+    match guild_service::resolve_contact_with_guild(&pool, user_id)? {
+        guild_service::ResolveContactWithTrustResult::Limited {
+            guild,
             retry_after_seconds,
         } => {
             return Ok(
@@ -172,11 +172,11 @@ pub async fn resolve_contact(
                     error: "Daily friend add limit reached.",
                     code: "friend_add_limit_exceeded",
                     retry_after_seconds,
-                    trust,
+                    guild,
                 }),
             );
         }
-        trust_service::ResolveContactWithTrustResult::Allowed => {}
+        guild_service::ResolveContactWithTrustResult::Allowed => {}
     }
 
     let recipient_id = body.recipient_id.trim().to_lowercase();
@@ -258,32 +258,32 @@ pub async fn send_message(
     };
 
     let message =
-        match trust_service::send_message_with_trust(&pool, sender_id, recipient_user.id, content)?
+        match guild_service::send_message_with_guild(&pool, sender_id, recipient_user.id, content)?
         {
-            trust_service::SendMessageWithTrustResult::Sent { message } => message,
-            trust_service::SendMessageWithTrustResult::Limited {
-                trust,
+            guild_service::SendMessageWithTrustResult::Sent { message } => message,
+            guild_service::SendMessageWithTrustResult::Limited {
+                guild,
                 retry_after_seconds,
             } => {
                 admin_service::append_audit_log(
                     &pool,
                     Some(sender_id),
-                    "trust.blocked_action.outbound_message_limit",
+                    "guild.blocked_action.outbound_message_limit",
                     Some(&recipient_user.id.to_string()),
                     serde_json::json!({
                         "retry_after_seconds": retry_after_seconds,
-                        "level": trust.level,
-                        "rank": trust.rank,
-                        "daily_outbound_messages_limit": trust.daily_outbound_messages_limit,
-                        "daily_outbound_messages_sent": trust.daily_outbound_messages_sent,
+                        "level": guild.level,
+                        "rank": guild.rank,
+                        "daily_outbound_messages_limit": guild.daily_outbound_messages_limit,
+                        "daily_outbound_messages_sent": guild.daily_outbound_messages_sent,
                     }),
                 )?;
                 return Ok(
                     HttpResponse::TooManyRequests().json(MessageLimitExceededResponse {
-                        error: "Daily outbound message limit reached for your current trust level.",
+                        error: "Daily outbound message limit reached for your current guild level.",
                         code: "daily_message_limit_reached",
                         retry_after_seconds,
-                        trust,
+                        guild,
                     }),
                 );
             }
@@ -352,7 +352,7 @@ pub async fn mark_read(
 ) -> Result<HttpResponse, AppError> {
     let viewer_id = auth.0.user_id()?;
     let count = message_service::mark_read(&pool, viewer_id, *partner_id)?;
-    trust_service::record_human_activity(&pool, viewer_id)?;
+    guild_service::record_human_activity(&pool, viewer_id)?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "count": count })))
 }
 

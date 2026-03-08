@@ -23,7 +23,7 @@ type UserItem = {
   is_approved: boolean;
   created_at: string;
   last_seen_at: string | null;
-  trust?: { derived_level: number; derived_rank: string } | null;
+  guild?: { derived_level: number; derived_rank: string } | null;
 };
 
 export function UsersTable({ users }: { users: UserItem[] }) {
@@ -101,10 +101,10 @@ export function UsersTable({ users }: { users: UserItem[] }) {
                   : "never"}
               </TableCell>
               <TableCell className="text-sm text-muted-foreground">
-                {user.trust?.derived_level ?? 0}
+                {user.guild?.derived_level ?? 0}
               </TableCell>
               <TableCell className="text-sm text-muted-foreground">
-                {user.trust?.derived_rank || "—"}
+                {user.guild?.derived_rank || "—"}
               </TableCell>
               <TableCell className="text-sm text-muted-foreground">
                 {new Date(user.created_at).toLocaleDateString()}

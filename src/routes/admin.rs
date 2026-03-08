@@ -11,8 +11,8 @@ use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::server_news::ServerNews;
-use crate::models::trust::TrustPolicyConfig;
-use crate::services::{admin_service, server_news_service, trust_service};
+use crate::models::guild::GuildPolicyConfig;
+use crate::services::{admin_service, server_news_service, guild_service};
 
 #[derive(Debug, Deserialize)]
 pub struct UserQuery {
@@ -32,7 +32,7 @@ pub struct TrustReviewUsersQuery {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct TrustScoreEventsQuery {
+pub struct GuildScoreEventsQuery {
     pub user_id: Option<Uuid>,
     pub event_type: Option<String>,
     pub limit: Option<i64>,
@@ -273,10 +273,10 @@ pub async fn suspend_user(
 ) -> Result<HttpResponse, AppError> {
     let admin_user_id = admin.0.user_id()?;
     admin_service::set_user_active(&pool, *user_id, false)?;
-    let moderation_score = trust_service::award_validated_moderation_action(
+    let moderation_score = guild_service::award_validated_moderation_action(
         &pool,
         admin_user_id,
-        trust_service::EVENT_VALIDATED_MODERATION_USER_SUSPEND,
+        guild_service::EVENT_VALIDATED_MODERATION_USER_SUSPEND,
         Some(&user_id.to_string()),
         serde_json::json!({
             "target_user_id": user_id.to_string(),
@@ -575,12 +575,12 @@ pub async fn audit_logs(
     Ok(HttpResponse::Ok().json(items))
 }
 
-pub async fn trust_review_users(
+pub async fn guild_review_users(
     pool: web::Data<Pool>,
     _admin: AdminUser,
     query: web::Query<TrustReviewUsersQuery>,
 ) -> Result<HttpResponse, AppError> {
-    let users = admin_service::list_trust_review_users(
+    let users = admin_service::list_guild_review_users(
         &pool,
         query.automation_review_state.as_deref(),
         query.limit.unwrap_or(50),
@@ -588,12 +588,12 @@ pub async fn trust_review_users(
     Ok(HttpResponse::Ok().json(users))
 }
 
-pub async fn trust_score_events(
+pub async fn guild_score_events(
     pool: web::Data<Pool>,
     _admin: AdminUser,
-    query: web::Query<TrustScoreEventsQuery>,
+    query: web::Query<GuildScoreEventsQuery>,
 ) -> Result<HttpResponse, AppError> {
-    let events = admin_service::list_trust_score_events(
+    let events = admin_service::list_guild_score_events(
         &pool,
         query.user_id,
         query.event_type.as_deref(),
@@ -602,42 +602,42 @@ pub async fn trust_score_events(
     Ok(HttpResponse::Ok().json(events))
 }
 
-pub async fn trust_blocked_actions(
+pub async fn guild_blocked_actions(
     pool: web::Data<Pool>,
     _admin: AdminUser,
     query: web::Query<TrustBlockedActionsQuery>,
 ) -> Result<HttpResponse, AppError> {
     let summary =
-        admin_service::list_trust_blocked_action_counts(&pool, query.limit.unwrap_or(10))?;
+        admin_service::list_guild_blocked_action_counts(&pool, query.limit.unwrap_or(10))?;
     Ok(HttpResponse::Ok().json(summary))
 }
 
-pub async fn trust_review_metrics(
+pub async fn guild_review_metrics(
     pool: web::Data<Pool>,
     _admin: AdminUser,
 ) -> Result<HttpResponse, AppError> {
-    let metrics = admin_service::trust_review_metrics(&pool)?;
+    let metrics = admin_service::guild_review_metrics(&pool)?;
     Ok(HttpResponse::Ok().json(metrics))
 }
 
-pub async fn get_trust_policy(
+pub async fn get_guild_policy(
     pool: web::Data<Pool>,
     _admin: AdminUser,
 ) -> Result<HttpResponse, AppError> {
-    let policy = trust_service::read_trust_policy(&pool)?;
+    let policy = guild_service::read_guild_policy(&pool)?;
     Ok(HttpResponse::Ok().json(policy))
 }
 
-pub async fn update_trust_policy(
+pub async fn update_guild_policy(
     pool: web::Data<Pool>,
     admin: AdminUser,
-    body: web::Json<TrustPolicyConfig>,
+    body: web::Json<GuildPolicyConfig>,
 ) -> Result<HttpResponse, AppError> {
-    let policy = trust_service::save_trust_policy(&pool, &body)?;
+    let policy = guild_service::save_guild_policy(&pool, &body)?;
     admin_service::append_audit_log(
         &pool,
         Some(admin.0.user_id()?),
-        "trust_policy.update",
+        "guild_policy.update",
         None,
         serde_json::json!({
             "enforcement_enabled": policy.enforcement.enabled,
@@ -653,15 +653,15 @@ pub async fn update_trust_policy(
     Ok(HttpResponse::Ok().json(policy))
 }
 
-pub async fn prune_trust_history(
+pub async fn prune_guild_history(
     pool: web::Data<Pool>,
     admin: AdminUser,
 ) -> Result<HttpResponse, AppError> {
-    let result = trust_service::prune_trust_history(&pool)?;
+    let result = guild_service::prune_guild_history(&pool)?;
     admin_service::append_audit_log(
         &pool,
         Some(admin.0.user_id()?),
-        "trust_history.prune",
+        "guild_history.prune",
         None,
         serde_json::json!({
             "daily_counter_retention_days": result.daily_counter_retention_days,
@@ -669,13 +669,13 @@ pub async fn prune_trust_history(
             "pruned_before_day": result.pruned_before_day,
             "pruned_before_timestamp": result.pruned_before_timestamp,
             "daily_action_counters_deleted": result.daily_action_counters_deleted,
-            "trust_score_events_deleted": result.trust_score_events_deleted,
+            "guild_score_events_deleted": result.guild_score_events_deleted,
         }),
     )?;
     Ok(HttpResponse::Ok().json(result))
 }
 
-// ── Trust penalty / moderation action request bodies ─────────────────────────
+// ── Guild penalty / moderation action request bodies ─────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct ScoreClawbackRequest {
@@ -706,9 +706,9 @@ pub struct DismissAbuseReportRequest {
     pub report_reference_id: Option<String>,
 }
 
-// ── Trust penalty handlers ─────────────────────────────────────────────────
+// ── Guild penalty handlers ─────────────────────────────────────────────────
 
-/// POST /api/admin/users/{user_id}/trust/clawback-score
+/// POST /api/admin/users/{user_id}/guild/clawback-score
 /// Apply a negative score adjustment (admin-issued clawback).
 pub async fn clawback_score(
     pool: web::Data<Pool>,
@@ -722,7 +722,7 @@ pub async fn clawback_score(
         ));
     }
     let admin_id = admin.0.user_id()?;
-    let outcome = trust_service::clawback_contribution_score(
+    let outcome = guild_service::clawback_contribution_score(
         &pool,
         *user_id,
         body.delta,
@@ -732,7 +732,7 @@ pub async fn clawback_score(
     admin_service::append_audit_log(
         &pool,
         Some(admin_id),
-        "trust.admin.clawback_score",
+        "guild.admin.clawback_score",
         Some(&user_id.to_string()),
         serde_json::json!({
             "delta": body.delta,
@@ -744,8 +744,8 @@ pub async fn clawback_score(
     Ok(HttpResponse::Ok().json(outcome))
 }
 
-/// POST /api/admin/users/{user_id}/trust/freeze
-/// Freeze a user's trust progression.
+/// POST /api/admin/users/{user_id}/guild/freeze
+/// Freeze a user's guild progression.
 pub async fn freeze_progression(
     pool: web::Data<Pool>,
     admin: AdminUser,
@@ -753,12 +753,12 @@ pub async fn freeze_progression(
     body: web::Json<FreezeProgressionRequest>,
 ) -> Result<HttpResponse, AppError> {
     let admin_id = admin.0.user_id()?;
-    trust_service::freeze_trust_progression(&pool, Some(admin_id), *user_id, &body.reason)?;
+    guild_service::freeze_guild_progression(&pool, Some(admin_id), *user_id, &body.reason)?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "frozen": true })))
 }
 
-/// POST /api/admin/users/{user_id}/trust/unfreeze
-/// Unfreeze a user's trust progression.
+/// POST /api/admin/users/{user_id}/guild/unfreeze
+/// Unfreeze a user's guild progression.
 pub async fn unfreeze_progression(
     pool: web::Data<Pool>,
     admin: AdminUser,
@@ -766,11 +766,11 @@ pub async fn unfreeze_progression(
     body: web::Json<UnfreezeProgressionRequest>,
 ) -> Result<HttpResponse, AppError> {
     let admin_id = admin.0.user_id()?;
-    trust_service::unfreeze_trust_progression(&pool, admin_id, *user_id, &body.reason)?;
+    guild_service::unfreeze_guild_progression(&pool, admin_id, *user_id, &body.reason)?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "frozen": false })))
 }
 
-/// POST /api/admin/users/{user_id}/trust/verify-report
+/// POST /api/admin/users/{user_id}/guild/verify-report
 /// Mark an abuse report as verified: award score to the reporter and record the event.
 pub async fn verify_abuse_report(
     pool: web::Data<Pool>,
@@ -779,7 +779,7 @@ pub async fn verify_abuse_report(
     body: web::Json<VerifyAbuseReportRequest>,
 ) -> Result<HttpResponse, AppError> {
     let admin_id = admin.0.user_id()?;
-    let outcome = trust_service::award_verified_abuse_report(
+    let outcome = guild_service::award_verified_abuse_report(
         &pool,
         body.reporter_user_id,
         body.report_reference_id.as_deref(),
@@ -791,7 +791,7 @@ pub async fn verify_abuse_report(
     admin_service::append_audit_log(
         &pool,
         Some(admin_id),
-        "trust.admin.verified_abuse_report",
+        "guild.admin.verified_abuse_report",
         Some(&user_id.to_string()),
         serde_json::json!({
             "reporter_user_id": body.reporter_user_id.to_string(),
@@ -802,7 +802,7 @@ pub async fn verify_abuse_report(
     Ok(HttpResponse::Ok().json(outcome))
 }
 
-/// POST /api/admin/users/{user_id}/trust/dismiss-report
+/// POST /api/admin/users/{user_id}/guild/dismiss-report
 /// Dismiss an abuse report as false: apply score penalty to the reporter.
 pub async fn dismiss_abuse_report(
     pool: web::Data<Pool>,
@@ -811,7 +811,7 @@ pub async fn dismiss_abuse_report(
     body: web::Json<DismissAbuseReportRequest>,
 ) -> Result<HttpResponse, AppError> {
     let admin_id = admin.0.user_id()?;
-    let outcome = trust_service::penalize_false_report(
+    let outcome = guild_service::penalize_false_report(
         &pool,
         body.reporter_user_id,
         body.report_reference_id.as_deref(),
@@ -823,7 +823,7 @@ pub async fn dismiss_abuse_report(
     admin_service::append_audit_log(
         &pool,
         Some(admin_id),
-        "trust.admin.dismissed_false_report",
+        "guild.admin.dismissed_false_report",
         Some(&user_id.to_string()),
         serde_json::json!({
             "reporter_user_id": body.reporter_user_id.to_string(),
@@ -850,38 +850,38 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         )
         .route("/config", web::get().to(get_config))
         .route("/config", web::put().to(update_config))
-        .route("/trust-policy", web::get().to(get_trust_policy))
-        .route("/trust-policy", web::put().to(update_trust_policy))
+        .route("/guild-policy", web::get().to(get_guild_policy))
+        .route("/guild-policy", web::put().to(update_guild_policy))
         .route(
-            "/trust-policy/prune-history",
-            web::post().to(prune_trust_history),
+            "/guild-policy/prune-history",
+            web::post().to(prune_guild_history),
         )
-        .route("/trust-review-users", web::get().to(trust_review_users))
-        .route("/trust-review-metrics", web::get().to(trust_review_metrics))
-        .route("/trust-score-events", web::get().to(trust_score_events))
+        .route("/guild-review-users", web::get().to(guild_review_users))
+        .route("/guild-review-metrics", web::get().to(guild_review_metrics))
+        .route("/guild-score-events", web::get().to(guild_score_events))
         .route(
-            "/trust-blocked-actions",
-            web::get().to(trust_blocked_actions),
+            "/guild-blocked-actions",
+            web::get().to(guild_blocked_actions),
         )
         .route("/audit-logs", web::get().to(audit_logs))
         .route(
-            "/users/{user_id}/trust/clawback-score",
+            "/users/{user_id}/guild/clawback-score",
             web::post().to(clawback_score),
         )
         .route(
-            "/users/{user_id}/trust/freeze",
+            "/users/{user_id}/guild/freeze",
             web::post().to(freeze_progression),
         )
         .route(
-            "/users/{user_id}/trust/unfreeze",
+            "/users/{user_id}/guild/unfreeze",
             web::post().to(unfreeze_progression),
         )
         .route(
-            "/users/{user_id}/trust/verify-report",
+            "/users/{user_id}/guild/verify-report",
             web::post().to(verify_abuse_report),
         )
         .route(
-            "/users/{user_id}/trust/dismiss-report",
+            "/users/{user_id}/guild/dismiss-report",
             web::post().to(dismiss_abuse_report),
         );
 }

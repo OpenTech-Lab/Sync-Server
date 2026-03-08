@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 
-type TrustPolicyConfig = {
+type GuildPolicyConfig = {
   enforcement: {
     enabled: boolean;
     outbound_messages_enabled: boolean;
@@ -40,16 +40,16 @@ type TrustPolicyConfig = {
   safe_attachment_types: string[];
 };
 
-type TrustHistoryPruneResult = {
+type GuildHistoryPruneResult = {
   daily_counter_retention_days: number;
   score_event_retention_days: number;
   pruned_before_day: string;
   pruned_before_timestamp: string;
   daily_action_counters_deleted: number;
-  trust_score_events_deleted: number;
+  guild_score_events_deleted: number;
 };
 
-function formatPolicy(policy: TrustPolicyConfig) {
+function formatPolicy(policy: GuildPolicyConfig) {
   return JSON.stringify(policy, null, 2);
 }
 
@@ -70,7 +70,7 @@ function EnforcementBadge({
   );
 }
 
-export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
+export function GuildPolicyForm({ policy }: { policy: GuildPolicyConfig }) {
   const router = useRouter();
   const [draft, setDraft] = useState(() => formatPolicy(policy));
   const [saving, setSaving] = useState(false);
@@ -81,7 +81,7 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
   const parseResult = useMemo(() => {
     try {
       return {
-        value: JSON.parse(draft) as TrustPolicyConfig,
+        value: JSON.parse(draft) as GuildPolicyConfig,
         error: null,
       };
     } catch (parseError) {
@@ -100,12 +100,12 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
     setNotice(null);
 
     if (parseResult.error || !parseResult.value) {
-      setError(parseResult.error ?? "Trust policy JSON is invalid");
+      setError(parseResult.error ?? "Guild policy JSON is invalid");
       return;
     }
 
     setSaving(true);
-    const response = await fetch("/api/admin/trust-policy", {
+    const response = await fetch("/api/admin/guild-policy", {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -117,14 +117,14 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
       const body = (await response.json().catch(() => null)) as
         | { error?: string }
         | null;
-      setError(body?.error ?? "Failed to save trust policy");
+      setError(body?.error ?? "Failed to save guild policy");
       setSaving(false);
       return;
     }
 
-    const nextPolicy = (await response.json()) as TrustPolicyConfig;
+    const nextPolicy = (await response.json()) as GuildPolicyConfig;
     setDraft(formatPolicy(nextPolicy));
-    setNotice("Trust policy updated.");
+    setNotice("Guild policy updated.");
     setSaving(false);
     router.refresh();
   }
@@ -132,7 +132,7 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
   async function pruneHistory() {
     if (
       !confirm(
-        "Prune trust counters and score history using the current retention windows?",
+        "Prune guild counters and score history using the current retention windows?",
       )
     ) {
       return;
@@ -142,7 +142,7 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
     setNotice(null);
     setPruning(true);
 
-    const response = await fetch("/api/admin/trust-policy/prune-history", {
+    const response = await fetch("/api/admin/guild-policy/prune-history", {
       method: "POST",
     });
 
@@ -150,14 +150,14 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
       const body = (await response.json().catch(() => null)) as
         | { error?: string }
         | null;
-      setError(body?.error ?? "Failed to prune trust history");
+      setError(body?.error ?? "Failed to prune guild history");
       setPruning(false);
       return;
     }
 
-    const result = (await response.json()) as TrustHistoryPruneResult;
+    const result = (await response.json()) as GuildHistoryPruneResult;
     setNotice(
-      `Pruned ${result.daily_action_counters_deleted} daily counters and ${result.trust_score_events_deleted} score events.`,
+      `Pruned ${result.daily_action_counters_deleted} daily counters and ${result.guild_score_events_deleted} score events.`,
     );
     setPruning(false);
     router.refresh();
@@ -171,7 +171,7 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
 
   function formatDraft() {
     if (!parseResult.value) {
-      setError(parseResult.error ?? "Trust policy JSON is invalid");
+      setError(parseResult.error ?? "Guild policy JSON is invalid");
       return;
     }
     setDraft(formatPolicy(parseResult.value));
@@ -184,9 +184,9 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-xl font-semibold">Trust policy</h2>
+          <h2 className="text-xl font-semibold">Guild policy</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Manage trust caps, progression thresholds, enforcement switches, and
+            Manage guild caps, progression thresholds, enforcement switches, and
             attachment allowlists. The server validates and normalizes policy
             ranges before saving.
           </p>
@@ -200,7 +200,7 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
             <div className="space-y-2">
               <EnforcementBadge
                 enabled={summaryPolicy.enforcement.enabled}
-                label="Global trust enforcement"
+                label="Global guild enforcement"
               />
               <EnforcementBadge
                 enabled={summaryPolicy.enforcement.outbound_messages_enabled}
@@ -277,10 +277,10 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
 
       <section className="space-y-3">
         <div className="space-y-2">
-          <Label htmlFor="trust-policy-json">Trust policy JSON</Label>
+          <Label htmlFor="guild-policy-json">Guild policy JSON</Label>
           <Textarea
             className="min-h-[28rem] font-mono text-xs"
-            id="trust-policy-json"
+            id="guild-policy-json"
             onChange={(event) => setDraft(event.target.value)}
             value={draft}
           />
@@ -329,7 +329,7 @@ export function TrustPolicyForm({ policy }: { policy: TrustPolicyConfig }) {
         </Button>
         <div className="flex-1" />
         <Button disabled={saving || !!parseResult.error} type="submit">
-          {saving ? "Saving…" : "Save trust policy"}
+          {saving ? "Saving…" : "Save guild policy"}
         </Button>
       </div>
     </form>

@@ -10,5 +10,5 @@ pub mod push_token_service;
 pub mod redis_pubsub;
 pub mod server_news_service;
 pub mod sticker_service;
-pub mod trust_service;
+pub mod guild_service;
 pub mod user_service;

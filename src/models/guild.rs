@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::schema::{daily_action_counters, trust_score_events, user_trust_stats};
+use crate::schema::{daily_action_counters, guild_score_events, user_guild_stats};
 
 pub const DEFAULT_DAILY_COUNTER_RETENTION_DAYS: i32 = 45;
 pub const DEFAULT_SCORE_EVENT_RETENTION_DAYS: i32 = 180;
@@ -18,9 +18,9 @@ fn default_score_event_retention_days() -> i32 {
 }
 
 #[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
-#[diesel(table_name = user_trust_stats)]
+#[diesel(table_name = user_guild_stats)]
 #[diesel(primary_key(user_id))]
-pub struct UserTrustStats {
+pub struct UserGuildStats {
     pub user_id: Uuid,
     pub active_days: i32,
     pub contribution_score: i32,
@@ -35,8 +35,8 @@ pub struct UserTrustStats {
 }
 
 #[derive(Debug, Insertable)]
-#[diesel(table_name = user_trust_stats)]
-pub struct NewUserTrustStats {
+#[diesel(table_name = user_guild_stats)]
+pub struct NewUserGuildStats {
     pub user_id: Uuid,
     pub active_days: i32,
     pub contribution_score: i32,
@@ -69,8 +69,8 @@ pub struct NewDailyActionCounter {
 }
 
 #[derive(Debug, Clone, Queryable, Selectable, Identifiable, Serialize)]
-#[diesel(table_name = trust_score_events)]
-pub struct TrustScoreEvent {
+#[diesel(table_name = guild_score_events)]
+pub struct GuildScoreEvent {
     pub id: Uuid,
     pub user_id: Uuid,
     pub granter_user_id: Option<Uuid>,
@@ -82,8 +82,8 @@ pub struct TrustScoreEvent {
 }
 
 #[derive(Debug, Insertable)]
-#[diesel(table_name = trust_score_events)]
-pub struct NewTrustScoreEvent {
+#[diesel(table_name = guild_score_events)]
+pub struct NewGuildScoreEvent {
     pub id: Uuid,
     pub user_id: Uuid,
     pub granter_user_id: Option<Uuid>,
@@ -119,7 +119,7 @@ fn rank_engine_enabled_default() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TrustEnforcementConfig {
+pub struct GuildEnforcementConfig {
     pub enabled: bool,
     pub outbound_messages_enabled: bool,
     pub friend_adds_enabled: bool,
@@ -131,7 +131,7 @@ pub struct TrustEnforcementConfig {
     pub rank_engine_enabled: bool,
 }
 
-impl Default for TrustEnforcementConfig {
+impl Default for GuildEnforcementConfig {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -144,9 +144,9 @@ impl Default for TrustEnforcementConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TrustPolicyConfig {
-    #[serde(default = "TrustEnforcementConfig::default")]
-    pub enforcement: TrustEnforcementConfig,
+pub struct GuildPolicyConfig {
+    #[serde(default = "GuildEnforcementConfig::default")]
+    pub enforcement: GuildEnforcementConfig,
     #[serde(default = "default_daily_counter_retention_days")]
     pub daily_counter_retention_days: i32,
     #[serde(default = "default_score_event_retention_days")]
@@ -167,19 +167,19 @@ pub enum MilestoneKind {
 }
 
 /// Payload the client uses to render a milestone toast, badge, or unlock animation.
-/// Returned as `pending_milestone_notification` in `TrustSnapshot` when a server-side
+/// Returned as `pending_milestone_notification` in `GuildSnapshot` when a server-side
 /// progression event was detected on this request.  Null when no milestone is pending.
 ///
 /// The client is responsible for dismissing / persisting the notification locally;
 /// the server does not maintain per-user notification state.  It is safe to ignore.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrustMilestoneNotification {
+pub struct GuildMilestoneNotification {
     pub kind: MilestoneKind,
     /// Human-readable badge label, e.g. "Level 5" or "Rank D".
     pub badge_label: String,
-    /// Localisation key for the unlock headline, e.g. "trust.milestone.level_up".
+    /// Localisation key for the unlock headline, e.g. "guild.milestone.level_up".
     pub headline_key: String,
-    /// Localisation key for the unlock sub-copy, e.g. "trust.milestone.level_5_detail".
+    /// Localisation key for the unlock sub-copy, e.g. "guild.milestone.level_5_detail".
     pub detail_key: String,
     /// Optional specific thing unlocked, e.g. "application/pdf".
     pub unlocked_value: Option<String>,
@@ -188,7 +188,7 @@ pub struct TrustMilestoneNotification {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrustSnapshot {
+pub struct GuildSnapshot {
     pub active_days: i32,
     pub level: u8,
     pub contribution_score: i32,
@@ -215,15 +215,15 @@ pub struct TrustSnapshot {
     /// Non-null when a level-up, rank-up, or attachment-type unlock was detected on this
     /// request.  The client is responsible for dismissing the notification locally; the
     /// server does not persist per-user notification state.  Safe to ignore.
-    pub pending_milestone_notification: Option<TrustMilestoneNotification>,
+    pub pending_milestone_notification: Option<GuildMilestoneNotification>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct TrustHistoryPruneResult {
+pub struct GuildHistoryPruneResult {
     pub daily_counter_retention_days: i32,
     pub score_event_retention_days: i32,
     pub pruned_before_day: NaiveDate,
     pub pruned_before_timestamp: DateTime<Utc>,
     pub daily_action_counters_deleted: i64,
-    pub trust_score_events_deleted: i64,
+    pub guild_score_events_deleted: i64,
 }

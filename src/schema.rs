@@ -81,7 +81,7 @@ diesel::table! {
 diesel::table! {
     use diesel::sql_types::*;
 
-    user_trust_stats (user_id) {
+    user_guild_stats (user_id) {
         user_id -> Uuid,
         active_days -> Int4,
         contribution_score -> Int4,
@@ -99,7 +99,7 @@ diesel::table! {
 diesel::table! {
     use diesel::sql_types::*;
 
-    trust_score_events (id) {
+    guild_score_events (id) {
         id -> Uuid,
         user_id -> Uuid,
         granter_user_id -> Nullable<Uuid>,
@@ -241,16 +241,16 @@ diesel::joinable!(stickers -> users (uploader_id));
 diesel::joinable!(device_push_tokens -> users (user_id));
 diesel::joinable!(encrypted_backups -> users (user_id));
 diesel::joinable!(server_news -> users (created_by));
-diesel::joinable!(trust_score_events -> users (user_id));
-diesel::joinable!(user_trust_stats -> users (user_id));
+diesel::joinable!(guild_score_events -> users (user_id));
+diesel::joinable!(user_guild_stats -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     admin_settings,
     admin_audit_logs,
     daily_action_counters,
-    trust_score_events,
+    guild_score_events,
     users,
-    user_trust_stats,
+    user_guild_stats,
     encrypted_backups,
     device_push_tokens,
     refresh_tokens,

@@ -17,7 +17,7 @@ type TrustReviewUser = {
   is_approved: boolean;
   created_at: string;
   last_seen_at: string | null;
-  trust: {
+  guild: {
     active_days: number;
     derived_level: number;
     derived_rank: string;
@@ -57,7 +57,7 @@ export function TrustReviewUsersTable({ users }: { users: TrustReviewUser[] }) {
           <TableRow>
             <TableHead>User</TableHead>
             <TableHead>Review state</TableHead>
-            <TableHead>Trust</TableHead>
+            <TableHead>Guild</TableHead>
             <TableHead>Suspicion</TableHead>
             <TableHead>Recent activity</TableHead>
           </TableRow>
@@ -66,7 +66,7 @@ export function TrustReviewUsersTable({ users }: { users: TrustReviewUser[] }) {
           {users.length === 0 ? (
             <TableRow>
               <TableCell className="py-10 text-center text-sm text-muted-foreground" colSpan={5}>
-                No flagged users in the selected trust state.
+                No flagged users in the selected guild state.
               </TableCell>
             </TableRow>
           ) : null}
@@ -78,29 +78,29 @@ export function TrustReviewUsersTable({ users }: { users: TrustReviewUser[] }) {
               </TableCell>
               <TableCell>
                 <div className="space-y-1">
-                  {reviewStateBadge(user.trust?.automation_review_state)}
+                  {reviewStateBadge(user.guild?.automation_review_state)}
                   <p className="text-xs text-muted-foreground">{user.role}</p>
                 </div>
               </TableCell>
               <TableCell>
                 <p className="font-medium">
-                  L{user.trust?.derived_level ?? 0} · {user.trust?.derived_rank ?? "-"}
+                  L{user.guild?.derived_level ?? 0} · {user.guild?.derived_rank ?? "-"}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {user.trust?.active_days ?? 0} active days
+                  {user.guild?.active_days ?? 0} active days
                 </p>
               </TableCell>
               <TableCell>
                 <p className="font-medium">
-                  {user.trust?.suspicious_activity_streak ?? 0} streak
+                  {user.guild?.suspicious_activity_streak ?? 0} streak
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Last active day: {user.trust?.last_active_day ?? "n/a"}
+                  Last active day: {user.guild?.last_active_day ?? "n/a"}
                 </p>
               </TableCell>
               <TableCell>
                 <p className="text-sm text-muted-foreground">
-                  Human: {formatDateTime(user.trust?.last_human_activity_at ?? null)}
+                  Human: {formatDateTime(user.guild?.last_human_activity_at ?? null)}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Seen: {formatDateTime(user.last_seen_at)}

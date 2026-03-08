@@ -1,4 +1,4 @@
-/// Integration tests for the trust / gamification system.
+/// Integration tests for the guild / gamification system.
 ///
 /// These tests require a running server and real database.
 /// Set `TEST_BASE_URL` (e.g. `http://localhost:8080`) to run them.
@@ -19,13 +19,13 @@ fn admin_token() -> Option<String> {
 }
 
 fn unique_email() -> String {
-    format!("trust-test-{}@example.com", Uuid::new_v4())
+    format!("guild-test-{}@example.com", Uuid::new_v4())
 }
 
 /// Helper: register a new user and return (access_token, user_id).
 async fn register_and_login(client: &Client, base: &str) -> (String, String) {
     let email = unique_email();
-    let password = "trust_test_secure!";
+    let password = "guild_test_secure!";
 
     let reg: Value = client
         .post(format!("{base}/auth/register"))
@@ -57,8 +57,8 @@ async fn register_and_login(client: &Client, base: &str) -> (String, String) {
     (token, user_id)
 }
 
-/// Helper: fetch the trust snapshot from GET /api/profile/me.
-async fn get_trust_snapshot(client: &Client, base: &str, token: &str) -> Value {
+/// Helper: fetch the guild snapshot from GET /api/profile/me.
+async fn get_guild_snapshot(client: &Client, base: &str, token: &str) -> Value {
     let profile: Value = client
         .get(format!("{base}/api/profile/me"))
         .bearer_auth(token)
@@ -69,87 +69,87 @@ async fn get_trust_snapshot(client: &Client, base: &str, token: &str) -> Value {
         .await
         .expect("profile response not JSON");
 
-    profile["trust"].clone()
+    profile["guild"].clone()
 }
 
 // ── Snapshot shape tests ──────────────────────────────────────────────────────
 
-/// A freshly registered user should have a complete trust snapshot with
+/// A freshly registered user should have a complete guild snapshot with
 /// level 1, rank F, and challenge_state "none".
 #[tokio::test]
-async fn trust_snapshot_present_on_profile() {
+async fn guild_snapshot_present_on_profile() {
     let Some(base) = base_url() else { return };
     let client = Client::new();
 
     let (token, _id) = register_and_login(&client, &base).await;
-    let trust = get_trust_snapshot(&client, &base, &token).await;
+    let guild = get_guild_snapshot(&client, &base, &token).await;
 
     assert!(
-        !trust.is_null(),
-        "trust field should be present on /api/profile/me"
+        !guild.is_null(),
+        "guild field should be present on /api/profile/me"
     );
-    assert_eq!(trust["level"], 1, "new user should start at level 1");
-    assert_eq!(trust["rank"], "F", "new user should start at rank F");
+    assert_eq!(guild["level"], 1, "new user should start at level 1");
+    assert_eq!(guild["rank"], "F", "new user should start at rank F");
     assert_eq!(
-        trust["challenge_state"], "none",
+        guild["challenge_state"], "none",
         "new user should have no active challenge"
     );
     assert_eq!(
-        trust["contribution_score"], 0,
+        guild["contribution_score"], 0,
         "new user should start with zero contribution score"
     );
     assert!(
-        trust["active_days"].as_i64().is_some(),
+        guild["active_days"].as_i64().is_some(),
         "active_days should be an integer"
     );
     assert!(
-        trust["level_progress_percent"].as_i64().is_some(),
+        guild["level_progress_percent"].as_i64().is_some(),
         "level_progress_percent should be present"
     );
 }
 
 /// The snapshot must include daily limit fields for all enforced action types.
 #[tokio::test]
-async fn trust_snapshot_includes_daily_limit_fields() {
+async fn guild_snapshot_includes_daily_limit_fields() {
     let Some(base) = base_url() else { return };
     let client = Client::new();
 
     let (token, _id) = register_and_login(&client, &base).await;
-    let trust = get_trust_snapshot(&client, &base, &token).await;
+    let guild = get_guild_snapshot(&client, &base, &token).await;
 
     // Outbound message fields
     assert!(
-        trust.get("daily_outbound_messages_enforced").is_some(),
+        guild.get("daily_outbound_messages_enforced").is_some(),
         "missing daily_outbound_messages_enforced"
     );
     assert!(
-        trust.get("daily_outbound_messages_sent").is_some(),
+        guild.get("daily_outbound_messages_sent").is_some(),
         "missing daily_outbound_messages_sent"
     );
 
     // Friend add fields
     assert!(
-        trust.get("daily_friend_adds_enforced").is_some(),
+        guild.get("daily_friend_adds_enforced").is_some(),
         "missing daily_friend_adds_enforced"
     );
     assert!(
-        trust.get("daily_friend_adds_sent").is_some(),
+        guild.get("daily_friend_adds_sent").is_some(),
         "missing daily_friend_adds_sent"
     );
 
     // Attachment fields
     assert!(
-        trust.get("daily_attachment_sends_enforced").is_some(),
+        guild.get("daily_attachment_sends_enforced").is_some(),
         "missing daily_attachment_sends_enforced"
     );
     assert!(
-        trust.get("daily_attachment_sends_sent").is_some(),
+        guild.get("daily_attachment_sends_sent").is_some(),
         "missing daily_attachment_sends_sent"
     );
 
     // Allowed attachment types list
     assert!(
-        trust["allowed_attachment_types"].is_array(),
+        guild["allowed_attachment_types"].is_array(),
         "allowed_attachment_types should be an array"
     );
 }
@@ -166,16 +166,16 @@ async fn send_message_decrements_daily_messages_remaining() {
     let (token_a, _id_a) = register_and_login(&client, &base).await;
     let (_token_b, id_b) = register_and_login(&client, &base).await;
 
-    let trust_before = get_trust_snapshot(&client, &base, &token_a).await;
-    let sent_before = trust_before["daily_outbound_messages_sent"]
+    let guild_before = get_guild_snapshot(&client, &base, &token_a).await;
+    let sent_before = guild_before["daily_outbound_messages_sent"]
         .as_i64()
         .unwrap_or(0);
-    let remaining_before = trust_before["daily_outbound_messages_remaining"].as_i64();
+    let remaining_before = guild_before["daily_outbound_messages_remaining"].as_i64();
 
     let res = client
         .post(format!("{base}/api/messages"))
         .bearer_auth(&token_a)
-        .json(&json!({ "recipient_id": id_b, "content": "trust test ping" }))
+        .json(&json!({ "recipient_id": id_b, "content": "guild test ping" }))
         .send()
         .await
         .expect("POST /api/messages failed");
@@ -186,8 +186,8 @@ async fn send_message_decrements_daily_messages_remaining() {
     assert!(status == 201 || status == 429, "unexpected status {status}");
 
     if status == 201 {
-        let trust_after = get_trust_snapshot(&client, &base, &token_a).await;
-        let sent_after = trust_after["daily_outbound_messages_sent"]
+        let guild_after = get_guild_snapshot(&client, &base, &token_a).await;
+        let sent_after = guild_after["daily_outbound_messages_sent"]
             .as_i64()
             .unwrap_or(0);
 
@@ -200,7 +200,7 @@ async fn send_message_decrements_daily_messages_remaining() {
         // Only check remaining if the field was present and a limit is active.
         if let (Some(rem_before), Some(rem_after)) = (
             remaining_before,
-            trust_after["daily_outbound_messages_remaining"].as_i64(),
+            guild_after["daily_outbound_messages_remaining"].as_i64(),
         ) {
             assert_eq!(
                 rem_after,
@@ -211,7 +211,7 @@ async fn send_message_decrements_daily_messages_remaining() {
     }
 }
 
-// ── Admin trust endpoints ─────────────────────────────────────────────────────
+// ── Admin guild endpoints ─────────────────────────────────────────────────────
 
 /// Verifying an abuse report should award VERIFIED_ABUSE_REPORT_POINTS (+25)
 /// to the reporter's contribution_score.
@@ -227,12 +227,12 @@ async fn verify_report_increases_reporter_score() {
     let (_subject_token, subject_id) = register_and_login(&client, &base).await;
     let reference_id = format!("report-{}", Uuid::new_v4());
 
-    let trust_before = get_trust_snapshot(&client, &base, &reporter_token).await;
-    let score_before = trust_before["contribution_score"].as_i64().unwrap_or(0);
+    let guild_before = get_guild_snapshot(&client, &base, &reporter_token).await;
+    let score_before = guild_before["contribution_score"].as_i64().unwrap_or(0);
 
     let res: Value = client
         .post(format!(
-            "{base}/api/admin/users/{subject_id}/trust/verify-report"
+            "{base}/api/admin/users/{subject_id}/guild/verify-report"
         ))
         .bearer_auth(&admin_tok)
         .json(&json!({
@@ -253,8 +253,8 @@ async fn verify_report_increases_reporter_score() {
         "verify-report should award +25 points; got {applied_delta}"
     );
 
-    let trust_after = get_trust_snapshot(&client, &base, &reporter_token).await;
-    let score_after = trust_after["contribution_score"].as_i64().unwrap_or(0);
+    let guild_after = get_guild_snapshot(&client, &base, &reporter_token).await;
+    let score_after = guild_after["contribution_score"].as_i64().unwrap_or(0);
 
     assert_eq!(
         score_after,
@@ -277,12 +277,12 @@ async fn dismiss_report_penalises_reporter_score() {
     let (_subject_token, subject_id) = register_and_login(&client, &base).await;
     let reference_id = format!("report-{}", Uuid::new_v4());
 
-    let trust_before = get_trust_snapshot(&client, &base, &reporter_token).await;
-    let score_before = trust_before["contribution_score"].as_i64().unwrap_or(0);
+    let guild_before = get_guild_snapshot(&client, &base, &reporter_token).await;
+    let score_before = guild_before["contribution_score"].as_i64().unwrap_or(0);
 
     let res: Value = client
         .post(format!(
-            "{base}/api/admin/users/{subject_id}/trust/dismiss-report"
+            "{base}/api/admin/users/{subject_id}/guild/dismiss-report"
         ))
         .bearer_auth(&admin_tok)
         .json(&json!({
@@ -303,8 +303,8 @@ async fn dismiss_report_penalises_reporter_score() {
         "dismiss-report should apply -10 delta; got {applied_delta}"
     );
 
-    let trust_after = get_trust_snapshot(&client, &base, &reporter_token).await;
-    let score_after = trust_after["contribution_score"].as_i64().unwrap_or(0);
+    let guild_after = get_guild_snapshot(&client, &base, &reporter_token).await;
+    let score_after = guild_after["contribution_score"].as_i64().unwrap_or(0);
 
     assert_eq!(
         score_after,
@@ -335,7 +335,7 @@ async fn verify_report_is_idempotent_for_same_reference_id() {
     // First call — should apply +25.
     let first: Value = client
         .post(format!(
-            "{base}/api/admin/users/{subject_id}/trust/verify-report"
+            "{base}/api/admin/users/{subject_id}/guild/verify-report"
         ))
         .bearer_auth(&admin_tok)
         .json(&payload)
@@ -355,7 +355,7 @@ async fn verify_report_is_idempotent_for_same_reference_id() {
     // Second call — same reference_id, must be idempotent.
     let second: Value = client
         .post(format!(
-            "{base}/api/admin/users/{subject_id}/trust/verify-report"
+            "{base}/api/admin/users/{subject_id}/guild/verify-report"
         ))
         .bearer_auth(&admin_tok)
         .json(&payload)
@@ -388,15 +388,15 @@ async fn freeze_sets_challenge_state_frozen() {
     let (user_token, user_id) = register_and_login(&client, &base).await;
 
     // Confirm starting state.
-    let trust_before = get_trust_snapshot(&client, &base, &user_token).await;
+    let guild_before = get_guild_snapshot(&client, &base, &user_token).await;
     assert_eq!(
-        trust_before["challenge_state"], "none",
+        guild_before["challenge_state"], "none",
         "user should start with challenge_state 'none'"
     );
 
     // Admin freeze.
     let freeze_res = client
-        .post(format!("{base}/api/admin/users/{user_id}/trust/freeze"))
+        .post(format!("{base}/api/admin/users/{user_id}/guild/freeze"))
         .bearer_auth(&admin_tok)
         .json(&json!({ "reason": "integration test freeze" }))
         .send()
@@ -410,9 +410,9 @@ async fn freeze_sets_challenge_state_frozen() {
     );
 
     // User snapshot should now show "frozen".
-    let trust_after = get_trust_snapshot(&client, &base, &user_token).await;
+    let guild_after = get_guild_snapshot(&client, &base, &user_token).await;
     assert_eq!(
-        trust_after["challenge_state"], "frozen",
+        guild_after["challenge_state"], "frozen",
         "challenge_state should be 'frozen' after admin freeze"
     );
 }
@@ -430,22 +430,22 @@ async fn unfreeze_clears_challenge_state() {
 
     // Freeze first.
     client
-        .post(format!("{base}/api/admin/users/{user_id}/trust/freeze"))
+        .post(format!("{base}/api/admin/users/{user_id}/guild/freeze"))
         .bearer_auth(&admin_tok)
         .json(&json!({ "reason": "setup for unfreeze test" }))
         .send()
         .await
         .expect("freeze request failed");
 
-    let trust_frozen = get_trust_snapshot(&client, &base, &user_token).await;
+    let guild_frozen = get_guild_snapshot(&client, &base, &user_token).await;
     assert_eq!(
-        trust_frozen["challenge_state"], "frozen",
+        guild_frozen["challenge_state"], "frozen",
         "setup: expected 'frozen' after freeze"
     );
 
     // Now unfreeze.
     let unfreeze_res = client
-        .post(format!("{base}/api/admin/users/{user_id}/trust/unfreeze"))
+        .post(format!("{base}/api/admin/users/{user_id}/guild/unfreeze"))
         .bearer_auth(&admin_tok)
         .json(&json!({ "reason": "integration test unfreeze" }))
         .send()
@@ -458,18 +458,18 @@ async fn unfreeze_clears_challenge_state() {
         "unfreeze should return 200"
     );
 
-    let trust_after = get_trust_snapshot(&client, &base, &user_token).await;
+    let guild_after = get_guild_snapshot(&client, &base, &user_token).await;
     assert_eq!(
-        trust_after["challenge_state"], "none",
+        guild_after["challenge_state"], "none",
         "challenge_state should return to 'none' after admin unfreeze"
     );
 }
 
 // ── Non-admin rejection ───────────────────────────────────────────────────────
 
-/// A regular (non-admin) user must receive 403 when calling admin trust endpoints.
+/// A regular (non-admin) user must receive 403 when calling admin guild endpoints.
 #[tokio::test]
-async fn trust_admin_endpoints_require_admin_role() {
+async fn guild_admin_endpoints_require_admin_role() {
     let Some(base) = base_url() else { return };
     let client = Client::new();
 
@@ -491,7 +491,7 @@ async fn trust_admin_endpoints_require_admin_role() {
 
     for (action, body) in endpoints {
         let status = client
-            .post(format!("{base}/api/admin/users/{user_id}/trust/{action}"))
+            .post(format!("{base}/api/admin/users/{user_id}/guild/{action}"))
             .bearer_auth(&token)
             .json(body)
             .send()
@@ -502,7 +502,7 @@ async fn trust_admin_endpoints_require_admin_role() {
 
         assert_eq!(
             status, 403,
-            "non-admin calling /trust/{action} should get 403, got {status}"
+            "non-admin calling /guild/{action} should get 403, got {status}"
         );
     }
 }
@@ -522,16 +522,16 @@ async fn passive_polling_does_not_increment_active_days() {
 
     let (token, _id) = register_and_login(&client, &base).await;
 
-    let trust_first = get_trust_snapshot(&client, &base, &token).await;
-    let days_first = trust_first["active_days"].as_i64().unwrap_or(-1);
+    let guild_first = get_guild_snapshot(&client, &base, &token).await;
+    let days_first = guild_first["active_days"].as_i64().unwrap_or(-1);
 
     // Issue many passive GET /api/profile/me requests — mimicking a bot polling loop.
     for _ in 0..10 {
-        get_trust_snapshot(&client, &base, &token).await;
+        get_guild_snapshot(&client, &base, &token).await;
     }
 
-    let trust_last = get_trust_snapshot(&client, &base, &token).await;
-    let days_last = trust_last["active_days"].as_i64().unwrap_or(-1);
+    let guild_last = get_guild_snapshot(&client, &base, &token).await;
+    let days_last = guild_last["active_days"].as_i64().unwrap_or(-1);
 
     assert_eq!(
         days_last, days_first,
@@ -549,30 +549,30 @@ async fn burner_account_has_enforced_message_limits() {
     let client = Client::new();
 
     let (token, _id) = register_and_login(&client, &base).await;
-    let trust = get_trust_snapshot(&client, &base, &token).await;
+    let guild = get_guild_snapshot(&client, &base, &token).await;
 
     // A brand-new Level 1 account must have enforcement active.
-    assert_eq!(trust["level"], 1, "burner account should start at Level 1");
+    assert_eq!(guild["level"], 1, "burner account should start at Level 1");
     assert_eq!(
-        trust["daily_outbound_messages_enforced"], true,
+        guild["daily_outbound_messages_enforced"], true,
         "outbound message limits must be enforced for a new (burner) account"
     );
     assert_eq!(
-        trust["daily_friend_adds_enforced"], true,
+        guild["daily_friend_adds_enforced"], true,
         "friend-add limits must be enforced for a new (burner) account"
     );
     assert_eq!(
-        trust["daily_attachment_sends_enforced"], true,
+        guild["daily_attachment_sends_enforced"], true,
         "attachment send limits must be enforced for a new (burner) account"
     );
 
     // daily limits must be non-null (i.e. actually capped, not unlimited).
     assert!(
-        trust["daily_outbound_messages_limit"].as_i64().is_some(),
+        guild["daily_outbound_messages_limit"].as_i64().is_some(),
         "new account should have a concrete daily_outbound_messages_limit"
     );
     assert!(
-        trust["daily_friend_add_limit"].as_i64().is_some(),
+        guild["daily_friend_add_limit"].as_i64().is_some(),
         "new account should have a concrete daily_friend_add_limit"
     );
 }
@@ -590,17 +590,17 @@ async fn scripted_message_sends_are_blocked_at_cap() {
     let (token_a, _id_a) = register_and_login(&client, &base).await;
     let (_token_b, id_b) = register_and_login(&client, &base).await;
 
-    let trust = get_trust_snapshot(&client, &base, &token_a).await;
+    let guild = get_guild_snapshot(&client, &base, &token_a).await;
 
     // Skip if enforcement is off or limit is null (uncapped tier).
-    let Some(limit) = trust["daily_outbound_messages_limit"].as_i64() else {
+    let Some(limit) = guild["daily_outbound_messages_limit"].as_i64() else {
         return;
     };
-    if trust["daily_outbound_messages_enforced"] != true {
+    if guild["daily_outbound_messages_enforced"] != true {
         return;
     }
 
-    let sent_so_far = trust["daily_outbound_messages_sent"].as_i64().unwrap_or(0);
+    let sent_so_far = guild["daily_outbound_messages_sent"].as_i64().unwrap_or(0);
     let remaining = (limit - sent_so_far).max(0) as usize;
 
     // Consume all remaining slots.
@@ -640,8 +640,8 @@ async fn scripted_message_sends_are_blocked_at_cap() {
     }
 
     // Either way, the daily_remaining field must be 0 or null.
-    let trust_after = get_trust_snapshot(&client, &base, &token_a).await;
-    let remaining_after = trust_after["daily_outbound_messages_remaining"]
+    let guild_after = get_guild_snapshot(&client, &base, &token_a).await;
+    let remaining_after = guild_after["daily_outbound_messages_remaining"]
         .as_i64()
         .unwrap_or(0);
     assert_eq!(
@@ -650,7 +650,7 @@ async fn scripted_message_sends_are_blocked_at_cap() {
     );
 }
 
-/// A frozen account should still return a trust snapshot but must have
+/// A frozen account should still return a guild snapshot but must have
 /// challenge_state == "frozen" and must not be able to progress its active_days
 /// through passive actions.
 #[tokio::test]
@@ -663,12 +663,12 @@ async fn frozen_account_does_not_gain_active_days_passively() {
 
     let (user_token, user_id) = register_and_login(&client, &base).await;
 
-    let trust_before = get_trust_snapshot(&client, &base, &user_token).await;
-    let days_before = trust_before["active_days"].as_i64().unwrap_or(-1);
+    let guild_before = get_guild_snapshot(&client, &base, &user_token).await;
+    let days_before = guild_before["active_days"].as_i64().unwrap_or(-1);
 
     // Admin freezes the account.
     client
-        .post(format!("{base}/api/admin/users/{user_id}/trust/freeze"))
+        .post(format!("{base}/api/admin/users/{user_id}/guild/freeze"))
         .bearer_auth(&admin_tok)
         .json(&json!({ "reason": "abuse regression: frozen passive aging test" }))
         .send()
@@ -677,14 +677,14 @@ async fn frozen_account_does_not_gain_active_days_passively() {
 
     // Passive polling should not change active_days for a frozen account.
     for _ in 0..5 {
-        get_trust_snapshot(&client, &base, &user_token).await;
+        get_guild_snapshot(&client, &base, &user_token).await;
     }
 
-    let trust_after = get_trust_snapshot(&client, &base, &user_token).await;
-    let days_after = trust_after["active_days"].as_i64().unwrap_or(-1);
+    let guild_after = get_guild_snapshot(&client, &base, &user_token).await;
+    let days_after = guild_after["active_days"].as_i64().unwrap_or(-1);
 
     assert_eq!(
-        trust_after["challenge_state"], "frozen",
+        guild_after["challenge_state"], "frozen",
         "frozen account must report challenge_state 'frozen'"
     );
     assert_eq!(
@@ -693,7 +693,7 @@ async fn frozen_account_does_not_gain_active_days_passively() {
     );
 }
 
-/// A bot-farm pattern: multiple newly registered low-trust accounts all try to
+/// A bot-farm pattern: multiple newly registered low-guild accounts all try to
 /// grant contribution score to the same target user.  Because all grantors are
 /// Level 1, the server must suppress or heavily discount each event.
 ///
@@ -702,7 +702,7 @@ async fn frozen_account_does_not_gain_active_days_passively() {
 /// test just asserts that the score gain is strictly less than
 /// `num_grantors × max_per_grant_points`.
 #[tokio::test]
-async fn low_trust_bot_farm_cannot_inflate_target_score() {
+async fn low_guild_bot_farm_cannot_inflate_target_score() {
     let Some(base) = base_url() else { return };
     let Some(admin_tok) = admin_token() else {
         return;
@@ -712,10 +712,10 @@ async fn low_trust_bot_farm_cannot_inflate_target_score() {
     // Register the target user.
     let (target_token, target_id) = register_and_login(&client, &base).await;
 
-    let trust_before = get_trust_snapshot(&client, &base, &target_token).await;
-    let score_before = trust_before["contribution_score"].as_i64().unwrap_or(0);
+    let guild_before = get_guild_snapshot(&client, &base, &target_token).await;
+    let score_before = guild_before["contribution_score"].as_i64().unwrap_or(0);
 
-    // Register a cluster of low-trust burner accounts (simulated bot farm).
+    // Register a cluster of low-guild burner accounts (simulated bot farm).
     const NUM_BOTS: usize = 5;
     let max_per_grant = 25i64; // VERIFIED_ABUSE_REPORT_POINTS — the largest single grant
 
@@ -726,10 +726,10 @@ async fn low_trust_bot_farm_cannot_inflate_target_score() {
         // Simulate each bot triggering a positive scoring event on behalf of the target.
         // We use verify-report (admin-triggered) as a proxy, with the bot as the reporter.
         // Real bot-farm attacks would use the upvote / helpful-answer endpoints;
-        // this confirms the scoring path runs through low-trust suppression checks.
+        // this confirms the scoring path runs through low-guild suppression checks.
         let _: Value = client
             .post(format!(
-                "{base}/api/admin/users/{target_id}/trust/verify-report"
+                "{base}/api/admin/users/{target_id}/guild/verify-report"
             ))
             .bearer_auth(&admin_tok)
             .json(&json!({
@@ -744,8 +744,8 @@ async fn low_trust_bot_farm_cannot_inflate_target_score() {
             .expect("bot grant not JSON");
     }
 
-    let trust_after = get_trust_snapshot(&client, &base, &target_token).await;
-    let score_after = trust_after["contribution_score"].as_i64().unwrap_or(0);
+    let guild_after = get_guild_snapshot(&client, &base, &target_token).await;
+    let score_after = guild_after["contribution_score"].as_i64().unwrap_or(0);
 
     let naive_max = (NUM_BOTS as i64) * max_per_grant;
     let actual_gain = score_after - score_before;

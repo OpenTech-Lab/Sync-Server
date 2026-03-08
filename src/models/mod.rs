@@ -6,7 +6,7 @@ pub mod message;
 pub mod refresh_token;
 pub mod server_news;
 pub mod sticker;
-pub mod trust;
+pub mod guild;
 pub mod user;
 
 #[allow(unused_imports)]
@@ -30,10 +30,10 @@ pub use server_news::{NewServerNews, ServerNews};
 #[allow(unused_imports)]
 pub use sticker::{NewSticker, Sticker, StickerDetail, StickerListItem};
 #[allow(unused_imports)]
-pub use trust::{
-    DailyActionCounter, LevelPolicy, NewDailyActionCounter, NewTrustScoreEvent, NewUserTrustStats,
-    RankPolicy, TrustEnforcementConfig, TrustHistoryPruneResult, TrustPolicyConfig,
-    TrustScoreEvent, TrustSnapshot, UserTrustStats,
+pub use guild::{
+    DailyActionCounter, LevelPolicy, NewDailyActionCounter, NewGuildScoreEvent, NewUserGuildStats,
+    RankPolicy, GuildEnforcementConfig, GuildHistoryPruneResult, GuildPolicyConfig,
+    GuildScoreEvent, GuildSnapshot, UserGuildStats,
 };
 #[allow(unused_imports)]
 pub use user::{NewUser, User, UserPublic};

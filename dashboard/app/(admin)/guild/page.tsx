@@ -9,8 +9,8 @@ import {
 import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
 
-import { TrustReviewUsersTable } from "./ui/trust-review-users-table";
-import { TrustScoreEventsTable } from "./ui/trust-score-events-table";
+import { TrustReviewUsersTable } from "./ui/guild-review-users-table";
+import { GuildScoreEventsTable } from "./ui/guild-score-events-table";
 
 type ReviewFilter = "flagged" | "challenged" | "frozen";
 
@@ -20,8 +20,8 @@ type AdminOverview = {
   active_users: number;
   admin_users: number;
   pending_approval: number;
-  trust_challenged: number;
-  trust_frozen: number;
+  guild_challenged: number;
+  guild_frozen: number;
   federation_pending: number;
   federation_failed: number;
   federation_dead_letter: number;
@@ -41,7 +41,7 @@ type AdminBlockedActionCount = {
   count: number;
 };
 
-type TrustScoreEventItem = {
+type GuildScoreEventItem = {
   id: string;
   user_id: string;
   granter_user_id: string | null;
@@ -61,7 +61,7 @@ type TrustReviewUser = {
   is_approved: boolean;
   created_at: string;
   last_seen_at: string | null;
-  trust: {
+  guild: {
     active_days: number;
     derived_level: number;
     derived_rank: string;
@@ -72,7 +72,7 @@ type TrustReviewUser = {
   } | null;
 };
 
-type TrustPolicyConfig = {
+type GuildPolicyConfig = {
   enforcement: {
     enabled: boolean;
     outbound_messages_enabled: boolean;
@@ -110,7 +110,7 @@ function normalizeFilter(value: string | undefined): ReviewFilter {
 }
 
 function filterHref(filter: ReviewFilter) {
-  return filter === "flagged" ? "/trust" : `/trust?state=${filter}`;
+  return filter === "flagged" ? "/guild" : `/guild?state=${filter}`;
 }
 
 function Stat({
@@ -142,29 +142,29 @@ export default async function TrustPage({
   const reviewStateQuery =
     reviewFilter === "flagged" ? "" : `?automation_review_state=${reviewFilter}`;
 
-  const [overview, metrics, blockedActions, scoreEvents, reviewUsers, trustPolicy] =
+  const [overview, metrics, blockedActions, scoreEvents, reviewUsers, guildPolicy] =
     await Promise.all([
       apiGetJson<AdminOverview>("/api/admin/overview"),
-      apiGetJson<AdminTrustReviewMetrics>("/api/admin/trust-review-metrics"),
-      apiGetJson<AdminBlockedActionCount[]>("/api/admin/trust-blocked-actions?limit=8"),
-      apiGetJson<TrustScoreEventItem[]>("/api/admin/trust-score-events?limit=12"),
+      apiGetJson<AdminTrustReviewMetrics>("/api/admin/guild-review-metrics"),
+      apiGetJson<AdminBlockedActionCount[]>("/api/admin/guild-blocked-actions?limit=8"),
+      apiGetJson<GuildScoreEventItem[]>("/api/admin/guild-score-events?limit=12"),
       apiGetJson<TrustReviewUser[]>(
-        `/api/admin/trust-review-users${reviewStateQuery}${reviewStateQuery ? "&" : "?"}limit=25`,
+        `/api/admin/guild-review-users${reviewStateQuery}${reviewStateQuery ? "&" : "?"}limit=25`,
       ),
-      apiGetJson<TrustPolicyConfig>("/api/admin/trust-policy"),
+      apiGetJson<GuildPolicyConfig>("/api/admin/guild-policy"),
     ]);
 
   return (
     <div className="space-y-8">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Trust Review</h1>
+          <h1 className="text-2xl font-semibold">Guild Review</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Review suspicious automation, trust rollout state, blocked actions, and score activity.
+            Review suspicious automation, guild rollout state, blocked actions, and score activity.
           </p>
         </div>
-        <Badge variant={trustPolicy.enforcement.enabled ? "default" : "secondary"}>
-          Trust enforcement {trustPolicy.enforcement.enabled ? "enabled" : "disabled"}
+        <Badge variant={guildPolicy.enforcement.enabled ? "default" : "secondary"}>
+          Guild enforcement {guildPolicy.enforcement.enabled ? "enabled" : "disabled"}
         </Badge>
       </div>
 
@@ -193,7 +193,7 @@ export default async function TrustPage({
         <div className="grid gap-4 lg:grid-cols-3">
           <Card>
             <CardHeader>
-              <CardTitle>Live trust pressure</CardTitle>
+              <CardTitle>Live guild pressure</CardTitle>
               <CardDescription>Current flagged population across the instance.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 text-sm text-muted-foreground">
@@ -203,11 +203,11 @@ export default async function TrustPage({
               </div>
               <div className="flex items-center justify-between">
                 <span>Challenged users</span>
-                <span className="font-medium text-foreground">{overview.trust_challenged}</span>
+                <span className="font-medium text-foreground">{overview.guild_challenged}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Frozen users</span>
-                <span className="font-medium text-foreground">{overview.trust_frozen}</span>
+                <span className="font-medium text-foreground">{overview.guild_frozen}</span>
               </div>
             </CardContent>
           </Card>
@@ -215,25 +215,25 @@ export default async function TrustPage({
           <Card>
             <CardHeader>
               <CardTitle>Enforcement switches</CardTitle>
-              <CardDescription>Server-side rollout state for each trust gate.</CardDescription>
+              <CardDescription>Server-side rollout state for each guild gate.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 text-sm text-muted-foreground">
               <div className="flex items-center justify-between">
                 <span>Outbound messages</span>
-                <Badge variant={trustPolicy.enforcement.outbound_messages_enabled ? "default" : "secondary"}>
-                  {trustPolicy.enforcement.outbound_messages_enabled ? "on" : "off"}
+                <Badge variant={guildPolicy.enforcement.outbound_messages_enabled ? "default" : "secondary"}>
+                  {guildPolicy.enforcement.outbound_messages_enabled ? "on" : "off"}
                 </Badge>
               </div>
               <div className="flex items-center justify-between">
                 <span>Friend adds</span>
-                <Badge variant={trustPolicy.enforcement.friend_adds_enabled ? "default" : "secondary"}>
-                  {trustPolicy.enforcement.friend_adds_enabled ? "on" : "off"}
+                <Badge variant={guildPolicy.enforcement.friend_adds_enabled ? "default" : "secondary"}>
+                  {guildPolicy.enforcement.friend_adds_enabled ? "on" : "off"}
                 </Badge>
               </div>
               <div className="flex items-center justify-between">
                 <span>Attachments</span>
-                <Badge variant={trustPolicy.enforcement.attachment_sends_enabled ? "default" : "secondary"}>
-                  {trustPolicy.enforcement.attachment_sends_enabled ? "on" : "off"}
+                <Badge variant={guildPolicy.enforcement.attachment_sends_enabled ? "default" : "secondary"}>
+                  {guildPolicy.enforcement.attachment_sends_enabled ? "on" : "off"}
                 </Badge>
               </div>
             </CardContent>
@@ -247,26 +247,26 @@ export default async function TrustPage({
             <CardContent className="space-y-2 text-sm text-muted-foreground">
               <div className="flex items-center justify-between">
                 <span>Level policies</span>
-                <span className="font-medium text-foreground">{trustPolicy.level_policies.length}</span>
+                <span className="font-medium text-foreground">{guildPolicy.level_policies.length}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Rank policies</span>
-                <span className="font-medium text-foreground">{trustPolicy.rank_policies.length}</span>
+                <span className="font-medium text-foreground">{guildPolicy.rank_policies.length}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Safe attachment types</span>
-                <span className="font-medium text-foreground">{trustPolicy.safe_attachment_types.length}</span>
+                <span className="font-medium text-foreground">{guildPolicy.safe_attachment_types.length}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Daily counter retention</span>
                 <span className="font-medium text-foreground">
-                  {trustPolicy.daily_counter_retention_days} days
+                  {guildPolicy.daily_counter_retention_days} days
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Score event retention</span>
                 <span className="font-medium text-foreground">
-                  {trustPolicy.score_event_retention_days} days
+                  {guildPolicy.score_event_retention_days} days
                 </span>
               </div>
             </CardContent>
@@ -282,7 +282,7 @@ export default async function TrustPage({
                 Suspicious automation
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Review users currently in challenged or frozen trust states.
+                Review users currently in challenged or frozen guild states.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -307,11 +307,11 @@ export default async function TrustPage({
         <Card>
           <CardHeader>
             <CardTitle>Top blocked actions</CardTitle>
-            <CardDescription>Most common trust rejections captured in admin audit logs.</CardDescription>
+            <CardDescription>Most common guild rejections captured in admin audit logs.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {blockedActions.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No blocked trust actions recorded yet.</p>
+              <p className="text-sm text-muted-foreground">No blocked guild actions recorded yet.</p>
             ) : (
               blockedActions.map((item) => (
                 <div className="flex items-center justify-between gap-4" key={item.action}>
@@ -328,7 +328,7 @@ export default async function TrustPage({
         <p className="mb-3 text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
           Score-affecting events
         </p>
-        <TrustScoreEventsTable events={scoreEvents} />
+        <GuildScoreEventsTable events={scoreEvents} />
       </section>
     </div>
   );

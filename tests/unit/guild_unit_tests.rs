@@ -1,23 +1,23 @@
-// Unit tests for trust_service internal logic.
-// This file is included as a module of trust_service via:
-//   #[cfg(test)] #[path = "../../tests/trust_unit_tests.rs"] mod tests;
-// so `super::` refers to trust_service's private items.
+// Unit tests for guild_service internal logic.
+// This file is included as a module of guild_service via:
+//   #[cfg(test)] #[path = "../../tests/guild_unit_tests.rs"] mod tests;
+// so `super::` refers to guild_service's private items.
 
 use super::{
-    assess_human_activity, build_snapshot, default_trust_policy, level_policy_for_active_days,
-    normalize_trust_policy, outbound_message_limit_enforced, rank_at_least, rank_policy_for_score,
+    assess_human_activity, build_snapshot, default_guild_policy, level_policy_for_active_days,
+    normalize_guild_policy, outbound_message_limit_enforced, rank_at_least, rank_policy_for_score,
     DEFAULT_DAILY_COUNTER_RETENTION_DAYS, DEFAULT_SCORE_EVENT_RETENTION_DAYS,
     FROZEN_RECOVERY_WINDOW_HOURS, SUSPICIOUS_ACTIVITY_FREEZE_THRESHOLD,
     SUSPICIOUS_NEW_DAY_ACTIVITY_WINDOW_MINUTES,
 };
-use crate::models::trust::TrustEnforcementConfig;
-use crate::models::trust::{TrustPolicyConfig, UserTrustStats};
+use crate::models::guild::GuildEnforcementConfig;
+use crate::models::guild::{GuildPolicyConfig, UserGuildStats};
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
 #[test]
 fn default_policy_covers_expected_thresholds() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     assert!(policy.enforcement.enabled);
     assert!(policy.enforcement.outbound_messages_enabled);
     assert_eq!(
@@ -39,25 +39,25 @@ fn default_policy_covers_expected_thresholds() {
 }
 
 #[test]
-fn trust_policy_normalization_rejects_overlapping_ranges() {
-    let mut policy = default_trust_policy();
+fn guild_policy_normalization_rejects_overlapping_ranges() {
+    let mut policy = default_guild_policy();
     policy.level_policies[1].min_active_days = 6;
-    let error = normalize_trust_policy(policy).expect_err("policy should be invalid");
+    let error = normalize_guild_policy(policy).expect_err("policy should be invalid");
     assert!(error
         .to_string()
         .contains("level policy day ranges must not overlap"));
 }
 
 #[test]
-fn trust_policy_normalization_sorts_and_deduplicates() {
-    let mut policy = default_trust_policy();
+fn guild_policy_normalization_sorts_and_deduplicates() {
+    let mut policy = default_guild_policy();
     policy.safe_attachment_types = vec![
         "image/png".into(),
         " image/png ".into(),
         "application/pdf".into(),
     ];
     policy.level_policies.reverse();
-    let normalized = normalize_trust_policy(policy).expect("policy should normalize");
+    let normalized = normalize_guild_policy(policy).expect("policy should normalize");
     assert_eq!(normalized.level_policies[0].level, 1);
     assert_eq!(
         normalized.safe_attachment_types,
@@ -66,18 +66,18 @@ fn trust_policy_normalization_sorts_and_deduplicates() {
 }
 
 #[test]
-fn trust_policy_deserialization_defaults_enforcement_flags() {
-    let policy = default_trust_policy();
+fn guild_policy_deserialization_defaults_enforcement_flags() {
+    let policy = default_guild_policy();
     let mut raw = serde_json::to_value(policy).expect("policy should serialize");
     let object = raw
         .as_object_mut()
-        .expect("trust policy should serialize into an object");
+        .expect("guild policy should serialize into an object");
     object.remove("enforcement");
     object.remove("daily_counter_retention_days");
     object.remove("score_event_retention_days");
 
-    let parsed: TrustPolicyConfig =
-        serde_json::from_value(raw).expect("legacy trust policy should deserialize");
+    let parsed: GuildPolicyConfig =
+        serde_json::from_value(raw).expect("legacy guild policy should deserialize");
 
     assert!(parsed.enforcement.enabled);
     assert!(parsed.enforcement.outbound_messages_enabled);
@@ -94,10 +94,10 @@ fn trust_policy_deserialization_defaults_enforcement_flags() {
 }
 
 #[test]
-fn trust_policy_normalization_rejects_invalid_retention_settings() {
-    let mut policy = default_trust_policy();
+fn guild_policy_normalization_rejects_invalid_retention_settings() {
+    let mut policy = default_guild_policy();
     policy.daily_counter_retention_days = 0;
-    let error = normalize_trust_policy(policy).expect_err("policy should be invalid");
+    let error = normalize_guild_policy(policy).expect_err("policy should be invalid");
     assert!(error
         .to_string()
         .contains("daily_counter_retention_days must be > 0"));
@@ -112,11 +112,11 @@ fn rank_threshold_comparison_is_ordered_correctly() {
 }
 
 #[test]
-fn trust_snapshot_reports_when_message_limits_are_disabled() {
-    let mut policy = default_trust_policy();
+fn guild_snapshot_reports_when_message_limits_are_disabled() {
+    let mut policy = default_guild_policy();
     policy.enforcement.outbound_messages_enabled = false;
 
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 3,
         contribution_score: 0,
@@ -155,10 +155,10 @@ fn trust_snapshot_reports_when_message_limits_are_disabled() {
 }
 
 #[test]
-fn trust_snapshot_applies_rank_multiplier_to_message_caps() {
-    let policy = default_trust_policy();
+fn guild_snapshot_applies_rank_multiplier_to_message_caps() {
+    let policy = default_guild_policy();
     let now = Utc::now();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 20,
         contribution_score: 750,
@@ -193,10 +193,10 @@ fn trust_snapshot_applies_rank_multiplier_to_message_caps() {
 }
 
 #[test]
-fn trust_snapshot_uses_rank_overrides_for_unlimited_message_caps() {
-    let policy = default_trust_policy();
+fn guild_snapshot_uses_rank_overrides_for_unlimited_message_caps() {
+    let policy = default_guild_policy();
     let now = Utc::now();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 5,
         contribution_score: 6_000,
@@ -233,7 +233,7 @@ fn trust_snapshot_uses_rank_overrides_for_unlimited_message_caps() {
 fn suspicious_rollover_activity_is_challenged_and_not_counted() {
     let now = Utc::now();
     let today = now.date_naive();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 7,
         contribution_score: 0,
@@ -258,7 +258,7 @@ fn suspicious_rollover_activity_is_challenged_and_not_counted() {
 fn legitimate_new_day_activity_reduces_suspicion_and_advances() {
     let now = Utc::now();
     let today = now.date_naive();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 7,
         contribution_score: 0,
@@ -285,7 +285,7 @@ fn legitimate_new_day_activity_reduces_suspicion_and_advances() {
 fn repeated_suspicious_attempts_escalate_to_frozen() {
     let now = Utc::now();
     let today = now.date_naive();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 7,
         contribution_score: 0,
@@ -313,7 +313,7 @@ fn repeated_suspicious_attempts_escalate_to_frozen() {
 fn frozen_accounts_recover_after_quiet_period() {
     let now = Utc::now();
     let today = now.date_naive();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 42,
         contribution_score: 0,
@@ -336,9 +336,9 @@ fn frozen_accounts_recover_after_quiet_period() {
 
 // ── challenge_state mapping ──────────────────────────────────────────────
 
-fn make_stats_with_review_state(automation_review_state: &str) -> UserTrustStats {
+fn make_stats_with_review_state(automation_review_state: &str) -> UserGuildStats {
     let now = Utc::now();
-    UserTrustStats {
+    UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 1,
         contribution_score: 0,
@@ -355,7 +355,7 @@ fn make_stats_with_review_state(automation_review_state: &str) -> UserTrustStats
 
 #[test]
 fn challenge_state_clear_maps_to_none() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     let stats = make_stats_with_review_state("clear");
     let snapshot = build_snapshot(
         &policy,
@@ -371,7 +371,7 @@ fn challenge_state_clear_maps_to_none() {
 
 #[test]
 fn challenge_state_challenged_maps_to_challenged() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     let stats = make_stats_with_review_state("challenged");
     let snapshot = build_snapshot(
         &policy,
@@ -387,7 +387,7 @@ fn challenge_state_challenged_maps_to_challenged() {
 
 #[test]
 fn challenge_state_frozen_maps_to_frozen() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     let stats = make_stats_with_review_state("frozen");
     let snapshot = build_snapshot(
         &policy,
@@ -403,7 +403,7 @@ fn challenge_state_frozen_maps_to_frozen() {
 
 #[test]
 fn challenge_state_unknown_value_maps_to_none() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     let stats = make_stats_with_review_state("some_internal_state_unknown_to_client");
     let snapshot = build_snapshot(
         &policy,
@@ -421,7 +421,7 @@ fn challenge_state_unknown_value_maps_to_none() {
 
 #[test]
 fn rank_transitions_at_correct_score_boundaries() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
 
     // Default policy: F(0–99), E(100–499), D(500–999), C(1000–2499),
     //                 B(2500–4999), A(5000–9999), S(10000+)
@@ -445,7 +445,7 @@ fn rank_transitions_at_correct_score_boundaries() {
 
 #[test]
 fn level_transitions_at_correct_active_day_boundaries() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
 
     // Default policy levels: 1(0d), 2(7d), 3(14d), 4(30d), 5(60d), ...
     assert_eq!(level_policy_for_active_days(&policy, 0).level, 1);
@@ -463,9 +463,9 @@ fn level_transitions_at_correct_active_day_boundaries() {
 
 #[test]
 fn daily_outbound_messages_remaining_clamps_at_zero_when_over_limit() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     let now = Utc::now();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 1,
         contribution_score: 0,
@@ -495,9 +495,9 @@ fn daily_outbound_messages_remaining_clamps_at_zero_when_over_limit() {
 
 #[test]
 fn daily_attachment_sends_remaining_clamps_at_zero_when_over_limit() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     let now = Utc::now();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 1,
         contribution_score: 0,
@@ -527,9 +527,9 @@ fn daily_attachment_sends_remaining_clamps_at_zero_when_over_limit() {
 
 #[test]
 fn daily_friend_adds_remaining_clamps_at_zero_when_over_limit() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     let now = Utc::now();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 1,
         contribution_score: 0,
@@ -560,9 +560,9 @@ fn daily_friend_adds_remaining_clamps_at_zero_when_over_limit() {
 
 #[test]
 fn level_1_attachment_types_are_restricted_to_safe_image_video() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     let now = Utc::now();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 1,
         contribution_score: 0,
@@ -597,10 +597,10 @@ fn level_1_attachment_types_are_restricted_to_safe_image_video() {
 
 #[test]
 fn higher_level_allows_more_attachment_types_than_level_1() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     let now = Utc::now();
 
-    let level1_stats = UserTrustStats {
+    let level1_stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 1,
         contribution_score: 0,
@@ -613,7 +613,7 @@ fn higher_level_allows_more_attachment_types_than_level_1() {
         created_at: now,
         updated_at: now,
     };
-    let level5_stats = UserTrustStats {
+    let level5_stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 60,
         contribution_score: 0,
@@ -656,10 +656,10 @@ fn higher_level_allows_more_attachment_types_than_level_1() {
 
 #[test]
 fn daily_outbound_limit_is_none_for_unlimited_rank() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     let now = Utc::now();
     // Rank S has no message limit in default policy.
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 1,
         contribution_score: 12_000,
@@ -699,12 +699,12 @@ fn daily_outbound_limit_is_none_for_unlimited_rank() {
 /// high-contribution-score user.  Level-based caps must still apply.
 #[test]
 fn rank_engine_disabled_ignores_rank_perks_for_limit_calculations() {
-    let mut policy = default_trust_policy();
+    let mut policy = default_guild_policy();
     policy.enforcement.rank_engine_enabled = false;
 
     let now = Utc::now();
     // User has enough score for rank S (unlimited messages in default policy).
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 1,
         contribution_score: 12_000,
@@ -769,14 +769,14 @@ fn rank_engine_disabled_ignores_rank_perks_for_limit_calculations() {
 /// (overrides_level_limits) gives unlimited messages.
 #[test]
 fn rank_engine_enabled_applies_rank_perks() {
-    let policy = default_trust_policy();
+    let policy = default_guild_policy();
     assert!(
         policy.enforcement.rank_engine_enabled,
         "should default to true"
     );
 
     let now = Utc::now();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 1,
         contribution_score: 12_000,
@@ -815,7 +815,7 @@ fn rank_engine_enabled_applies_rank_perks() {
 fn sleeper_account_cannot_earn_active_day_same_utc_day() {
     let now = Utc::now();
     let today = now.date_naive();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 90,
         contribution_score: 0,
@@ -848,13 +848,13 @@ fn sleeper_account_cannot_earn_active_day_same_utc_day() {
     );
 }
 
-/// Low-trust vote farms: a granter at level 1 (below the level-4 threshold)
+/// Low-guild vote farms: a granter at level 1 (below the level-4 threshold)
 /// and rank F (below the rank-E threshold) is below the minimum eligibility
 /// bar.  The rank_at_least helper must confirm this ordering correctly so that
 /// the eligibility check `level >= 4 || rank_at_least(rank, "E")` returns false
 /// for every rank below E.
 #[test]
-fn low_trust_granter_ranks_below_eligibility_threshold() {
+fn low_guild_granter_ranks_below_eligibility_threshold() {
     // Rank order is F < E < D < C < B < A < S.
     // The granter eligibility threshold is rank >= "E" (rank_order >= 1).
     // Only rank F is below it.
@@ -886,7 +886,7 @@ fn scripted_daily_progression_escalates_to_frozen() {
     let mut now = Utc::now();
     let mut today = now.date_naive();
 
-    let mut stats = UserTrustStats {
+    let mut stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 0,
         contribution_score: 0,
@@ -945,7 +945,7 @@ fn scripted_daily_progression_escalates_to_frozen() {
 fn frozen_account_cannot_self_clear_within_recovery_window() {
     let now = Utc::now();
     let today = now.date_naive();
-    let stats = UserTrustStats {
+    let stats = UserGuildStats {
         user_id: Uuid::new_v4(),
         active_days: 10,
         contribution_score: 0,
@@ -982,7 +982,7 @@ fn rank_engine_enabled_defaults_to_true_when_absent_from_config() {
         "attachment_sends_enabled": true
         // rank_engine_enabled is deliberately absent
     });
-    let enforcement: TrustEnforcementConfig =
+    let enforcement: GuildEnforcementConfig =
         serde_json::from_value(enforcement_json).expect("should deserialize");
     assert!(
         enforcement.rank_engine_enabled,

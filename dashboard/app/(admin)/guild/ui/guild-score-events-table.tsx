@@ -8,7 +8,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-type TrustScoreEventItem = {
+type GuildScoreEventItem = {
   id: string;
   user_id: string;
   granter_user_id: string | null;
@@ -29,7 +29,7 @@ function compactId(value: string | null) {
   return `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
-export function TrustScoreEventsTable({ events }: { events: TrustScoreEventItem[] }) {
+export function GuildScoreEventsTable({ events }: { events: GuildScoreEventItem[] }) {
   return (
     <div className="overflow-hidden rounded-lg border">
       <Table>

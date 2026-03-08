@@ -16,7 +16,7 @@ type UserItem = {
   is_approved: boolean;
   created_at: string;
   last_seen_at: string | null;
-  trust?: { derived_level: number; derived_rank: string } | null;
+  guild?: { derived_level: number; derived_rank: string } | null;
 };
 
 export default async function UsersPage({

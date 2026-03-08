@@ -24,7 +24,7 @@ export async function PUT(request: Request) {
 
   let response: Response;
   if (access) {
-    response = await fetch(syncServerUrl("/api/admin/trust-policy"), {
+    response = await fetch(syncServerUrl("/api/admin/guild-policy"), {
       method: "PUT",
       headers: {
         Authorization: `Bearer ${access}`,
@@ -51,7 +51,7 @@ export async function PUT(request: Request) {
 
     if (refreshResponse.ok) {
       const tokens = (await refreshResponse.json()) as RefreshResponse;
-      response = await fetch(syncServerUrl("/api/admin/trust-policy"), {
+      response = await fetch(syncServerUrl("/api/admin/guild-policy"), {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
@@ -86,7 +86,7 @@ export async function PUT(request: Request) {
   if (!response.ok) {
     const body = await response.text();
     return NextResponse.json(
-      { error: body || "Trust policy update failed" },
+      { error: body || "Guild policy update failed" },
       { status: 400 },
     );
   }

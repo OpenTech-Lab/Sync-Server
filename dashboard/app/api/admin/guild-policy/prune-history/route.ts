@@ -23,7 +23,7 @@ export async function POST(request: Request) {
 
   let response: Response;
   if (access) {
-    response = await fetch(syncServerUrl("/api/admin/trust-policy/prune-history"), {
+    response = await fetch(syncServerUrl("/api/admin/guild-policy/prune-history"), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${access}`,
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
 
     if (refreshResponse.ok) {
       const tokens = (await refreshResponse.json()) as RefreshResponse;
-      response = await fetch(syncServerUrl("/api/admin/trust-policy/prune-history"), {
+      response = await fetch(syncServerUrl("/api/admin/guild-policy/prune-history"), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
   if (!response.ok) {
     const body = await response.text();
     return NextResponse.json(
-      { error: body || "Trust history prune failed" },
+      { error: body || "Guild history prune failed" },
       { status: 400 },
     );
   }

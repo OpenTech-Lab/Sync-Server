@@ -131,7 +131,7 @@ components:
         display_handle:
           type: string
 
-    TrustSnapshot:
+    GuildSnapshot:
       type: object
       required:
         - active_days
@@ -210,18 +210,18 @@ components:
             "frozen" – repeated suspicious attempts; progression frozen until review or quiet-period clears.
         pending_milestone_notification:
           allOf:
-            - $ref: '#/components/schemas/TrustMilestoneNotification'
+            - $ref: '#/components/schemas/GuildMilestoneNotification'
           nullable: true
           description: >
             Non-null when a level-up, rank-up, or attachment-type unlock was detected on this
             request.  The client is responsible for dismissing the notification locally; the server
             does not persist per-user notification state.  Safe to ignore.
 
-    TrustMilestoneNotification:
+    GuildMilestoneNotification:
       type: object
       description: >
         Payload the client uses to render a milestone toast, badge, or unlock animation.
-        Returned as `pending_milestone_notification` in `TrustSnapshot` when a server-side
+        Returned as `pending_milestone_notification` in `GuildSnapshot` when a server-side
         progression event was detected on this request.  Null when no milestone is pending.
         The client is responsible for dismissing / persisting the notification locally;
         the server does not maintain per-user notification state.
@@ -237,7 +237,7 @@ components:
           enum: [level_up, rank_up, unlock_attachment_type]
           description: >
             Kind of progression milestone that triggered this notification.
-            "level_up" – the user reached a new trust level on this request.
+            "level_up" – the user reached a new guild level on this request.
             "rank_up" – the user's contribution score crossed a rank threshold.
             "unlock_attachment_type" – a new attachment MIME type became available.
         badge_label:
@@ -245,10 +245,10 @@ components:
           description: Human-readable badge label, e.g. "Level 5" or "Rank D".
         headline_key:
           type: string
-          description: Localisation key for the unlock headline, e.g. "trust.milestone.level_up".
+          description: Localisation key for the unlock headline, e.g. "guild.milestone.level_up".
         detail_key:
           type: string
-          description: Localisation key for the unlock sub-copy, e.g. "trust.milestone.level_5_detail".
+          description: Localisation key for the unlock sub-copy, e.g. "guild.milestone.level_5_detail".
         unlocked_value:
           type: string
           nullable: true
@@ -262,12 +262,12 @@ components:
 
     LimitPrecedenceNote:
       description: >
-        Trust limit precedence and fallback rules (informational — not a request/response schema).
+        Guild limit precedence and fallback rules (informational — not a request/response schema).
 
         **Evaluation order** (highest-priority first):
 
         1. **Global enforcement disabled** (`enforcement.enabled = false`):
-           All trust limits are bypassed.  No level or rank checks are applied.
+           All guild limits are bypassed.  No level or rank checks are applied.
 
         2. **Action-class disabled** (e.g. `outbound_messages_enabled = false`):
            The specific action class is not enforced.  Other classes may still be enforced.
@@ -292,7 +292,7 @@ components:
            The action is unrestricted for that level.  Infrastructure anti-flood still applies.
 
         **Fallback behaviour:**
-        - If a user has no `user_trust_stats` row, a row is created with level 1 / rank F defaults
+        - If a user has no `user_guild_stats` row, a row is created with level 1 / rank F defaults
           on the first authenticated human-like action.
         - If the policy config is missing or invalid, the server rejects startup — there is no
           silent fallback to permissive defaults at runtime.
@@ -319,9 +319,9 @@ components:
         message_public_key:
           type: string
           nullable: true
-        trust:
+        guild:
           allOf:
-            - $ref: '#/components/schemas/TrustSnapshot'
+            - $ref: '#/components/schemas/GuildSnapshot'
           nullable: true
           description: Returned for `/api/profile/me`; omitted for public profile lookups.
 
@@ -359,9 +359,9 @@ components:
     TrustLimitExceededResponse:
       type: object
       description: >
-        Returned with HTTP 429 when a trust-level action cap is reached.
-        The `trust` snapshot lets clients explain the limit and when it resets.
-      required: [error, code, retry_after_seconds, trust]
+        Returned with HTTP 429 when a guild-level action cap is reached.
+        The `guild` snapshot lets clients explain the limit and when it resets.
+      required: [error, code, retry_after_seconds, guild]
       properties:
         error:
           type: string
@@ -375,8 +375,8 @@ components:
         retry_after_seconds:
           type: integer
           description: Seconds until the daily counter resets (start of next UTC day).
-        trust:
-          $ref: '#/components/schemas/TrustSnapshot'
+        guild:
+          $ref: '#/components/schemas/GuildSnapshot'
 
   responses:
     Unauthorized:
@@ -734,7 +734,7 @@ paths:
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
-          description: Daily outbound message limit reached for the sender's current trust level.
+          description: Daily outbound message limit reached for the sender's current guild level.
           content:
             application/json:
               schema:
@@ -771,7 +771,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
-          description: Daily friend-add limit reached for the sender's current trust level.
+          description: Daily friend-add limit reached for the sender's current guild level.
           content:
             application/json:
               schema:

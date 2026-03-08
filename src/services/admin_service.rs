@@ -7,13 +7,13 @@ use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::admin::{AdminAuditLog, AdminSetting, NewAdminAuditLog, NewAdminSetting};
 use crate::models::federation::FederationDelivery;
-use crate::models::trust::{TrustScoreEvent, UserTrustStats};
+use crate::models::guild::{GuildScoreEvent, UserGuildStats};
 use crate::models::user::User;
 use crate::schema::admin_audit_logs::dsl as audit_dsl;
 use crate::schema::admin_settings::dsl as setting_dsl;
 use crate::schema::federation_deliveries::dsl as fed_delivery_dsl;
-use crate::schema::trust_score_events::dsl as score_event_dsl;
-use crate::schema::user_trust_stats::dsl as trust_dsl;
+use crate::schema::guild_score_events::dsl as score_event_dsl;
+use crate::schema::user_guild_stats::dsl as guild_dsl;
 use crate::schema::users::dsl as user_dsl;
 
 pub const SETTING_MAX_USERS: &str = "max_users";
@@ -23,7 +23,7 @@ pub const SETTING_PLANET_DESCRIPTION: &str = "planet_description";
 pub const SETTING_PLANET_IMAGE_BASE64: &str = "planet_image_base64";
 pub const SETTING_LINKED_PLANETS: &str = "linked_planets";
 pub const SETTING_REQUIRE_APPROVAL: &str = "registration_requires_approval";
-pub const SETTING_TRUST_POLICY: &str = "trust_policy";
+pub const SETTING_TRUST_POLICY: &str = "guild_policy";
 
 #[derive(Debug, serde::Serialize)]
 pub struct AdminOverview {
@@ -32,8 +32,8 @@ pub struct AdminOverview {
     pub active_users: i64,
     pub admin_users: i64,
     pub pending_approval: i64,
-    pub trust_challenged: i64,
-    pub trust_frozen: i64,
+    pub guild_challenged: i64,
+    pub guild_frozen: i64,
     pub federation_pending: i64,
     pub federation_failed: i64,
     pub federation_dead_letter: i64,
@@ -77,7 +77,7 @@ pub struct AdminUserView {
     pub is_approved: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub trust: Option<AdminTrustReviewView>,
+    pub guild: Option<AdminTrustReviewView>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -92,7 +92,7 @@ pub struct AdminTrustReviewView {
 }
 
 impl AdminUserView {
-    fn from_parts(value: User, trust: Option<UserTrustStats>) -> Self {
+    fn from_parts(value: User, guild: Option<UserGuildStats>) -> Self {
         Self {
             id: value.id,
             username: value.username,
@@ -102,14 +102,14 @@ impl AdminUserView {
             is_approved: value.is_approved,
             created_at: value.created_at,
             last_seen_at: value.last_seen_at,
-            trust: Some(trust.map(|trust| AdminTrustReviewView {
-                active_days: trust.active_days,
-                derived_level: trust.derived_level,
-                derived_rank: trust.derived_rank,
-                automation_review_state: trust.automation_review_state,
-                suspicious_activity_streak: trust.suspicious_activity_streak,
-                last_human_activity_at: trust.last_human_activity_at,
-                last_active_day: trust.last_active_day,
+            guild: Some(guild.map(|guild| AdminTrustReviewView {
+                active_days: guild.active_days,
+                derived_level: guild.derived_level,
+                derived_rank: guild.derived_rank,
+                automation_review_state: guild.automation_review_state,
+                suspicious_activity_streak: guild.suspicious_activity_streak,
+                last_human_activity_at: guild.last_human_activity_at,
+                last_active_day: guild.last_active_day,
             }).unwrap_or_else(|| AdminTrustReviewView {
                 active_days: 0,
                 derived_level: 0,
@@ -160,12 +160,12 @@ pub fn admin_overview(pool: &Pool) -> Result<AdminOverview, AppError> {
         .filter(user_dsl::is_approved.eq(false))
         .count()
         .get_result(&mut conn)?;
-    let trust_challenged = trust_dsl::user_trust_stats
-        .filter(trust_dsl::automation_review_state.eq("challenged"))
+    let guild_challenged = guild_dsl::user_guild_stats
+        .filter(guild_dsl::automation_review_state.eq("challenged"))
         .count()
         .get_result(&mut conn)?;
-    let trust_frozen = trust_dsl::user_trust_stats
-        .filter(trust_dsl::automation_review_state.eq("frozen"))
+    let guild_frozen = guild_dsl::user_guild_stats
+        .filter(guild_dsl::automation_review_state.eq("frozen"))
         .count()
         .get_result(&mut conn)?;
 
@@ -193,8 +193,8 @@ pub fn admin_overview(pool: &Pool) -> Result<AdminOverview, AppError> {
         active_users,
         admin_users,
         pending_approval,
-        trust_challenged,
-        trust_frozen,
+        guild_challenged,
+        guild_frozen,
         federation_pending,
         federation_failed,
         federation_dead_letter,
@@ -208,7 +208,7 @@ pub fn list_users(
 ) -> Result<Vec<AdminUserView>, AppError> {
     let mut conn = pool.get()?;
     let mut q = user_dsl::users
-        .left_join(trust_dsl::user_trust_stats.on(trust_dsl::user_id.eq(user_dsl::id)))
+        .left_join(guild_dsl::user_guild_stats.on(guild_dsl::user_id.eq(user_dsl::id)))
         .into_boxed();
 
     if let Some(raw) = query {
@@ -227,11 +227,11 @@ pub fn list_users(
         if !state.is_empty() {
             q = match state.as_str() {
                 "clear" => q.filter(
-                    trust_dsl::automation_review_state
+                    guild_dsl::automation_review_state
                         .eq("clear")
-                        .or(trust_dsl::user_id.is_null()),
+                        .or(guild_dsl::user_id.is_null()),
                 ),
-                "challenged" | "frozen" => q.filter(trust_dsl::automation_review_state.eq(state)),
+                "challenged" | "frozen" => q.filter(guild_dsl::automation_review_state.eq(state)),
                 _ => {
                     return Err(AppError::BadRequest(
                         "automation_review_state must be one of clear, challenged, frozen".into(),
@@ -243,16 +243,16 @@ pub fn list_users(
 
     let users = q
         .order(user_dsl::created_at.desc())
-        .select((User::as_select(), Option::<UserTrustStats>::as_select()))
-        .load::<(User, Option<UserTrustStats>)>(&mut conn)?;
+        .select((User::as_select(), Option::<UserGuildStats>::as_select()))
+        .load::<(User, Option<UserGuildStats>)>(&mut conn)?;
 
     Ok(users
         .into_iter()
-        .map(|(user, trust)| AdminUserView::from_parts(user, trust))
+        .map(|(user, guild)| AdminUserView::from_parts(user, guild))
         .collect())
 }
 
-pub fn list_trust_review_users(
+pub fn list_guild_review_users(
     pool: &Pool,
     automation_review_state: Option<&str>,
     limit: i64,
@@ -262,33 +262,33 @@ pub fn list_trust_review_users(
     let review_state = TrustReviewStateFilter::parse(automation_review_state)?;
 
     let mut q = user_dsl::users
-        .inner_join(trust_dsl::user_trust_stats.on(trust_dsl::user_id.eq(user_dsl::id)))
+        .inner_join(guild_dsl::user_guild_stats.on(guild_dsl::user_id.eq(user_dsl::id)))
         .into_boxed();
 
     q = match review_state {
         TrustReviewStateFilter::Challenged => {
-            q.filter(trust_dsl::automation_review_state.eq("challenged"))
+            q.filter(guild_dsl::automation_review_state.eq("challenged"))
         }
-        TrustReviewStateFilter::Frozen => q.filter(trust_dsl::automation_review_state.eq("frozen")),
+        TrustReviewStateFilter::Frozen => q.filter(guild_dsl::automation_review_state.eq("frozen")),
         TrustReviewStateFilter::AnyFlagged => q.filter(
-            trust_dsl::automation_review_state
+            guild_dsl::automation_review_state
                 .eq("challenged")
-                .or(trust_dsl::automation_review_state.eq("frozen")),
+                .or(guild_dsl::automation_review_state.eq("frozen")),
         ),
     };
 
     let users = q
         .order((
-            trust_dsl::suspicious_activity_streak.desc(),
+            guild_dsl::suspicious_activity_streak.desc(),
             user_dsl::created_at.desc(),
         ))
         .limit(safe_limit)
-        .select((User::as_select(), UserTrustStats::as_select()))
-        .load::<(User, UserTrustStats)>(&mut conn)?;
+        .select((User::as_select(), UserGuildStats::as_select()))
+        .load::<(User, UserGuildStats)>(&mut conn)?;
 
     Ok(users
         .into_iter()
-        .map(|(user, trust)| AdminUserView::from_parts(user, Some(trust)))
+        .map(|(user, guild)| AdminUserView::from_parts(user, Some(guild)))
         .collect())
 }
 
@@ -440,15 +440,15 @@ pub fn list_audit_logs(pool: &Pool, limit: i64) -> Result<Vec<AdminAuditLog>, Ap
         .map_err(AppError::from)
 }
 
-pub fn list_trust_score_events(
+pub fn list_guild_score_events(
     pool: &Pool,
     user_id: Option<Uuid>,
     event_type: Option<&str>,
     limit: i64,
-) -> Result<Vec<TrustScoreEvent>, AppError> {
+) -> Result<Vec<GuildScoreEvent>, AppError> {
     let mut conn = pool.get()?;
     let safe_limit = limit.clamp(1, 200);
-    let mut q = score_event_dsl::trust_score_events.into_boxed();
+    let mut q = score_event_dsl::guild_score_events.into_boxed();
 
     if let Some(user_id) = user_id {
         q = q.filter(score_event_dsl::user_id.eq(user_id));
@@ -460,19 +460,19 @@ pub fn list_trust_score_events(
 
     q.order(score_event_dsl::created_at.desc())
         .limit(safe_limit)
-        .select(TrustScoreEvent::as_select())
-        .load::<TrustScoreEvent>(&mut conn)
+        .select(GuildScoreEvent::as_select())
+        .load::<GuildScoreEvent>(&mut conn)
         .map_err(AppError::from)
 }
 
-pub fn list_trust_blocked_action_counts(
+pub fn list_guild_blocked_action_counts(
     pool: &Pool,
     limit: i64,
 ) -> Result<Vec<AdminBlockedActionCount>, AppError> {
     let mut conn = pool.get()?;
     let safe_limit = limit.clamp(1, 50) as usize;
     let rows = audit_dsl::admin_audit_logs
-        .filter(audit_dsl::action.like("trust.blocked_action.%"))
+        .filter(audit_dsl::action.like("guild.blocked_action.%"))
         .order(audit_dsl::created_at.desc())
         .select(AdminAuditLog::as_select())
         .load::<AdminAuditLog>(&mut conn)?;
@@ -481,7 +481,7 @@ pub fn list_trust_blocked_action_counts(
     for row in rows {
         let normalized = row
             .action
-            .strip_prefix("trust.blocked_action.")
+            .strip_prefix("guild.blocked_action.")
             .unwrap_or(&row.action)
             .to_string();
         *counts.entry(normalized).or_insert(0) += 1;
@@ -501,19 +501,19 @@ pub fn list_trust_blocked_action_counts(
     Ok(summary)
 }
 
-pub fn trust_review_metrics(pool: &Pool) -> Result<AdminTrustReviewMetrics, AppError> {
+pub fn guild_review_metrics(pool: &Pool) -> Result<AdminTrustReviewMetrics, AppError> {
     let mut conn = pool.get()?;
-    let current_challenged_users = trust_dsl::user_trust_stats
-        .filter(trust_dsl::automation_review_state.eq("challenged"))
+    let current_challenged_users = guild_dsl::user_guild_stats
+        .filter(guild_dsl::automation_review_state.eq("challenged"))
         .count()
         .get_result(&mut conn)?;
-    let current_frozen_users = trust_dsl::user_trust_stats
-        .filter(trust_dsl::automation_review_state.eq("frozen"))
+    let current_frozen_users = guild_dsl::user_guild_stats
+        .filter(guild_dsl::automation_review_state.eq("frozen"))
         .count()
         .get_result(&mut conn)?;
 
     let rows = audit_dsl::admin_audit_logs
-        .filter(audit_dsl::action.eq("trust.review_state.changed"))
+        .filter(audit_dsl::action.eq("guild.review_state.changed"))
         .order(audit_dsl::created_at.desc())
         .select(AdminAuditLog::as_select())
         .load::<AdminAuditLog>(&mut conn)?;

@@ -8,8 +8,8 @@ type Overview = {
   active_users: number;
   admin_users: number;
   pending_approval: number;
-  trust_challenged: number;
-  trust_frozen: number;
+  guild_challenged: number;
+  guild_frozen: number;
   federation_pending: number;
   federation_failed: number;
   federation_dead_letter: number;
@@ -53,8 +53,8 @@ export default async function DashboardPage() {
           <Stat label="Active" value={overview.active_users} />
           <Stat label="Admins" value={overview.admin_users} />
           <Stat label="Pending" value={overview.pending_approval} note="Awaiting approval" />
-          <Stat label="Challenged" value={overview.trust_challenged} note="Trust review required" />
-          <Stat label="Frozen" value={overview.trust_frozen} note="Progression frozen" />
+          <Stat label="Challenged" value={overview.guild_challenged} note="Guild review required" />
+          <Stat label="Frozen" value={overview.guild_frozen} note="Progression frozen" />
         </dl>
       </section>
 

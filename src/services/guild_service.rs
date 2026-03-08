@@ -9,14 +9,14 @@ use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::admin::NewAdminAuditLog;
 use crate::models::message::Message;
-use crate::models::trust::{
-    LevelPolicy, MilestoneKind, NewDailyActionCounter, NewTrustScoreEvent, NewUserTrustStats,
-    RankPolicy, TrustEnforcementConfig, TrustHistoryPruneResult, TrustMilestoneNotification,
-    TrustPolicyConfig, TrustScoreEvent, TrustSnapshot, UserTrustStats,
+use crate::models::guild::{
+    LevelPolicy, MilestoneKind, NewDailyActionCounter, NewGuildScoreEvent, NewUserGuildStats,
+    RankPolicy, GuildEnforcementConfig, GuildHistoryPruneResult, GuildMilestoneNotification,
+    GuildPolicyConfig, GuildScoreEvent, GuildSnapshot, UserGuildStats,
     DEFAULT_DAILY_COUNTER_RETENTION_DAYS, DEFAULT_SCORE_EVENT_RETENTION_DAYS,
 };
 use crate::schema::{
-    admin_audit_logs, admin_settings, daily_action_counters, trust_score_events, user_trust_stats,
+    admin_audit_logs, admin_settings, daily_action_counters, guild_score_events, user_guild_stats,
     users,
 };
 use crate::services::{admin_service, message_service};
@@ -57,7 +57,7 @@ pub enum SendMessageWithTrustResult {
         message: Message,
     },
     Limited {
-        trust: TrustSnapshot,
+        guild: GuildSnapshot,
         retry_after_seconds: i64,
     },
 }
@@ -68,11 +68,11 @@ pub enum AttachmentActionWithTrustResult<T> {
         value: T,
     },
     Limited {
-        trust: TrustSnapshot,
+        guild: GuildSnapshot,
         retry_after_seconds: i64,
     },
     UnsupportedMime {
-        trust: TrustSnapshot,
+        guild: GuildSnapshot,
     },
 }
 
@@ -80,7 +80,7 @@ pub enum AttachmentActionWithTrustResult<T> {
 pub enum ResolveContactWithTrustResult {
     Allowed,
     Limited {
-        trust: TrustSnapshot,
+        guild: GuildSnapshot,
         retry_after_seconds: i64,
     },
 }
@@ -93,7 +93,7 @@ pub struct ContributionEventOptions {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ContributionEventOutcome {
-    pub event: Option<TrustScoreEvent>,
+    pub event: Option<GuildScoreEvent>,
     pub contribution_score: i32,
     pub derived_rank: String,
     pub applied_delta: i32,
@@ -108,25 +108,25 @@ struct HumanActivityAssessment {
     automation_review_state: &'static str,
 }
 
-pub fn read_trust_policy(pool: &Pool) -> Result<TrustPolicyConfig, AppError> {
+pub fn read_guild_policy(pool: &Pool) -> Result<GuildPolicyConfig, AppError> {
     let mut conn = pool.get()?;
-    load_trust_policy_conn(&mut conn)
+    load_guild_policy_conn(&mut conn)
 }
 
-pub fn save_trust_policy(
+pub fn save_guild_policy(
     pool: &Pool,
-    policy: &TrustPolicyConfig,
-) -> Result<TrustPolicyConfig, AppError> {
-    let normalized = normalize_trust_policy(policy.clone())?;
+    policy: &GuildPolicyConfig,
+) -> Result<GuildPolicyConfig, AppError> {
+    let normalized = normalize_guild_policy(policy.clone())?;
     let encoded = serde_json::to_string(&normalized)
-        .map_err(|error| AppError::Internal(anyhow::anyhow!("trust policy encode: {}", error)))?;
+        .map_err(|error| AppError::Internal(anyhow::anyhow!("guild policy encode: {}", error)))?;
     admin_service::set_setting(pool, admin_service::SETTING_TRUST_POLICY, &encoded)?;
     Ok(normalized)
 }
 
-pub fn prune_trust_history(pool: &Pool) -> Result<TrustHistoryPruneResult, AppError> {
+pub fn prune_guild_history(pool: &Pool) -> Result<GuildHistoryPruneResult, AppError> {
     let mut conn = pool.get()?;
-    let policy = load_trust_policy_conn(&mut conn)?;
+    let policy = load_guild_policy_conn(&mut conn)?;
     let now = Utc::now();
     let pruned_before_day =
         now.date_naive() - Duration::days(i64::from(policy.daily_counter_retention_days));
@@ -139,19 +139,19 @@ pub fn prune_trust_history(pool: &Pool) -> Result<TrustHistoryPruneResult, AppEr
     )
     .execute(&mut conn)? as i64;
 
-    let trust_score_events_deleted = diesel::delete(
-        trust_score_events::table
-            .filter(trust_score_events::created_at.lt(pruned_before_timestamp)),
+    let guild_score_events_deleted = diesel::delete(
+        guild_score_events::table
+            .filter(guild_score_events::created_at.lt(pruned_before_timestamp)),
     )
     .execute(&mut conn)? as i64;
 
-    Ok(TrustHistoryPruneResult {
+    Ok(GuildHistoryPruneResult {
         daily_counter_retention_days: policy.daily_counter_retention_days,
         score_event_retention_days: policy.score_event_retention_days,
         pruned_before_day,
         pruned_before_timestamp,
         daily_action_counters_deleted,
-        trust_score_events_deleted,
+        guild_score_events_deleted,
     })
 }
 
@@ -164,10 +164,10 @@ pub fn record_score_event(
     delta: i32,
     reference_id: Option<&str>,
     metadata: serde_json::Value,
-) -> Result<TrustScoreEvent, AppError> {
+) -> Result<GuildScoreEvent, AppError> {
     let mut conn = pool.get()?;
-    diesel::insert_into(trust_score_events::table)
-        .values(&NewTrustScoreEvent {
+    diesel::insert_into(guild_score_events::table)
+        .values(&NewGuildScoreEvent {
             id: Uuid::new_v4(),
             user_id,
             granter_user_id,
@@ -176,7 +176,7 @@ pub fn record_score_event(
             reference_id: reference_id.map(ToString::to_string),
             metadata,
         })
-        .get_result::<TrustScoreEvent>(&mut conn)
+        .get_result::<GuildScoreEvent>(&mut conn)
         .map_err(AppError::from)
 }
 
@@ -203,17 +203,17 @@ pub fn record_contribution_event(
     }
 
     conn.transaction(|conn| {
-        let policy = load_trust_policy_conn(conn)?;
-        let stats = ensure_user_trust_stats(conn, &policy, user_id)?;
+        let policy = load_guild_policy_conn(conn)?;
+        let stats = ensure_user_guild_stats(conn, &policy, user_id)?;
         let stats = sync_derived_state(conn, &policy, stats, now)?;
 
         if let Some(reference_id_value) = normalized_reference_id.as_deref() {
-            let existing = trust_score_events::table
-                .filter(trust_score_events::user_id.eq(user_id))
-                .filter(trust_score_events::event_type.eq(normalized_event_type.as_str()))
-                .filter(trust_score_events::reference_id.eq(reference_id_value))
-                .select(TrustScoreEvent::as_select())
-                .first::<TrustScoreEvent>(conn)
+            let existing = guild_score_events::table
+                .filter(guild_score_events::user_id.eq(user_id))
+                .filter(guild_score_events::event_type.eq(normalized_event_type.as_str()))
+                .filter(guild_score_events::reference_id.eq(reference_id_value))
+                .select(GuildScoreEvent::as_select())
+                .first::<GuildScoreEvent>(conn)
                 .optional()?;
             if existing.is_some() {
                 return Ok(ContributionEventOutcome {
@@ -282,8 +282,8 @@ pub fn record_contribution_event(
             applied_delta,
             suppressed_reason.as_deref(),
         );
-        let event = diesel::insert_into(trust_score_events::table)
-            .values(&NewTrustScoreEvent {
+        let event = diesel::insert_into(guild_score_events::table)
+            .values(&NewGuildScoreEvent {
                 id: Uuid::new_v4(),
                 user_id,
                 granter_user_id,
@@ -292,13 +292,13 @@ pub fn record_contribution_event(
                 reference_id: normalized_reference_id.clone(),
                 metadata: event_metadata,
             })
-            .get_result::<TrustScoreEvent>(conn)?;
+            .get_result::<GuildScoreEvent>(conn)?;
 
-        diesel::update(user_trust_stats::table.find(user_id))
+        diesel::update(user_guild_stats::table.find(user_id))
             .set((
-                user_trust_stats::contribution_score.eq(next_contribution_score),
-                user_trust_stats::derived_rank.eq(next_rank.as_str()),
-                user_trust_stats::updated_at.eq(now),
+                user_guild_stats::contribution_score.eq(next_contribution_score),
+                user_guild_stats::derived_rank.eq(next_rank.as_str()),
+                user_guild_stats::updated_at.eq(now),
             ))
             .execute(conn)?;
 
@@ -413,9 +413,9 @@ pub fn clawback_contribution_score(
     )
 }
 
-/// Admin-issued trust progression freeze.  Sets automation_review_state to "frozen" and logs
+/// Admin-issued guild progression freeze.  Sets automation_review_state to "frozen" and logs
 /// the action.  Does not change contribution score; use `clawback_contribution_score` if needed.
-pub fn freeze_trust_progression(
+pub fn freeze_guild_progression(
     pool: &Pool,
     admin_user_id: Option<Uuid>,
     target_user_id: Uuid,
@@ -423,10 +423,10 @@ pub fn freeze_trust_progression(
 ) -> Result<(), AppError> {
     let mut conn = pool.get()?;
     let now = Utc::now();
-    diesel::update(user_trust_stats::table.find(target_user_id))
+    diesel::update(user_guild_stats::table.find(target_user_id))
         .set((
-            user_trust_stats::automation_review_state.eq(AUTOMATION_REVIEW_STATE_FROZEN),
-            user_trust_stats::updated_at.eq(now),
+            user_guild_stats::automation_review_state.eq(AUTOMATION_REVIEW_STATE_FROZEN),
+            user_guild_stats::updated_at.eq(now),
         ))
         .execute(&mut conn)?;
 
@@ -439,14 +439,14 @@ pub fn freeze_trust_progression(
         admin_service::append_audit_log(
             pool,
             Some(admin_id),
-            "trust.admin.freeze_trust_progression",
+            "guild.admin.freeze_guild_progression",
             Some(&target_user_id.to_string()),
             details,
         )?;
     } else {
         insert_system_audit_log(
             &mut conn,
-            "trust.system.freeze_trust_progression",
+            "guild.system.freeze_guild_progression",
             Some(&target_user_id.to_string()),
             serde_json::json!({ "reason": reason }),
         )?;
@@ -454,8 +454,8 @@ pub fn freeze_trust_progression(
     Ok(())
 }
 
-/// Admin-issued trust progression unfreeze.  Resets automation_review_state to "clear".
-pub fn unfreeze_trust_progression(
+/// Admin-issued guild progression unfreeze.  Resets automation_review_state to "clear".
+pub fn unfreeze_guild_progression(
     pool: &Pool,
     admin_user_id: Uuid,
     target_user_id: Uuid,
@@ -463,28 +463,28 @@ pub fn unfreeze_trust_progression(
 ) -> Result<(), AppError> {
     let mut conn = pool.get()?;
     let now = Utc::now();
-    diesel::update(user_trust_stats::table.find(target_user_id))
+    diesel::update(user_guild_stats::table.find(target_user_id))
         .set((
-            user_trust_stats::automation_review_state.eq(DEFAULT_AUTOMATION_REVIEW_STATE),
-            user_trust_stats::suspicious_activity_streak.eq(0),
-            user_trust_stats::updated_at.eq(now),
+            user_guild_stats::automation_review_state.eq(DEFAULT_AUTOMATION_REVIEW_STATE),
+            user_guild_stats::suspicious_activity_streak.eq(0),
+            user_guild_stats::updated_at.eq(now),
         ))
         .execute(&mut conn)?;
 
     admin_service::append_audit_log(
         pool,
         Some(admin_user_id),
-        "trust.admin.unfreeze_trust_progression",
+        "guild.admin.unfreeze_guild_progression",
         Some(&target_user_id.to_string()),
         serde_json::json!({ "reason": reason }),
     )
 }
 
-pub fn get_trust_snapshot(pool: &Pool, user_id: Uuid) -> Result<TrustSnapshot, AppError> {
+pub fn get_guild_snapshot(pool: &Pool, user_id: Uuid) -> Result<GuildSnapshot, AppError> {
     let mut conn = pool.get()?;
     let today = Utc::now().date_naive();
-    let policy = load_trust_policy_conn(&mut conn)?;
-    let stats = ensure_user_trust_stats(&mut conn, &policy, user_id)?;
+    let policy = load_guild_policy_conn(&mut conn)?;
+    let stats = ensure_user_guild_stats(&mut conn, &policy, user_id)?;
     // Capture pre-sync level/rank to detect milestone transitions this request.
     let prev_level = stats.derived_level.clamp(1, 10) as u8;
     let prev_rank = stats.derived_rank.clone();
@@ -510,8 +510,8 @@ pub fn record_human_activity(pool: &Pool, user_id: Uuid) -> Result<(), AppError>
     let today = Utc::now().date_naive();
     let now = Utc::now();
     conn.transaction(|conn| {
-        let policy = load_trust_policy_conn(conn)?;
-        let stats = ensure_user_trust_stats(conn, &policy, user_id)?;
+        let policy = load_guild_policy_conn(conn)?;
+        let stats = ensure_user_guild_stats(conn, &policy, user_id)?;
         let stats = sync_derived_state(conn, &policy, stats, now)?;
         let (stats, assessment) = update_human_activity_state(conn, stats, today, now)?;
         if assessment.should_advance_active_day {
@@ -521,7 +521,7 @@ pub fn record_human_activity(pool: &Pool, user_id: Uuid) -> Result<(), AppError>
     })
 }
 
-pub fn send_message_with_trust(
+pub fn send_message_with_guild(
     pool: &Pool,
     sender_id: Uuid,
     recipient_id: Uuid,
@@ -532,8 +532,8 @@ pub fn send_message_with_trust(
     let today = now.date_naive();
 
     conn.transaction(|conn| {
-        let policy = load_trust_policy_conn(conn)?;
-        let stats = ensure_user_trust_stats(conn, &policy, sender_id)?;
+        let policy = load_guild_policy_conn(conn)?;
+        let stats = ensure_user_guild_stats(conn, &policy, sender_id)?;
         let stats = sync_derived_state(conn, &policy, stats, now)?;
         let (stats, assessment) = update_human_activity_state(conn, stats, today, now)?;
         let stats = if assessment.should_advance_active_day {
@@ -556,7 +556,7 @@ pub fn send_message_with_trust(
                     let cur_level = stats.derived_level.clamp(1, 10) as u8;
                     let cur_rank = stats.derived_rank.clone();
                     return Ok(SendMessageWithTrustResult::Limited {
-                        trust: build_snapshot(
+                        guild: build_snapshot(
                             &policy,
                             &stats,
                             sent_today,
@@ -579,7 +579,7 @@ pub fn send_message_with_trust(
     })
 }
 
-pub fn run_attachment_action_with_trust<T, F>(
+pub fn run_attachment_action_with_guild<T, F>(
     pool: &Pool,
     user_id: Uuid,
     mime_type: &str,
@@ -594,8 +594,8 @@ where
     let normalized_mime_type = mime_type.trim().to_lowercase();
 
     conn.transaction(|conn| {
-        let policy = load_trust_policy_conn(conn)?;
-        let stats = ensure_user_trust_stats(conn, &policy, user_id)?;
+        let policy = load_guild_policy_conn(conn)?;
+        let stats = ensure_user_guild_stats(conn, &policy, user_id)?;
         let stats = sync_derived_state(conn, &policy, stats, now)?;
         let (stats, assessment) = update_human_activity_state(conn, stats, today, now)?;
         let stats = if assessment.should_advance_active_day {
@@ -615,7 +615,7 @@ where
             let cur_level = stats.derived_level.clamp(1, 10) as u8;
             let cur_rank = stats.derived_rank.clone();
             return Ok(AttachmentActionWithTrustResult::UnsupportedMime {
-                trust: build_snapshot(
+                guild: build_snapshot(
                     &policy,
                     &stats,
                     outbound_messages_sent,
@@ -636,7 +636,7 @@ where
                     let cur_level = stats.derived_level.clamp(1, 10) as u8;
                     let cur_rank = stats.derived_rank.clone();
                     return Ok(AttachmentActionWithTrustResult::Limited {
-                        trust: build_snapshot(
+                        guild: build_snapshot(
                             &policy,
                             &stats,
                             outbound_messages_sent,
@@ -657,7 +657,7 @@ where
     })
 }
 
-pub fn resolve_contact_with_trust(
+pub fn resolve_contact_with_guild(
     pool: &Pool,
     user_id: Uuid,
 ) -> Result<ResolveContactWithTrustResult, AppError> {
@@ -666,8 +666,8 @@ pub fn resolve_contact_with_trust(
     let today = now.date_naive();
 
     conn.transaction(|conn| {
-        let policy = load_trust_policy_conn(conn)?;
-        let stats = ensure_user_trust_stats(conn, &policy, user_id)?;
+        let policy = load_guild_policy_conn(conn)?;
+        let stats = ensure_user_guild_stats(conn, &policy, user_id)?;
         let stats = sync_derived_state(conn, &policy, stats, now)?;
         let (stats, assessment) = update_human_activity_state(conn, stats, today, now)?;
         let stats = if assessment.should_advance_active_day {
@@ -691,7 +691,7 @@ pub fn resolve_contact_with_trust(
                     let cur_level = stats.derived_level.clamp(1, 10) as u8;
                     let cur_rank = stats.derived_rank.clone();
                     return Ok(ResolveContactWithTrustResult::Limited {
-                        trust: build_snapshot(
+                        guild: build_snapshot(
                             &policy,
                             &stats,
                             outbound_messages_sent,
@@ -711,19 +711,19 @@ pub fn resolve_contact_with_trust(
     })
 }
 
-fn outbound_message_limit_enforced(policy: &TrustPolicyConfig) -> bool {
+fn outbound_message_limit_enforced(policy: &GuildPolicyConfig) -> bool {
     policy.enforcement.enabled && policy.enforcement.outbound_messages_enabled
 }
 
-fn attachment_send_limit_enforced(policy: &TrustPolicyConfig) -> bool {
+fn attachment_send_limit_enforced(policy: &GuildPolicyConfig) -> bool {
     policy.enforcement.enabled && policy.enforcement.attachment_sends_enabled
 }
 
-fn friend_add_limit_enforced(policy: &TrustPolicyConfig) -> bool {
+fn friend_add_limit_enforced(policy: &GuildPolicyConfig) -> bool {
     policy.enforcement.enabled && policy.enforcement.friend_adds_enabled
 }
 
-fn attachment_type_allowed(policy: &TrustPolicyConfig, mime_type: &str) -> bool {
+fn attachment_type_allowed(policy: &GuildPolicyConfig, mime_type: &str) -> bool {
     policy
         .safe_attachment_types
         .iter()
@@ -739,14 +739,14 @@ fn challenge_state_for_client(automation_review_state: &str) -> String {
 }
 
 fn build_snapshot(
-    policy: &TrustPolicyConfig,
-    stats: &UserTrustStats,
+    policy: &GuildPolicyConfig,
+    stats: &UserGuildStats,
     daily_outbound_messages_sent: i32,
     daily_attachment_sends_sent: i32,
     daily_friend_adds_sent: i32,
     prev_level: u8,
     prev_rank: &str,
-) -> TrustSnapshot {
+) -> GuildSnapshot {
     let level_policy = level_policy_for_active_days(policy, stats.active_days);
     let rank_policy = rank_policy_for_limits(policy, stats.contribution_score);
     let daily_outbound_messages_limit =
@@ -768,21 +768,21 @@ fn build_snapshot(
     let current_rank = &stats.derived_rank;
 
     let pending_milestone_notification = if current_level > prev_level {
-        Some(TrustMilestoneNotification {
+        Some(GuildMilestoneNotification {
             kind: MilestoneKind::LevelUp,
             badge_label: format!("Level {current_level}"),
-            headline_key: "trust.milestone.level_up".to_string(),
-            detail_key: format!("trust.milestone.level_{current_level}_detail"),
+            headline_key: "guild.milestone.level_up".to_string(),
+            detail_key: format!("guild.milestone.level_{current_level}_detail"),
             unlocked_value: None,
             new_value: current_level.to_string(),
         })
     } else if rank_order(current_rank) > rank_order(prev_rank) {
-        Some(TrustMilestoneNotification {
+        Some(GuildMilestoneNotification {
             kind: MilestoneKind::RankUp,
             badge_label: format!("Rank {current_rank}"),
-            headline_key: "trust.milestone.rank_up".to_string(),
+            headline_key: "guild.milestone.rank_up".to_string(),
             detail_key: format!(
-                "trust.milestone.rank_{}_detail",
+                "guild.milestone.rank_{}_detail",
                 current_rank.to_lowercase()
             ),
             unlocked_value: None,
@@ -792,7 +792,7 @@ fn build_snapshot(
         None
     };
 
-    TrustSnapshot {
+    GuildSnapshot {
         active_days: stats.active_days,
         level: current_level,
         contribution_score: stats.contribution_score,
@@ -867,15 +867,15 @@ fn insert_system_audit_log(
     Ok(())
 }
 
-fn ensure_user_trust_stats(
+fn ensure_user_guild_stats(
     conn: &mut diesel::PgConnection,
-    policy: &TrustPolicyConfig,
+    policy: &GuildPolicyConfig,
     user_id: Uuid,
-) -> Result<UserTrustStats, AppError> {
+) -> Result<UserGuildStats, AppError> {
     let level_policy = level_policy_for_active_days(policy, 0);
     let rank_policy = rank_policy_for_score(policy, 0);
-    diesel::insert_into(user_trust_stats::table)
-        .values(&NewUserTrustStats {
+    diesel::insert_into(user_guild_stats::table)
+        .values(&NewUserGuildStats {
             user_id,
             active_days: 0,
             contribution_score: 0,
@@ -886,23 +886,23 @@ fn ensure_user_trust_stats(
             suspicious_activity_streak: 0,
             automation_review_state: DEFAULT_AUTOMATION_REVIEW_STATE.to_string(),
         })
-        .on_conflict(user_trust_stats::user_id)
+        .on_conflict(user_guild_stats::user_id)
         .do_nothing()
         .execute(conn)?;
 
-    user_trust_stats::table
+    user_guild_stats::table
         .find(user_id)
-        .select(UserTrustStats::as_select())
-        .first::<UserTrustStats>(conn)
+        .select(UserGuildStats::as_select())
+        .first::<UserGuildStats>(conn)
         .map_err(AppError::from)
 }
 
 fn sync_derived_state(
     conn: &mut diesel::PgConnection,
-    policy: &TrustPolicyConfig,
-    stats: UserTrustStats,
+    policy: &GuildPolicyConfig,
+    stats: UserGuildStats,
     now: DateTime<Utc>,
-) -> Result<UserTrustStats, AppError> {
+) -> Result<UserGuildStats, AppError> {
     let level_policy = level_policy_for_active_days(policy, stats.active_days);
     let rank_policy = rank_policy_for_score(policy, stats.contribution_score);
 
@@ -912,36 +912,36 @@ fn sync_derived_state(
         return Ok(stats);
     }
 
-    diesel::update(user_trust_stats::table.find(stats.user_id))
+    diesel::update(user_guild_stats::table.find(stats.user_id))
         .set((
-            user_trust_stats::derived_level.eq(i32::from(level_policy.level)),
-            user_trust_stats::derived_rank.eq(rank_policy.rank.as_str()),
-            user_trust_stats::updated_at.eq(now),
+            user_guild_stats::derived_level.eq(i32::from(level_policy.level)),
+            user_guild_stats::derived_rank.eq(rank_policy.rank.as_str()),
+            user_guild_stats::updated_at.eq(now),
         ))
-        .get_result::<UserTrustStats>(conn)
+        .get_result::<UserGuildStats>(conn)
         .map_err(AppError::from)
 }
 
 fn update_human_activity_state(
     conn: &mut diesel::PgConnection,
-    stats: UserTrustStats,
+    stats: UserGuildStats,
     today: NaiveDate,
     now: DateTime<Utc>,
-) -> Result<(UserTrustStats, HumanActivityAssessment), AppError> {
+) -> Result<(UserGuildStats, HumanActivityAssessment), AppError> {
     let assessment = assess_human_activity(&stats, today, now);
-    let updated = diesel::update(user_trust_stats::table.find(stats.user_id))
+    let updated = diesel::update(user_guild_stats::table.find(stats.user_id))
         .set((
-            user_trust_stats::last_human_activity_at.eq(Some(now)),
-            user_trust_stats::suspicious_activity_streak.eq(assessment.suspicious_activity_streak),
-            user_trust_stats::automation_review_state.eq(assessment.automation_review_state),
-            user_trust_stats::updated_at.eq(now),
+            user_guild_stats::last_human_activity_at.eq(Some(now)),
+            user_guild_stats::suspicious_activity_streak.eq(assessment.suspicious_activity_streak),
+            user_guild_stats::automation_review_state.eq(assessment.automation_review_state),
+            user_guild_stats::updated_at.eq(now),
         ))
-        .get_result::<UserTrustStats>(conn)
+        .get_result::<UserGuildStats>(conn)
         .map_err(AppError::from)?;
     if stats.automation_review_state != updated.automation_review_state {
         insert_system_audit_log(
             conn,
-            "trust.review_state.changed",
+            "guild.review_state.changed",
             Some(&stats.user_id.to_string()),
             serde_json::json!({
                 "previous_state": stats.automation_review_state,
@@ -955,7 +955,7 @@ fn update_human_activity_state(
 }
 
 fn assess_human_activity(
-    stats: &UserTrustStats,
+    stats: &UserGuildStats,
     today: NaiveDate,
     now: DateTime<Utc>,
 ) -> HumanActivityAssessment {
@@ -1020,11 +1020,11 @@ fn assess_human_activity(
 
 fn advance_active_day_if_needed(
     conn: &mut diesel::PgConnection,
-    policy: &TrustPolicyConfig,
-    stats: UserTrustStats,
+    policy: &GuildPolicyConfig,
+    stats: UserGuildStats,
     today: NaiveDate,
     now: DateTime<Utc>,
-) -> Result<UserTrustStats, AppError> {
+) -> Result<UserGuildStats, AppError> {
     if stats.last_active_day == Some(today) {
         return Ok(stats);
     }
@@ -1032,15 +1032,15 @@ fn advance_active_day_if_needed(
     let next_active_days = stats.active_days + 1;
     let level_policy = level_policy_for_active_days(policy, next_active_days);
     let rank_policy = rank_policy_for_score(policy, stats.contribution_score);
-    diesel::update(user_trust_stats::table.find(stats.user_id))
+    diesel::update(user_guild_stats::table.find(stats.user_id))
         .set((
-            user_trust_stats::active_days.eq(next_active_days),
-            user_trust_stats::derived_level.eq(i32::from(level_policy.level)),
-            user_trust_stats::derived_rank.eq(rank_policy.rank.as_str()),
-            user_trust_stats::last_active_day.eq(Some(today)),
-            user_trust_stats::updated_at.eq(now),
+            user_guild_stats::active_days.eq(next_active_days),
+            user_guild_stats::derived_level.eq(i32::from(level_policy.level)),
+            user_guild_stats::derived_rank.eq(rank_policy.rank.as_str()),
+            user_guild_stats::last_active_day.eq(Some(today)),
+            user_guild_stats::updated_at.eq(now),
         ))
-        .get_result::<UserTrustStats>(conn)
+        .get_result::<UserGuildStats>(conn)
         .map_err(AppError::from)
 }
 
@@ -1090,7 +1090,7 @@ fn increment_daily_counter(
 
 fn granter_is_meaningful(
     conn: &mut diesel::PgConnection,
-    policy: &TrustPolicyConfig,
+    policy: &GuildPolicyConfig,
     granter_user_id: Option<Uuid>,
     now: DateTime<Utc>,
 ) -> Result<bool, AppError> {
@@ -1112,7 +1112,7 @@ fn granter_is_meaningful(
         return Ok(true);
     }
 
-    let granter_stats = ensure_user_trust_stats(conn, policy, granter_user_id)?;
+    let granter_stats = ensure_user_guild_stats(conn, policy, granter_user_id)?;
     let granter_stats = sync_derived_state(conn, policy, granter_stats, now)?;
     Ok(granter_stats.derived_level >= 4 || rank_at_least(&granter_stats.derived_rank, "E"))
 }
@@ -1132,13 +1132,13 @@ fn is_reciprocal_vote(
         return Ok(false);
     };
     let window_start = now - Duration::days(30);
-    let exists = trust_score_events::table
-        .filter(trust_score_events::user_id.eq(granter_id))
-        .filter(trust_score_events::granter_user_id.eq(user_id))
-        .filter(trust_score_events::event_type.eq(event_type))
-        .filter(trust_score_events::delta.gt(0))
-        .filter(trust_score_events::created_at.ge(window_start))
-        .select(trust_score_events::id)
+    let exists = guild_score_events::table
+        .filter(guild_score_events::user_id.eq(granter_id))
+        .filter(guild_score_events::granter_user_id.eq(user_id))
+        .filter(guild_score_events::event_type.eq(event_type))
+        .filter(guild_score_events::delta.gt(0))
+        .filter(guild_score_events::created_at.ge(window_start))
+        .select(guild_score_events::id)
         .first::<Uuid>(conn)
         .optional()?;
     Ok(exists.is_some())
@@ -1146,7 +1146,7 @@ fn is_reciprocal_vote(
 
 /// Returns true when the number of distinct grantors who awarded positive points to `user_id`
 /// for the given event type on the current UTC day exceeds `CLUSTERED_VOTE_GRANTER_DAILY_THRESHOLD`.
-/// This catches coordinated bot-farm pile-ons where many low-trust accounts vote for the same
+/// This catches coordinated bot-farm pile-ons where many low-guild accounts vote for the same
 /// target in a single day.
 fn is_clustered_vote(
     conn: &mut diesel::PgConnection,
@@ -1162,14 +1162,14 @@ fn is_clustered_vote(
     let day_start = DateTime::<Utc>::from_naive_utc_and_offset(day_start, Utc);
 
     // Count distinct non-null grantors who voted positively for this user today.
-    let distinct_grantors: i64 = trust_score_events::table
-        .filter(trust_score_events::user_id.eq(user_id))
-        .filter(trust_score_events::event_type.eq(event_type))
-        .filter(trust_score_events::created_at.ge(day_start))
-        .filter(trust_score_events::delta.gt(0))
-        .filter(trust_score_events::granter_user_id.is_not_null())
+    let distinct_grantors: i64 = guild_score_events::table
+        .filter(guild_score_events::user_id.eq(user_id))
+        .filter(guild_score_events::event_type.eq(event_type))
+        .filter(guild_score_events::created_at.ge(day_start))
+        .filter(guild_score_events::delta.gt(0))
+        .filter(guild_score_events::granter_user_id.is_not_null())
         .select(diesel::dsl::count_distinct(
-            trust_score_events::granter_user_id,
+            guild_score_events::granter_user_id,
         ))
         .first(conn)?;
 
@@ -1188,18 +1188,18 @@ fn positive_points_earned_today(
         .expect("valid UTC midnight");
     let day_start = DateTime::<Utc>::from_naive_utc_and_offset(day_start, Utc);
 
-    let total: Option<i64> = trust_score_events::table
-        .filter(trust_score_events::user_id.eq(user_id))
-        .filter(trust_score_events::event_type.eq(event_type))
-        .filter(trust_score_events::created_at.ge(day_start))
-        .filter(trust_score_events::delta.gt(0))
-        .select(diesel::dsl::sum(trust_score_events::delta))
+    let total: Option<i64> = guild_score_events::table
+        .filter(guild_score_events::user_id.eq(user_id))
+        .filter(guild_score_events::event_type.eq(event_type))
+        .filter(guild_score_events::created_at.ge(day_start))
+        .filter(guild_score_events::delta.gt(0))
+        .select(diesel::dsl::sum(guild_score_events::delta))
         .first(conn)?;
 
     Ok(total.unwrap_or(0).clamp(0, i64::from(i32::MAX)) as i32)
 }
 
-fn level_policy_for_active_days(policy: &TrustPolicyConfig, active_days: i32) -> &LevelPolicy {
+fn level_policy_for_active_days(policy: &GuildPolicyConfig, active_days: i32) -> &LevelPolicy {
     policy
         .level_policies
         .iter()
@@ -1214,11 +1214,11 @@ fn level_policy_for_active_days(policy: &TrustPolicyConfig, active_days: i32) ->
             policy
                 .level_policies
                 .last()
-                .expect("trust policy must contain level policies")
+                .expect("guild policy must contain level policies")
         })
 }
 
-fn next_level_active_days(policy: &TrustPolicyConfig, level: u8) -> Option<i32> {
+fn next_level_active_days(policy: &GuildPolicyConfig, level: u8) -> Option<i32> {
     policy
         .level_policies
         .iter()
@@ -1226,7 +1226,7 @@ fn next_level_active_days(policy: &TrustPolicyConfig, level: u8) -> Option<i32> 
         .map(|entry| entry.min_active_days)
 }
 
-fn rank_policy_for_score(policy: &TrustPolicyConfig, contribution_score: i32) -> &RankPolicy {
+fn rank_policy_for_score(policy: &GuildPolicyConfig, contribution_score: i32) -> &RankPolicy {
     policy
         .rank_policies
         .iter()
@@ -1241,7 +1241,7 @@ fn rank_policy_for_score(policy: &TrustPolicyConfig, contribution_score: i32) ->
             policy
                 .rank_policies
                 .last()
-                .expect("trust policy must contain rank policies")
+                .expect("guild policy must contain rank policies")
         })
 }
 
@@ -1252,7 +1252,7 @@ fn rank_policy_for_score(policy: &TrustPolicyConfig, contribution_score: i32) ->
 /// applied as if the user were rank F.  Rank display in the snapshot still
 /// reflects the user's actual earned rank (stored in `derived_rank`).
 fn rank_policy_for_limits(
-    policy: &TrustPolicyConfig,
+    policy: &GuildPolicyConfig,
     contribution_score: i32,
 ) -> std::borrow::Cow<'_, RankPolicy> {
     if policy.enforcement.rank_engine_enabled {
@@ -1354,9 +1354,9 @@ fn seconds_until_next_utc_day(now: DateTime<Utc>) -> i64 {
     (next_day - now.naive_utc()).num_seconds().max(1)
 }
 
-fn default_trust_policy() -> TrustPolicyConfig {
-    TrustPolicyConfig {
-        enforcement: TrustEnforcementConfig::default(),
+fn default_guild_policy() -> GuildPolicyConfig {
+    GuildPolicyConfig {
+        enforcement: GuildEnforcementConfig::default(),
         daily_counter_retention_days: DEFAULT_DAILY_COUNTER_RETENTION_DAYS,
         score_event_retention_days: DEFAULT_SCORE_EVENT_RETENTION_DAYS,
         level_policies: vec![
@@ -1498,7 +1498,7 @@ fn default_trust_policy() -> TrustPolicyConfig {
     }
 }
 
-fn load_trust_policy_conn(conn: &mut diesel::PgConnection) -> Result<TrustPolicyConfig, AppError> {
+fn load_guild_policy_conn(conn: &mut diesel::PgConnection) -> Result<GuildPolicyConfig, AppError> {
     let raw = admin_settings::table
         .filter(admin_settings::key.eq(admin_service::SETTING_TRUST_POLICY))
         .select(admin_settings::value)
@@ -1506,33 +1506,33 @@ fn load_trust_policy_conn(conn: &mut diesel::PgConnection) -> Result<TrustPolicy
         .optional()?;
 
     let Some(raw) = raw else {
-        return Ok(default_trust_policy());
+        return Ok(default_guild_policy());
     };
 
-    match serde_json::from_str::<TrustPolicyConfig>(&raw) {
-        Ok(policy) => match normalize_trust_policy(policy) {
+    match serde_json::from_str::<GuildPolicyConfig>(&raw) {
+        Ok(policy) => match normalize_guild_policy(policy) {
             Ok(normalized) => Ok(normalized),
             Err(error) => {
-                tracing::warn!(error = %error, "Invalid stored trust policy; using defaults");
-                Ok(default_trust_policy())
+                tracing::warn!(error = %error, "Invalid stored guild policy; using defaults");
+                Ok(default_guild_policy())
             }
         },
         Err(error) => {
-            tracing::warn!(error = %error, "Could not decode stored trust policy; using defaults");
-            Ok(default_trust_policy())
+            tracing::warn!(error = %error, "Could not decode stored guild policy; using defaults");
+            Ok(default_guild_policy())
         }
     }
 }
 
-fn normalize_trust_policy(mut policy: TrustPolicyConfig) -> Result<TrustPolicyConfig, AppError> {
+fn normalize_guild_policy(mut policy: GuildPolicyConfig) -> Result<GuildPolicyConfig, AppError> {
     if policy.level_policies.is_empty() {
         return Err(AppError::BadRequest(
-            "trust policy must define at least one level policy".into(),
+            "guild policy must define at least one level policy".into(),
         ));
     }
     if policy.rank_policies.is_empty() {
         return Err(AppError::BadRequest(
-            "trust policy must define at least one rank policy".into(),
+            "guild policy must define at least one rank policy".into(),
         ));
     }
     if policy.community_upvote_daily_cap < 0 {
@@ -1680,5 +1680,5 @@ fn normalize_trust_policy(mut policy: TrustPolicyConfig) -> Result<TrustPolicyCo
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/trust_unit_tests.rs"]
+#[path = "../../tests/unit/guild_unit_tests.rs"]
 mod tests;

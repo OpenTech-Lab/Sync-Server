@@ -1,4 +1,4 @@
-CREATE TABLE user_trust_stats (
+CREATE TABLE user_guild_stats (
     user_id                  UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     active_days              INT NOT NULL DEFAULT 0 CHECK (active_days >= 0),
     contribution_score       INT NOT NULL DEFAULT 0 CHECK (contribution_score >= 0),
@@ -9,8 +9,8 @@ CREATE TABLE user_trust_stats (
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TRIGGER user_trust_stats_set_updated_at
-    BEFORE UPDATE ON user_trust_stats
+CREATE TRIGGER user_guild_stats_set_updated_at
+    BEFORE UPDATE ON user_guild_stats
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 

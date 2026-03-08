@@ -2,7 +2,7 @@ import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
 
 import { ConfigForm } from "./ui/config-form";
-import { TrustPolicyForm } from "./ui/trust-policy-form";
+import { GuildPolicyForm } from "./ui/guild-policy-form";
 
 type AdminConfig = {
   max_users_override: number | null;
@@ -15,7 +15,7 @@ type AdminConfig = {
   require_approval: boolean;
 };
 
-type TrustPolicyConfig = {
+type GuildPolicyConfig = {
   enforcement: {
     enabled: boolean;
     outbound_messages_enabled: boolean;
@@ -47,9 +47,9 @@ type TrustPolicyConfig = {
 
 export default async function ConfigPage() {
   await requireAdminSession();
-  const [config, trustPolicy] = await Promise.all([
+  const [config, guildPolicy] = await Promise.all([
     apiGetJson<AdminConfig>("/api/admin/config"),
-    apiGetJson<TrustPolicyConfig>("/api/admin/trust-policy"),
+    apiGetJson<GuildPolicyConfig>("/api/admin/guild-policy"),
   ]);
 
   return (
@@ -74,7 +74,7 @@ export default async function ConfigPage() {
         linkedPlanets={config.linked_planets}
         requireApproval={config.require_approval}
       />
-      <TrustPolicyForm policy={trustPolicy} />
+      <GuildPolicyForm policy={guildPolicy} />
     </div>
   );
 }

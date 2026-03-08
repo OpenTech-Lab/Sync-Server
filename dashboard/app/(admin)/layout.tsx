@@ -6,7 +6,7 @@ import { LogoutButton } from "./ui/logout-button";
 
 const navItems = [
   { href: "/dashboard", label: "Overview" },
-  { href: "/trust", label: "Trust Review" },
+  { href: "/guild", label: "Guild Review" },
   { href: "/users", label: "Users" },
   { href: "/stickers", label: "Stickers" },
   { href: "/config", label: "Config" },

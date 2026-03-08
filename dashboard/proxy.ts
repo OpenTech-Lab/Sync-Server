@@ -108,7 +108,7 @@ export async function proxy(request: NextRequest) {
   const isProtectedPath =
     normalizedPath.startsWith("/dashboard") ||
     normalizedPath.startsWith("/users") ||
-    normalizedPath.startsWith("/trust") ||
+    normalizedPath.startsWith("/guild") ||
     normalizedPath.startsWith("/config") ||
     normalizedPath.startsWith("/audit") ||
     normalizedPath.startsWith("/stickers") ||

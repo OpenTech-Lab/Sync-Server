@@ -27,9 +27,7 @@ fn is_valid_username(value: &str) -> bool {
     if !(USERNAME_MIN_LEN..=USERNAME_MAX_LEN).contains(&len) {
         return false;
     }
-    value
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-' || ch == ' ')
+    value.chars().all(|ch| !ch.is_control())
 }
 
 fn validate_avatar_base64(avatar_base64: &str) -> Result<(), AppError> {
@@ -78,7 +76,8 @@ pub async fn update_me(
     if let Some(ref username) = next_username {
         if !is_valid_username(username) {
             return Err(AppError::BadRequest(
-                "username must be 3-32 chars and only contain a-zA-Z0-9._- and spaces".into(),
+                "username must be 3-32 characters and may include UTF-8 letters, symbols, and spaces"
+                    .into(),
             ));
         }
     }
@@ -129,4 +128,22 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/me", web::patch().to(update_me))
         .route("/me", web::delete().to(delete_me))
         .route("/{user_id}", web::get().to(get_user));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_username;
+
+    #[test]
+    fn profile_username_allows_multilingual_utf8() {
+        assert!(is_valid_username("山田 太郎"));
+        assert!(is_valid_username("Марія"));
+        assert!(is_valid_username("مرحبا بالعالم"));
+    }
+
+    #[test]
+    fn profile_username_rejects_control_characters() {
+        assert!(!is_valid_username("hello\nworld"));
+        assert!(!is_valid_username("name\u{0}test"));
+    }
 }

@@ -183,9 +183,7 @@ fn is_valid_username(value: &str) -> bool {
     if !(3..=32).contains(&len) {
         return false;
     }
-    normalized
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-')
+    normalized.chars().all(|ch| !ch.is_control())
 }
 
 /// Verifies an ALTCHA payload (base64-encoded JSON) against the server HMAC key.
@@ -437,7 +435,7 @@ pub async fn register(
     }
     if !is_valid_username(&body.username) {
         return Err(AppError::BadRequest(
-            "username must be 3-32 chars and only contain a-zA-Z0-9._-".into(),
+            "username must be 3-32 characters (no control characters)".into(),
         ));
     }
 
@@ -519,7 +517,7 @@ pub async fn setup_admin(
     }
     if !is_valid_username(username) {
         return Err(AppError::BadRequest(
-            "username must be 3-32 chars and only contain a-zA-Z0-9._-".into(),
+            "username must be 3-32 characters (no control characters)".into(),
         ));
     }
 

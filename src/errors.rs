@@ -52,7 +52,9 @@ impl actix_web::ResponseError for AppError {
             AppError::TooManyRequests(_) => HttpResponse::TooManyRequests().json(body),
             _ => {
                 tracing::error!(error = %self, "Unhandled internal error");
-                HttpResponse::InternalServerError().json(body)
+                HttpResponse::InternalServerError().json(ErrorBody {
+                    error: "Internal server error".to_string(),
+                })
             }
         }
     }

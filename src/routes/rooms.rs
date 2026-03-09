@@ -163,11 +163,33 @@ pub async fn mark_room_read(
     Ok(HttpResponse::Ok().json(serde_json::json!({ "count": count })))
 }
 
+pub async fn leave_room(
+    pool: web::Data<Pool>,
+    auth: AuthUser,
+    room_id: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    let user_id = auth.0.user_id()?;
+    room_service::leave_room(&pool, *room_id, user_id)?;
+    Ok(HttpResponse::NoContent().finish())
+}
+
+pub async fn delete_room(
+    pool: web::Data<Pool>,
+    auth: AuthUser,
+    room_id: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    let user_id = auth.0.user_id()?;
+    room_service::delete_room(&pool, *room_id, user_id)?;
+    Ok(HttpResponse::NoContent().finish())
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("", web::post().to(create_room))
         .route("", web::get().to(list_rooms))
         .route("/{room_id}", web::get().to(get_room))
+        .route("/{room_id}", web::delete().to(delete_room))
         .route("/{room_id}/messages", web::get().to(get_room_messages))
         .route("/{room_id}/messages", web::post().to(send_room_message))
-        .route("/{room_id}/read", web::post().to(mark_room_read));
+        .route("/{room_id}/read", web::post().to(mark_room_read))
+        .route("/{room_id}/leave", web::post().to(leave_room));
 }

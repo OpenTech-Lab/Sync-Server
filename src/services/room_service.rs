@@ -251,6 +251,63 @@ pub fn list_room_member_ids(
         .map_err(AppError::from)
 }
 
+pub fn leave_room(pool: &Pool, room_id: Uuid, user_id: Uuid) -> Result<(), AppError> {
+    let mut conn = pool.get()?;
+    conn.transaction::<(), AppError, _>(|conn| {
+        let membership = room_members::table
+            .filter(room_members::room_id.eq(room_id))
+            .filter(room_members::user_id.eq(user_id))
+            .first::<RoomMember>(conn)
+            .optional()?;
+        let Some(_) = membership else {
+            return Err(room_access_error(conn, room_id));
+        };
+
+        diesel::delete(
+            room_members::table
+                .filter(room_members::room_id.eq(room_id))
+                .filter(room_members::user_id.eq(user_id)),
+        )
+        .execute(conn)?;
+
+        let remaining: i64 = room_members::table
+            .filter(room_members::room_id.eq(room_id))
+            .select(count_star())
+            .first(conn)?;
+
+        if remaining == 0 {
+            diesel::delete(room_messages::table.filter(room_messages::room_id.eq(room_id)))
+                .execute(conn)?;
+            diesel::delete(rooms::table.find(room_id)).execute(conn)?;
+        }
+
+        Ok(())
+    })
+}
+
+pub fn delete_room(pool: &Pool, room_id: Uuid, user_id: Uuid) -> Result<(), AppError> {
+    let mut conn = pool.get()?;
+    conn.transaction::<(), AppError, _>(|conn| {
+        let room = rooms::table
+            .find(room_id)
+            .first::<crate::models::room::Room>(conn)
+            .optional()?
+            .ok_or(AppError::NotFound)?;
+
+        if room.created_by != user_id {
+            return Err(AppError::Forbidden);
+        }
+
+        diesel::delete(room_members::table.filter(room_members::room_id.eq(room_id)))
+            .execute(conn)?;
+        diesel::delete(room_messages::table.filter(room_messages::room_id.eq(room_id)))
+            .execute(conn)?;
+        diesel::delete(rooms::table.find(room_id)).execute(conn)?;
+
+        Ok(())
+    })
+}
+
 fn normalize_room_name(raw: &str) -> Result<String, AppError> {
     let normalized = raw.trim();
     if normalized.is_empty() {

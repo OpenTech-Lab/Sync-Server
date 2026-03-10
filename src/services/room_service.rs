@@ -131,6 +131,113 @@ pub fn get_room(pool: &Pool, room_id: Uuid, viewer_id: Uuid) -> Result<RoomDetai
     room_detail_conn(&mut conn, &room, viewer_id)
 }
 
+pub fn add_room_members(
+    pool: &Pool,
+    room_id: Uuid,
+    owner_id: Uuid,
+    member_ids: &[Uuid],
+) -> Result<RoomDetail, AppError> {
+    let mut conn = pool.get()?;
+    conn.transaction::<RoomDetail, AppError, _>(|conn| {
+        let room = ensure_room_member_conn(conn, room_id, owner_id)?;
+        if room.created_by != owner_id {
+            return Err(AppError::Forbidden);
+        }
+
+        let requested_member_ids = member_ids
+            .iter()
+            .copied()
+            .filter(|member_id| *member_id != owner_id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        if requested_member_ids.is_empty() {
+            return room_detail_conn(conn, &room, owner_id);
+        }
+
+        ensure_users_exist_conn(conn, &requested_member_ids)?;
+
+        let existing_member_ids = room_members::table
+            .filter(room_members::room_id.eq(room_id))
+            .filter(room_members::user_id.eq_any(&requested_member_ids))
+            .select(room_members::user_id)
+            .load::<Uuid>(conn)?
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let new_member_ids = requested_member_ids
+            .into_iter()
+            .filter(|member_id| !existing_member_ids.contains(member_id))
+            .collect::<Vec<_>>();
+
+        if !new_member_ids.is_empty() {
+            let now = Utc::now();
+            let records = new_member_ids
+                .iter()
+                .map(|member_id| NewRoomMember {
+                    room_id,
+                    user_id: *member_id,
+                    role: "member".to_string(),
+                    last_read_at: Some(now),
+                })
+                .collect::<Vec<_>>();
+
+            diesel::insert_into(room_members::table)
+                .values(&records)
+                .execute(conn)?;
+
+            diesel::update(rooms::table.find(room_id))
+                .set(rooms::updated_at.eq(now))
+                .execute(conn)?;
+        }
+
+        room_detail_conn(conn, &room, owner_id)
+    })
+}
+
+pub fn remove_room_member(
+    pool: &Pool,
+    room_id: Uuid,
+    owner_id: Uuid,
+    member_id: Uuid,
+) -> Result<RoomDetail, AppError> {
+    let mut conn = pool.get()?;
+    conn.transaction::<RoomDetail, AppError, _>(|conn| {
+        let room = ensure_room_member_conn(conn, room_id, owner_id)?;
+        if room.created_by != owner_id {
+            return Err(AppError::Forbidden);
+        }
+        if member_id == room.created_by {
+            return Err(AppError::BadRequest("Room owner cannot be removed".into()));
+        }
+
+        let membership_exists = room_members::table
+            .filter(room_members::room_id.eq(room_id))
+            .filter(room_members::user_id.eq(member_id))
+            .select(room_members::user_id)
+            .first::<Uuid>(conn)
+            .optional()?
+            .is_some();
+        if !membership_exists {
+            return Err(AppError::NotFound);
+        }
+
+        diesel::delete(
+            room_members::table
+                .filter(room_members::room_id.eq(room_id))
+                .filter(room_members::user_id.eq(member_id)),
+        )
+        .execute(conn)?;
+
+        diesel::update(rooms::table.find(room_id))
+            .set(rooms::updated_at.eq(Utc::now()))
+            .execute(conn)?;
+
+        room_detail_conn(conn, &room, owner_id)
+    })
+}
+
 pub fn get_room_messages(
     pool: &Pool,
     room_id: Uuid,

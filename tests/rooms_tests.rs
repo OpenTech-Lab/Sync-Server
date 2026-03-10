@@ -220,6 +220,220 @@ async fn send_room_message_updates_unread_counts() {
 }
 
 #[tokio::test]
+async fn room_owner_can_add_members_after_create() {
+    let Some(base) = base_url() else { return };
+    let client = Client::new();
+
+    let (token_owner, _owner_id) = register_and_login(&client, &base).await;
+    let (_token_member, member_id) = register_and_login(&client, &base).await;
+    let (_token_new_member, new_member_id) = register_and_login(&client, &base).await;
+
+    let room: Value = client
+        .post(format!("{base}/api/rooms"))
+        .bearer_auth(&token_owner)
+        .json(&json!({"name": "Invite Room", "member_ids": [member_id]}))
+        .send()
+        .await
+        .expect("create room failed")
+        .json()
+        .await
+        .expect("invalid JSON");
+
+    let room_id = room["id"].as_str().expect("missing room id");
+
+    let res = client
+        .post(format!("{base}/api/rooms/{room_id}/members"))
+        .bearer_auth(&token_owner)
+        .json(&json!({"member_ids": [new_member_id]}))
+        .send()
+        .await
+        .expect("invite failed");
+
+    assert_eq!(res.status(), 200);
+    let updated: Value = res.json().await.expect("invalid JSON");
+    assert_eq!(updated["member_count"], 3);
+    let members = updated["members"].as_array().expect("members not array");
+    assert!(
+        members
+            .iter()
+            .any(|member| member["user_id"] == new_member_id),
+        "new member not found in room members"
+    );
+}
+
+#[tokio::test]
+async fn non_owner_cannot_add_members_after_create() {
+    let Some(base) = base_url() else { return };
+    let client = Client::new();
+
+    let (token_owner, _owner_id) = register_and_login(&client, &base).await;
+    let (token_member, member_id) = register_and_login(&client, &base).await;
+    let (_token_new_member, new_member_id) = register_and_login(&client, &base).await;
+
+    let room: Value = client
+        .post(format!("{base}/api/rooms"))
+        .bearer_auth(&token_owner)
+        .json(&json!({"name": "Invite Room", "member_ids": [member_id]}))
+        .send()
+        .await
+        .expect("create room failed")
+        .json()
+        .await
+        .expect("invalid JSON");
+
+    let room_id = room["id"].as_str().expect("missing room id");
+
+    let res = client
+        .post(format!("{base}/api/rooms/{room_id}/members"))
+        .bearer_auth(&token_member)
+        .json(&json!({"member_ids": [new_member_id]}))
+        .send()
+        .await
+        .expect("invite failed");
+
+    assert_eq!(res.status(), 403);
+}
+
+#[tokio::test]
+async fn room_owner_can_remove_member_after_create() {
+    let Some(base) = base_url() else { return };
+    let client = Client::new();
+
+    let (token_owner, owner_id) = register_and_login(&client, &base).await;
+    let (token_member, member_id) = register_and_login(&client, &base).await;
+    let (token_other, other_id) = register_and_login(&client, &base).await;
+
+    let room: Value = client
+        .post(format!("{base}/api/rooms"))
+        .bearer_auth(&token_owner)
+        .json(&json!({"name": "Remove Room", "member_ids": [member_id, other_id]}))
+        .send()
+        .await
+        .expect("create room failed")
+        .json()
+        .await
+        .expect("invalid JSON");
+
+    let room_id = room["id"].as_str().expect("missing room id");
+
+    let res = client
+        .delete(format!("{base}/api/rooms/{room_id}/members/{member_id}"))
+        .bearer_auth(&token_owner)
+        .send()
+        .await
+        .expect("remove member failed");
+
+    assert_eq!(res.status(), 200);
+    let updated: Value = res.json().await.expect("invalid JSON");
+    assert_eq!(updated["member_count"], 2);
+    let members = updated["members"].as_array().expect("members not array");
+    assert!(
+        members.iter().all(|member| member["user_id"] != member_id),
+        "removed member still appears in room detail"
+    );
+    assert!(
+        members.iter().any(|member| member["user_id"] == owner_id),
+        "owner should remain in room detail"
+    );
+
+    let removed_room_res = client
+        .get(format!("{base}/api/rooms/{room_id}"))
+        .bearer_auth(&token_member)
+        .send()
+        .await
+        .expect("removed member get room failed");
+    assert_eq!(removed_room_res.status(), 404);
+
+    let removed_rooms: Value = client
+        .get(format!("{base}/api/rooms"))
+        .bearer_auth(&token_member)
+        .send()
+        .await
+        .expect("removed member list rooms failed")
+        .json()
+        .await
+        .expect("invalid JSON");
+    assert!(
+        removed_rooms
+            .as_array()
+            .map(|rooms| rooms.is_empty())
+            .unwrap_or(false),
+        "removed member should no longer list the room"
+    );
+
+    let other_room_res = client
+        .get(format!("{base}/api/rooms/{room_id}"))
+        .bearer_auth(&token_other)
+        .send()
+        .await
+        .expect("other member get room failed");
+    assert_eq!(other_room_res.status(), 200);
+}
+
+#[tokio::test]
+async fn non_owner_cannot_remove_room_member() {
+    let Some(base) = base_url() else { return };
+    let client = Client::new();
+
+    let (token_owner, _owner_id) = register_and_login(&client, &base).await;
+    let (token_member, member_id) = register_and_login(&client, &base).await;
+    let (_token_other, other_id) = register_and_login(&client, &base).await;
+
+    let room: Value = client
+        .post(format!("{base}/api/rooms"))
+        .bearer_auth(&token_owner)
+        .json(&json!({"name": "Remove Room", "member_ids": [member_id, other_id]}))
+        .send()
+        .await
+        .expect("create room failed")
+        .json()
+        .await
+        .expect("invalid JSON");
+
+    let room_id = room["id"].as_str().expect("missing room id");
+
+    let res = client
+        .delete(format!("{base}/api/rooms/{room_id}/members/{other_id}"))
+        .bearer_auth(&token_member)
+        .send()
+        .await
+        .expect("remove member failed");
+
+    assert_eq!(res.status(), 403);
+}
+
+#[tokio::test]
+async fn room_owner_cannot_remove_self() {
+    let Some(base) = base_url() else { return };
+    let client = Client::new();
+
+    let (token_owner, owner_id) = register_and_login(&client, &base).await;
+    let (_token_member, member_id) = register_and_login(&client, &base).await;
+
+    let room: Value = client
+        .post(format!("{base}/api/rooms"))
+        .bearer_auth(&token_owner)
+        .json(&json!({"name": "Remove Room", "member_ids": [member_id]}))
+        .send()
+        .await
+        .expect("create room failed")
+        .json()
+        .await
+        .expect("invalid JSON");
+
+    let room_id = room["id"].as_str().expect("missing room id");
+
+    let res = client
+        .delete(format!("{base}/api/rooms/{room_id}/members/{owner_id}"))
+        .bearer_auth(&token_owner)
+        .send()
+        .await
+        .expect("remove owner failed");
+
+    assert_eq!(res.status(), 400);
+}
+
+#[tokio::test]
 async fn pagination_and_mark_read_work_correctly() {
     let Some(base) = base_url() else { return };
     let client = Client::new();

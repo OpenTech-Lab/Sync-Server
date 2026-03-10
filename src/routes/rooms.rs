@@ -17,6 +17,12 @@ pub struct CreateRoomRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct AddRoomMembersRequest {
+    #[serde(default)]
+    pub member_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RoomMessagesQuery {
     pub before: Option<Uuid>,
     pub limit: Option<u8>,
@@ -37,6 +43,23 @@ async fn publish_new_room_message_event(
         "type": "new_room_message",
         "room_id": room_id,
         "message": message,
+    });
+    if let Ok(mut conn) = redis_pubsub::get_async_conn(redis).await {
+        for member_id in member_ids {
+            let channel = redis_pubsub::user_channel(*member_id);
+            let _ = redis_pubsub::publish(&mut conn, &channel, &event).await;
+        }
+    }
+}
+
+async fn publish_room_membership_changed_event(
+    redis: &redis::Client,
+    room_id: Uuid,
+    member_ids: &[Uuid],
+) {
+    let event = serde_json::json!({
+        "type": "room_membership_changed",
+        "room_id": room_id,
     });
     if let Ok(mut conn) = redis_pubsub::get_async_conn(redis).await {
         for member_id in member_ids {
@@ -106,6 +129,40 @@ pub async fn get_room(
 ) -> Result<HttpResponse, AppError> {
     let user_id = auth.0.user_id()?;
     let room = room_service::get_room(&pool, *room_id, user_id)?;
+    Ok(HttpResponse::Ok().json(room))
+}
+
+pub async fn add_room_members(
+    pool: web::Data<Pool>,
+    redis: web::Data<redis::Client>,
+    auth: AuthUser,
+    room_id: web::Path<Uuid>,
+    body: web::Json<AddRoomMembersRequest>,
+) -> Result<HttpResponse, AppError> {
+    let user_id = auth.0.user_id()?;
+    let room = room_service::add_room_members(&pool, *room_id, user_id, &body.member_ids)?;
+    let room_member_ids = room_service::list_room_member_ids(&pool, *room_id, user_id)?;
+    publish_room_membership_changed_event(&redis, *room_id, &room_member_ids).await;
+    guild_service::record_human_activity(&pool, user_id)?;
+    Ok(HttpResponse::Ok().json(room))
+}
+
+pub async fn remove_room_member(
+    pool: web::Data<Pool>,
+    redis: web::Data<redis::Client>,
+    auth: AuthUser,
+    path: web::Path<(Uuid, Uuid)>,
+) -> Result<HttpResponse, AppError> {
+    let user_id = auth.0.user_id()?;
+    let (room_id, member_id) = path.into_inner();
+    let room = room_service::remove_room_member(&pool, room_id, user_id, member_id)?;
+    let mut event_member_ids = room_service::list_room_member_ids(&pool, room_id, user_id)?
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    event_member_ids.insert(member_id);
+    let event_member_ids = event_member_ids.into_iter().collect::<Vec<_>>();
+    publish_room_membership_changed_event(&redis, room_id, &event_member_ids).await;
+    guild_service::record_human_activity(&pool, user_id)?;
     Ok(HttpResponse::Ok().json(room))
 }
 
@@ -188,6 +245,11 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("", web::get().to(list_rooms))
         .route("/{room_id}", web::get().to(get_room))
         .route("/{room_id}", web::delete().to(delete_room))
+        .route("/{room_id}/members", web::post().to(add_room_members))
+        .route(
+            "/{room_id}/members/{member_id}",
+            web::delete().to(remove_room_member),
+        )
         .route("/{room_id}/messages", web::get().to(get_room_messages))
         .route("/{room_id}/messages", web::post().to(send_room_message))
         .route("/{room_id}/read", web::post().to(mark_room_read))

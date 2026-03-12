@@ -262,6 +262,57 @@ async fn room_owner_can_add_members_after_create() {
 }
 
 #[tokio::test]
+async fn room_owner_can_rename_room() {
+    let Some(base) = base_url() else { return };
+    let client = Client::new();
+
+    let (token_owner, _owner_id) = register_and_login(&client, &base).await;
+    let (_token_member, member_id) = register_and_login(&client, &base).await;
+
+    let room: Value = client
+        .post(format!("{base}/api/rooms"))
+        .bearer_auth(&token_owner)
+        .json(&json!({"name": "Before Rename", "member_ids": [member_id]}))
+        .send()
+        .await
+        .expect("create room failed")
+        .json()
+        .await
+        .expect("invalid JSON");
+
+    let room_id = room["id"].as_str().expect("missing room id");
+
+    let res = client
+        .patch(format!("{base}/api/rooms/{room_id}"))
+        .bearer_auth(&token_owner)
+        .json(&json!({"name": "After Rename"}))
+        .send()
+        .await
+        .expect("rename room failed");
+
+    assert_eq!(res.status(), 200);
+    let updated: Value = res.json().await.expect("invalid JSON");
+    assert_eq!(updated["name"], "After Rename");
+
+    let listed: Value = client
+        .get(format!("{base}/api/rooms"))
+        .bearer_auth(&token_owner)
+        .send()
+        .await
+        .expect("list rooms failed")
+        .json()
+        .await
+        .expect("invalid JSON");
+    let rooms = listed.as_array().expect("expected rooms array");
+    assert!(
+        rooms
+            .iter()
+            .any(|entry| entry["id"] == room_id && entry["name"] == "After Rename"),
+        "renamed room not reflected in room summaries"
+    );
+}
+
+#[tokio::test]
 async fn non_owner_cannot_add_members_after_create() {
     let Some(base) = base_url() else { return };
     let client = Client::new();

@@ -23,6 +23,11 @@ pub struct AddRoomMembersRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UpdateRoomRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RoomMessagesQuery {
     pub before: Option<Uuid>,
     pub limit: Option<u8>,
@@ -129,6 +134,17 @@ pub async fn get_room(
 ) -> Result<HttpResponse, AppError> {
     let user_id = auth.0.user_id()?;
     let room = room_service::get_room(&pool, *room_id, user_id)?;
+    Ok(HttpResponse::Ok().json(room))
+}
+
+pub async fn update_room(
+    pool: web::Data<Pool>,
+    auth: AuthUser,
+    room_id: web::Path<Uuid>,
+    body: web::Json<UpdateRoomRequest>,
+) -> Result<HttpResponse, AppError> {
+    let user_id = auth.0.user_id()?;
+    let room = room_service::rename_room(&pool, *room_id, user_id, &body.name)?;
     Ok(HttpResponse::Ok().json(room))
 }
 
@@ -244,6 +260,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("", web::post().to(create_room))
         .route("", web::get().to(list_rooms))
         .route("/{room_id}", web::get().to(get_room))
+        .route("/{room_id}", web::patch().to(update_room))
         .route("/{room_id}", web::delete().to(delete_room))
         .route("/{room_id}/members", web::post().to(add_room_members))
         .route(

@@ -131,6 +131,32 @@ pub fn get_room(pool: &Pool, room_id: Uuid, viewer_id: Uuid) -> Result<RoomDetai
     room_detail_conn(&mut conn, &room, viewer_id)
 }
 
+pub fn rename_room(
+    pool: &Pool,
+    room_id: Uuid,
+    owner_id: Uuid,
+    name: &str,
+) -> Result<RoomDetail, AppError> {
+    let mut conn = pool.get()?;
+    conn.transaction::<RoomDetail, AppError, _>(|conn| {
+        let room = ensure_room_member_conn(conn, room_id, owner_id)?;
+        if room.created_by != owner_id {
+            return Err(AppError::Forbidden);
+        }
+
+        let room_name = normalize_room_name(name)?;
+        let updated_room = if room.name == room_name {
+            room
+        } else {
+            diesel::update(rooms::table.find(room_id))
+                .set((rooms::name.eq(room_name), rooms::updated_at.eq(Utc::now())))
+                .get_result::<Room>(conn)?
+        };
+
+        room_detail_conn(conn, &updated_room, owner_id)
+    })
+}
+
 pub fn add_room_members(
     pool: &Pool,
     room_id: Uuid,

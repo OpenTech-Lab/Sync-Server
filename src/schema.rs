@@ -120,6 +120,7 @@ diesel::table! {
         email -> Text,
         password_hash -> Text,
         avatar_base64 -> Nullable<Text>,
+        description -> Nullable<Text>,
         message_public_key -> Nullable<Text>,
         role -> Text,
         is_active -> Bool,

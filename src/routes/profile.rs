@@ -11,6 +11,7 @@ use crate::services::{guild_service, user_service};
 
 const USERNAME_MIN_LEN: usize = 2;
 const USERNAME_MAX_LEN: usize = 32;
+const DESCRIPTION_MAX_WORDS: usize = 100;
 const AVATAR_MAX_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Deserialize)]
@@ -18,6 +19,8 @@ pub struct UpdateProfileRequest {
     pub username: Option<String>,
     #[serde(default)]
     pub avatar_base64: Option<Option<String>>,
+    #[serde(default)]
+    pub description: Option<Option<String>>,
     #[serde(default)]
     pub message_public_key: Option<Option<String>>,
 }
@@ -28,6 +31,10 @@ fn is_valid_username(value: &str) -> bool {
         return false;
     }
     value.chars().all(|ch| !ch.is_control())
+}
+
+fn is_valid_description(value: &str) -> bool {
+    value.split_whitespace().count() <= DESCRIPTION_MAX_WORDS
 }
 
 fn validate_avatar_base64(avatar_base64: &str) -> Result<(), AppError> {
@@ -82,6 +89,24 @@ pub async fn update_me(
         }
     }
 
+    let next_description = match body.description.as_ref() {
+        Some(Some(raw)) => {
+            let trimmed = raw.trim().to_string();
+            if trimmed.is_empty() {
+                Some(None)
+            } else {
+                if !is_valid_description(&trimmed) {
+                    return Err(AppError::BadRequest(
+                        "description must be 100 words or less".into(),
+                    ));
+                }
+                Some(Some(trimmed))
+            }
+        }
+        Some(None) => Some(None),
+        None => None,
+    };
+
     if let Some(Some(ref avatar)) = body.avatar_base64 {
         validate_avatar_base64(avatar)?;
     }
@@ -94,6 +119,7 @@ pub async fn update_me(
         auth.0.user_id()?,
         next_username,
         body.avatar_base64.clone(),
+        next_description,
         body.message_public_key.clone(),
     )?;
 
@@ -132,7 +158,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_valid_username;
+    use super::{is_valid_description, is_valid_username};
 
     #[test]
     fn profile_username_allows_multilingual_utf8() {
@@ -152,5 +178,20 @@ mod tests {
     fn profile_username_rejects_control_characters() {
         assert!(!is_valid_username("hello\nworld"));
         assert!(!is_valid_username("name\u{0}test"));
+    }
+
+    #[test]
+    fn profile_description_accepts_short_values() {
+        assert!(is_valid_description("hello world"));
+        assert!(is_valid_description(""));
+    }
+
+    #[test]
+    fn profile_description_rejects_more_than_one_hundred_words() {
+        let over_limit = std::iter::repeat("word")
+            .take(101)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!is_valid_description(&over_limit));
     }
 }

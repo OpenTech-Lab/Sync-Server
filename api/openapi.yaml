@@ -316,6 +316,9 @@ components:
         avatar_base64:
           type: string
           nullable: true
+        description:
+          type: string
+          nullable: true
         message_public_key:
           type: string
           nullable: true
@@ -337,6 +340,10 @@ components:
           type: string
           nullable: true
           description: Base64-encoded avatar image. Pass `null` to clear the avatar.
+        description:
+          type: string
+          nullable: true
+          description: Profile description/status message. Pass `null` to clear it.
         message_public_key:
           type: string
           nullable: true

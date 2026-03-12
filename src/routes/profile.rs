@@ -9,7 +9,7 @@ use crate::errors::AppError;
 use crate::models::user::UserProfilePublic;
 use crate::services::{guild_service, user_service};
 
-const USERNAME_MIN_LEN: usize = 3;
+const USERNAME_MIN_LEN: usize = 2;
 const USERNAME_MAX_LEN: usize = 32;
 const AVATAR_MAX_BYTES: usize = 256 * 1024;
 
@@ -76,7 +76,7 @@ pub async fn update_me(
     if let Some(ref username) = next_username {
         if !is_valid_username(username) {
             return Err(AppError::BadRequest(
-                "username must be 3-32 characters and may include UTF-8 letters, symbols, and spaces"
+                "username must be 2-32 characters and may include UTF-8 letters, symbols, and spaces"
                     .into(),
             ));
         }
@@ -136,9 +136,16 @@ mod tests {
 
     #[test]
     fn profile_username_allows_multilingual_utf8() {
+        assert!(is_valid_username("ab"));
         assert!(is_valid_username("山田 太郎"));
         assert!(is_valid_username("Марія"));
         assert!(is_valid_username("مرحبا بالعالم"));
+    }
+
+    #[test]
+    fn profile_username_rejects_too_short_values() {
+        assert!(!is_valid_username("a"));
+        assert!(!is_valid_username(""));
     }
 
     #[test]

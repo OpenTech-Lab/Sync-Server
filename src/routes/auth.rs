@@ -180,7 +180,7 @@ fn record_registration(ip: &str) {
 fn is_valid_username(value: &str) -> bool {
     let normalized = value.trim();
     let len = normalized.chars().count();
-    if !(3..=32).contains(&len) {
+    if !(2..=32).contains(&len) {
         return false;
     }
     normalized.chars().all(|ch| !ch.is_control())
@@ -435,7 +435,7 @@ pub async fn register(
     }
     if !is_valid_username(&body.username) {
         return Err(AppError::BadRequest(
-            "username must be 3-32 characters (no control characters)".into(),
+            "username must be 2-32 characters (no control characters)".into(),
         ));
     }
 
@@ -517,7 +517,7 @@ pub async fn setup_admin(
     }
     if !is_valid_username(username) {
         return Err(AppError::BadRequest(
-            "username must be 3-32 characters (no control characters)".into(),
+            "username must be 2-32 characters (no control characters)".into(),
         ));
     }
 
@@ -1101,4 +1101,27 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/forgot-password", web::post().to(forgot_password))
         .route("/reset-password", web::get().to(reset_password_form))
         .route("/reset-password", web::post().to(reset_password));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_username;
+
+    #[test]
+    fn username_allows_two_characters_and_trims() {
+        assert!(is_valid_username("ab"));
+        assert!(is_valid_username(" ab "));
+    }
+
+    #[test]
+    fn username_rejects_too_short_values() {
+        assert!(!is_valid_username("a"));
+        assert!(!is_valid_username(" "));
+    }
+
+    #[test]
+    fn username_rejects_control_characters() {
+        assert!(!is_valid_username("hello\nworld"));
+        assert!(!is_valid_username("name\u{0}test"));
+    }
 }

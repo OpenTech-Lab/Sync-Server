@@ -330,6 +330,8 @@ components:
       properties:
         username:
           type: string
+          minLength: 2
+          maxLength: 32
           nullable: true
         avatar_base64:
           type: string
@@ -512,8 +514,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email, password]
+              required: [username, email, password]
               properties:
+                username:
+                  type: string
+                  minLength: 2
+                  maxLength: 32
                 email:
                   type: string
                   format: email

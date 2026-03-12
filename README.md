@@ -87,6 +87,8 @@ When `INSTANCE_DOMAIN` is a real domain with DNS A/AAAA pointing to this host:
 - Ensure both DNS records point to this server:
   - `INSTANCE_DOMAIN`
   - `push.INSTANCE_DOMAIN`
+- For reliable mobile-carrier access, publish both IPv4 (`A`) and IPv6 (`AAAA`) records when your host supports IPv6.
+- Open TCP `80` and `443` for both IPv4 and IPv6 in the host firewall / cloud security rules.
 ```bash
 bash scripts/init-ssl.sh
 ```
@@ -113,6 +115,7 @@ docker compose down
 - `scripts/init-ssl-dev.sh` is for local dev (`INSTANCE_DOMAIN=localhost`).
 - `scripts/init-ssl.sh` is for real domains with Let's Encrypt.
 - If `mkcert` is unavailable, `init-ssl-dev.sh` falls back to self-signed `openssl` certs (browser warning expected).
+- If HTTPS works on Wi-Fi but fails on cellular, check whether the domain only has an `A` record. Many mobile networks are IPv6-first, so you should provision an `AAAA` record and allow IPv6 traffic on `80`/`443`.
 - For OSS/public infra, keep `PUSH_DELIVERY_MODE=relay` and configure `notification_webhook_url` to your hosted push relay.
 - Direct APNs modes (`direct`, `hybrid`) require APNs credentials and iOS Push Notifications capability enabled for the app id/profile.
 

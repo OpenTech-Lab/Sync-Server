@@ -63,6 +63,7 @@ http {
     # ── Block direct IP access ────────────────────────────────────────────────
     server {
         listen 80 default_server;
+        listen [::]:80 default_server;
         server_name _;
 
         # Container-local health probe target used by docker healthcheck.
@@ -78,6 +79,7 @@ http {
 
     server {
         listen 443 ssl default_server;
+        listen [::]:443 ssl default_server;
         server_name _;
         ssl_certificate     /etc/nginx/certs/dummy.crt;
         ssl_certificate_key /etc/nginx/certs/dummy.key;
@@ -87,6 +89,7 @@ http {
     # ── HTTP: ACME challenge + redirect (API domain) ──────────────────────────
     server {
         listen 80;
+        listen [::]:80;
         server_name ${INSTANCE_DOMAIN} push.${INSTANCE_DOMAIN};
 
         location /.well-known/acme-challenge/ {
@@ -101,6 +104,7 @@ http {
     # ── HTTPS: API ────────────────────────────────────────────────────────────
     server {
         listen 443 ssl;
+        listen [::]:443 ssl;
         server_name ${INSTANCE_DOMAIN} push.${INSTANCE_DOMAIN};
 
         ssl_certificate     /etc/letsencrypt/live/${INSTANCE_DOMAIN}/fullchain.pem;

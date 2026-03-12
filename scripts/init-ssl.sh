@@ -125,6 +125,7 @@ events { worker_connections 1024; }
 http {
     server {
         listen 80;
+        listen [::]:80;
         server_name $INSTANCE_DOMAIN $PUSH_DOMAIN;
         location /.well-known/acme-challenge/ { root /var/www/certbot; }
         location / { return 200 "bootstrapping"; }

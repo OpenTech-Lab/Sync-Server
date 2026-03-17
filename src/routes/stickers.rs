@@ -21,6 +21,12 @@ pub struct ModerateStickerRequest {
     pub action: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RenameGroupRequest {
+    pub old_name: String,
+    pub new_name: String,
+}
+
 #[derive(Debug, Serialize)]
 struct StickerTrustBlockedResponse {
     error: String,
@@ -202,9 +208,35 @@ pub async fn moderate(
     Ok(HttpResponse::Ok().json(updated))
 }
 
+pub async fn rename_group(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    body: web::Json<RenameGroupRequest>,
+) -> Result<HttpResponse, AppError> {
+    let admin_user_id = admin.0.user_id()?;
+    let affected = sticker_service::rename_sticker_group(&pool, &body.old_name, &body.new_name)?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_user_id),
+        "sticker.rename_group",
+        None,
+        serde_json::json!({
+            "old_name": body.old_name,
+            "new_name": body.new_name,
+            "affected_stickers": affected,
+        }),
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "old_name": body.old_name,
+        "new_name": body.new_name,
+        "affected": affected,
+    })))
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/upload", web::post().to(upload))
         .route("/list", web::get().to(list))
+        .route("/groups/rename", web::patch().to(rename_group))
         .route("/{id}", web::get().to(get_by_id))
         .route("/{id}/moderate", web::post().to(moderate));
 }

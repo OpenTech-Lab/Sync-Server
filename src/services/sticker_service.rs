@@ -120,6 +120,42 @@ pub fn upload_sticker_conn(
     Ok(StickerDetail::from(saved))
 }
 
+pub fn rename_sticker_group(
+    pool: &Pool,
+    old_name: &str,
+    new_name: &str,
+) -> Result<usize, AppError> {
+    let old_name = old_name.trim();
+    let new_name = new_name.trim();
+
+    if old_name.is_empty() || new_name.is_empty() {
+        return Err(AppError::BadRequest(
+            "old_name and new_name are required".into(),
+        ));
+    }
+    if new_name.len() > 40 {
+        return Err(AppError::BadRequest(
+            "new_name must be <= 40 chars".into(),
+        ));
+    }
+
+    let mut conn = pool.get()?;
+
+    let changed =
+        diesel::update(sticker_dsl::stickers.filter(sticker_dsl::group_name.eq(old_name)))
+            .set((
+                sticker_dsl::group_name.eq(new_name),
+                sticker_dsl::updated_at.eq(chrono::Utc::now()),
+            ))
+            .execute(&mut conn)?;
+
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(changed)
+}
+
 pub fn supported_mime_types() -> &'static [&'static str] {
     &ALLOWED_MIME_TYPES
 }

@@ -1,13 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
 type GuildPolicyConfig = {
@@ -40,6 +51,9 @@ type GuildPolicyConfig = {
   safe_attachment_types: string[];
 };
 
+type LevelPolicy = GuildPolicyConfig["level_policies"][number];
+type RankPolicy = GuildPolicyConfig["rank_policies"][number];
+
 type GuildHistoryPruneResult = {
   daily_counter_retention_days: number;
   score_event_retention_days: number;
@@ -53,19 +67,34 @@ function formatPolicy(policy: GuildPolicyConfig) {
   return JSON.stringify(policy, null, 2);
 }
 
-function EnforcementBadge({
+/** Nullable number → display string */
+function nn(v: number | null): string {
+  return v === null ? "" : String(v);
+}
+
+/** Input string → nullable number */
+function pnn(s: string): number | null {
+  const t = s.trim();
+  return t === "" ? null : Number(t);
+}
+
+function SwitchRow({
+  id,
   label,
-  enabled,
+  checked,
+  onCheckedChange,
 }: {
+  id: string;
   label: string;
-  enabled: boolean;
+  checked: boolean;
+  onCheckedChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <Badge variant={enabled ? "default" : "secondary"}>
-        {enabled ? "on" : "off"}
-      </Badge>
+    <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+      <Label className="cursor-pointer text-sm" htmlFor={id}>
+        {label}
+      </Label>
+      <Switch checked={checked} id={id} onCheckedChange={onCheckedChange} />
     </div>
   );
 }
@@ -77,22 +106,22 @@ export function GuildPolicyForm({ policy }: { policy: GuildPolicyConfig }) {
   const [pruning, setPruning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [attachmentInput, setAttachmentInput] = useState("");
 
   const parseResult = useMemo(() => {
     try {
-      return {
-        value: JSON.parse(draft) as GuildPolicyConfig,
-        error: null,
-      };
-    } catch (parseError) {
-      return {
-        value: null,
-        error: parseError instanceof Error ? parseError.message : "Invalid JSON",
-      };
+      return { value: JSON.parse(draft) as GuildPolicyConfig, error: null };
+    } catch (e) {
+      return { value: null, error: e instanceof Error ? e.message : "Invalid JSON" };
     }
   }, [draft]);
 
-  const summaryPolicy = parseResult.value ?? policy;
+  /** Apply an immutable update to the parsed policy and sync back to draft. */
+  function update(updater: (p: GuildPolicyConfig) => GuildPolicyConfig) {
+    const current = parseResult.value;
+    if (!current) return;
+    setDraft(formatPolicy(updater(current)));
+  }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -107,16 +136,12 @@ export function GuildPolicyForm({ policy }: { policy: GuildPolicyConfig }) {
     setSaving(true);
     const response = await fetch("/api/admin/guild-policy", {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(parseResult.value),
     });
 
     if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as
-        | { error?: string }
-        | null;
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
       setError(body?.error ?? "Failed to save guild policy");
       setSaving(false);
       return;
@@ -130,11 +155,7 @@ export function GuildPolicyForm({ policy }: { policy: GuildPolicyConfig }) {
   }
 
   async function pruneHistory() {
-    if (
-      !confirm(
-        "Prune guild counters and score history using the current retention windows?",
-      )
-    ) {
+    if (!confirm("Prune guild counters and score history using the current retention windows?")) {
       return;
     }
 
@@ -142,14 +163,10 @@ export function GuildPolicyForm({ policy }: { policy: GuildPolicyConfig }) {
     setNotice(null);
     setPruning(true);
 
-    const response = await fetch("/api/admin/guild-policy/prune-history", {
-      method: "POST",
-    });
+    const response = await fetch("/api/admin/guild-policy/prune-history", { method: "POST" });
 
     if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as
-        | { error?: string }
-        | null;
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
       setError(body?.error ?? "Failed to prune guild history");
       setPruning(false);
       return;
@@ -178,6 +195,112 @@ export function GuildPolicyForm({ policy }: { policy: GuildPolicyConfig }) {
     setError(null);
   }
 
+  // ── Level policy helpers ─────────────────────────────────────────────────
+
+  function updateLevelPolicy(idx: number, field: keyof LevelPolicy, raw: string) {
+    update((p) => ({
+      ...p,
+      level_policies: p.level_policies.map((row, i) => {
+        if (i !== idx) return row;
+        const val =
+          field === "level" || field === "min_active_days" ? Number(raw) || 0 : pnn(raw);
+        return { ...row, [field]: val };
+      }),
+    }));
+  }
+
+  function addLevelPolicy() {
+    update((p) => ({
+      ...p,
+      level_policies: [
+        ...p.level_policies,
+        {
+          level: p.level_policies.length + 1,
+          min_active_days: 0,
+          max_active_days: null,
+          daily_outbound_messages_limit: null,
+          daily_friend_add_limit: null,
+          daily_attachment_send_limit: null,
+        },
+      ],
+    }));
+  }
+
+  function removeLevelPolicy(idx: number) {
+    update((p) => ({
+      ...p,
+      level_policies: p.level_policies.filter((_, i) => i !== idx),
+    }));
+  }
+
+  // ── Rank policy helpers ──────────────────────────────────────────────────
+
+  function updateRankPolicy(idx: number, field: keyof RankPolicy, raw: string | boolean) {
+    update((p) => ({
+      ...p,
+      rank_policies: p.rank_policies.map((row, i) => {
+        if (i !== idx) return row;
+        let val: string | number | boolean | null;
+        if (typeof raw === "boolean") {
+          val = raw;
+        } else if (field === "rank") {
+          val = raw;
+        } else if (field === "min_score") {
+          val = Number(raw) || 0;
+        } else {
+          val = pnn(raw);
+        }
+        return { ...row, [field]: val };
+      }),
+    }));
+  }
+
+  function addRankPolicy() {
+    update((p) => ({
+      ...p,
+      rank_policies: [
+        ...p.rank_policies,
+        {
+          rank: "",
+          min_score: 0,
+          max_score: null,
+          daily_outbound_messages_limit_multiplier_percent: null,
+          daily_friend_add_limit_multiplier_percent: null,
+          daily_attachment_send_limit_multiplier_percent: null,
+          overrides_level_limits: false,
+        },
+      ],
+    }));
+  }
+
+  function removeRankPolicy(idx: number) {
+    update((p) => ({
+      ...p,
+      rank_policies: p.rank_policies.filter((_, i) => i !== idx),
+    }));
+  }
+
+  // ── Attachment type helpers ──────────────────────────────────────────────
+
+  function addAttachmentType() {
+    const trimmed = attachmentInput.trim();
+    if (!trimmed) return;
+    update((p) => {
+      if (p.safe_attachment_types.includes(trimmed)) return p;
+      return { ...p, safe_attachment_types: [...p.safe_attachment_types, trimmed] };
+    });
+    setAttachmentInput("");
+  }
+
+  function removeAttachmentType(type: string) {
+    update((p) => ({
+      ...p,
+      safe_attachment_types: p.safe_attachment_types.filter((t) => t !== type),
+    }));
+  }
+
+  const p = parseResult.value;
+
   return (
     <form className="space-y-6" onSubmit={onSubmit}>
       <Separator />
@@ -192,111 +315,501 @@ export function GuildPolicyForm({ policy }: { policy: GuildPolicyConfig }) {
           </p>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="space-y-3 rounded-lg border p-4">
-            <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
-              Enforcement
-            </p>
+        <Tabs defaultValue="visual">
+          <TabsList>
+            <TabsTrigger value="visual">Visual editor</TabsTrigger>
+            <TabsTrigger value="json">JSON</TabsTrigger>
+          </TabsList>
+
+          {/* ── Visual editor ────────────────────────────────────────────── */}
+          <TabsContent value="visual" className="space-y-5 pt-4">
+            {!p ? (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  JSON is invalid — switch to the JSON tab to fix the syntax
+                  error before editing here.
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <>
+                {/* Enforcement */}
+                <div className="space-y-3 rounded-lg border p-4">
+                  <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
+                    Enforcement
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <SwitchRow
+                      checked={p.enforcement.enabled}
+                      id="enf-global"
+                      label="Global guild enforcement"
+                      onCheckedChange={(v) =>
+                        update((x) => ({
+                          ...x,
+                          enforcement: { ...x.enforcement, enabled: v },
+                        }))
+                      }
+                    />
+                    <SwitchRow
+                      checked={p.enforcement.outbound_messages_enabled}
+                      id="enf-messages"
+                      label="Outbound messages"
+                      onCheckedChange={(v) =>
+                        update((x) => ({
+                          ...x,
+                          enforcement: { ...x.enforcement, outbound_messages_enabled: v },
+                        }))
+                      }
+                    />
+                    <SwitchRow
+                      checked={p.enforcement.friend_adds_enabled}
+                      id="enf-friends"
+                      label="Friend adds"
+                      onCheckedChange={(v) =>
+                        update((x) => ({
+                          ...x,
+                          enforcement: { ...x.enforcement, friend_adds_enabled: v },
+                        }))
+                      }
+                    />
+                    <SwitchRow
+                      checked={p.enforcement.attachment_sends_enabled}
+                      id="enf-attachments"
+                      label="Attachment sends"
+                      onCheckedChange={(v) =>
+                        update((x) => ({
+                          ...x,
+                          enforcement: { ...x.enforcement, attachment_sends_enabled: v },
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+
+                {/* Retention & caps */}
+                <div className="space-y-3 rounded-lg border p-4">
+                  <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
+                    Retention &amp; caps
+                  </p>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="counter-retention">Counter retention (days)</Label>
+                      <Input
+                        id="counter-retention"
+                        min={1}
+                        onChange={(e) =>
+                          update((x) => ({
+                            ...x,
+                            daily_counter_retention_days: Number(e.target.value) || 1,
+                          }))
+                        }
+                        type="number"
+                        value={p.daily_counter_retention_days}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="score-retention">Score retention (days)</Label>
+                      <Input
+                        id="score-retention"
+                        min={1}
+                        onChange={(e) =>
+                          update((x) => ({
+                            ...x,
+                            score_event_retention_days: Number(e.target.value) || 1,
+                          }))
+                        }
+                        type="number"
+                        value={p.score_event_retention_days}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="upvote-cap">Upvote daily cap</Label>
+                      <Input
+                        id="upvote-cap"
+                        min={0}
+                        onChange={(e) =>
+                          update((x) => ({
+                            ...x,
+                            community_upvote_daily_cap: Number(e.target.value) || 0,
+                          }))
+                        }
+                        type="number"
+                        value={p.community_upvote_daily_cap}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Safe attachment types */}
+                <div className="space-y-3 rounded-lg border p-4">
+                  <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
+                    Safe attachment types
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {p.safe_attachment_types.length === 0 ? (
+                      <span className="text-sm text-muted-foreground">None allowed.</span>
+                    ) : null}
+                    {p.safe_attachment_types.map((type) => (
+                      <Badge className="gap-1 pl-2.5 pr-1" key={type} variant="secondary">
+                        {type}
+                        <button
+                          aria-label={`Remove ${type}`}
+                          className="ml-0.5 rounded-sm opacity-60 hover:opacity-100"
+                          onClick={() => removeAttachmentType(type)}
+                          type="button"
+                        >
+                          ×
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      className="max-w-[16rem]"
+                      onChange={(e) => setAttachmentInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addAttachmentType();
+                        }
+                      }}
+                      placeholder="image/png"
+                      type="text"
+                      value={attachmentInput}
+                    />
+                    <Button
+                      disabled={!attachmentInput.trim()}
+                      onClick={addAttachmentType}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      Add
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Level policies */}
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
+                    Level policies
+                  </p>
+                  <div className="overflow-x-auto rounded-lg border">
+                    <Table>
+                      <TableHeader className="bg-muted/30">
+                        <TableRow>
+                          <TableHead className="w-20">Level</TableHead>
+                          <TableHead>Min days</TableHead>
+                          <TableHead>Max days</TableHead>
+                          <TableHead>Msg/day</TableHead>
+                          <TableHead>Friends/day</TableHead>
+                          <TableHead>Attach/day</TableHead>
+                          <TableHead className="w-10" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {p.level_policies.length === 0 ? (
+                          <TableRow>
+                            <TableCell
+                              className="py-6 text-center text-sm text-muted-foreground"
+                              colSpan={7}
+                            >
+                              No level policies.
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                        {p.level_policies.map((row, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-16 text-xs"
+                                min={1}
+                                onChange={(e) =>
+                                  updateLevelPolicy(idx, "level", e.target.value)
+                                }
+                                type="number"
+                                value={row.level}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-20 text-xs"
+                                min={0}
+                                onChange={(e) =>
+                                  updateLevelPolicy(idx, "min_active_days", e.target.value)
+                                }
+                                type="number"
+                                value={row.min_active_days}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-20 text-xs"
+                                min={0}
+                                onChange={(e) =>
+                                  updateLevelPolicy(idx, "max_active_days", e.target.value)
+                                }
+                                placeholder="∞"
+                                type="number"
+                                value={nn(row.max_active_days)}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-20 text-xs"
+                                min={0}
+                                onChange={(e) =>
+                                  updateLevelPolicy(
+                                    idx,
+                                    "daily_outbound_messages_limit",
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder="∞"
+                                type="number"
+                                value={nn(row.daily_outbound_messages_limit)}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-20 text-xs"
+                                min={0}
+                                onChange={(e) =>
+                                  updateLevelPolicy(
+                                    idx,
+                                    "daily_friend_add_limit",
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder="∞"
+                                type="number"
+                                value={nn(row.daily_friend_add_limit)}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-20 text-xs"
+                                min={0}
+                                onChange={(e) =>
+                                  updateLevelPolicy(
+                                    idx,
+                                    "daily_attachment_send_limit",
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder="∞"
+                                type="number"
+                                value={nn(row.daily_attachment_send_limit)}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                className="h-7 w-7 text-destructive hover:text-destructive"
+                                onClick={() => removeLevelPolicy(idx)}
+                                size="icon"
+                                type="button"
+                                variant="ghost"
+                              >
+                                ×
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <Button
+                    className="text-xs"
+                    onClick={addLevelPolicy}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    + Add level
+                  </Button>
+                </div>
+
+                {/* Rank policies */}
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
+                    Rank policies
+                  </p>
+                  <div className="overflow-x-auto rounded-lg border">
+                    <Table>
+                      <TableHeader className="bg-muted/30">
+                        <TableRow>
+                          <TableHead>Rank</TableHead>
+                          <TableHead>Min score</TableHead>
+                          <TableHead>Max score</TableHead>
+                          <TableHead>Msg %</TableHead>
+                          <TableHead>Friend %</TableHead>
+                          <TableHead>Attach %</TableHead>
+                          <TableHead>Override</TableHead>
+                          <TableHead className="w-10" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {p.rank_policies.length === 0 ? (
+                          <TableRow>
+                            <TableCell
+                              className="py-6 text-center text-sm text-muted-foreground"
+                              colSpan={8}
+                            >
+                              No rank policies.
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                        {p.rank_policies.map((row, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-24 text-xs"
+                                onChange={(e) =>
+                                  updateRankPolicy(idx, "rank", e.target.value)
+                                }
+                                placeholder="bronze"
+                                type="text"
+                                value={row.rank}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-20 text-xs"
+                                min={0}
+                                onChange={(e) =>
+                                  updateRankPolicy(idx, "min_score", e.target.value)
+                                }
+                                type="number"
+                                value={row.min_score}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-20 text-xs"
+                                min={0}
+                                onChange={(e) =>
+                                  updateRankPolicy(idx, "max_score", e.target.value)
+                                }
+                                placeholder="∞"
+                                type="number"
+                                value={nn(row.max_score)}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-20 text-xs"
+                                min={0}
+                                onChange={(e) =>
+                                  updateRankPolicy(
+                                    idx,
+                                    "daily_outbound_messages_limit_multiplier_percent",
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder="—"
+                                type="number"
+                                value={nn(
+                                  row.daily_outbound_messages_limit_multiplier_percent,
+                                )}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-20 text-xs"
+                                min={0}
+                                onChange={(e) =>
+                                  updateRankPolicy(
+                                    idx,
+                                    "daily_friend_add_limit_multiplier_percent",
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder="—"
+                                type="number"
+                                value={nn(row.daily_friend_add_limit_multiplier_percent)}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-7 w-20 text-xs"
+                                min={0}
+                                onChange={(e) =>
+                                  updateRankPolicy(
+                                    idx,
+                                    "daily_attachment_send_limit_multiplier_percent",
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder="—"
+                                type="number"
+                                value={nn(
+                                  row.daily_attachment_send_limit_multiplier_percent,
+                                )}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Switch
+                                checked={row.overrides_level_limits}
+                                onCheckedChange={(v) =>
+                                  updateRankPolicy(idx, "overrides_level_limits", v)
+                                }
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                className="h-7 w-7 text-destructive hover:text-destructive"
+                                onClick={() => removeRankPolicy(idx)}
+                                size="icon"
+                                type="button"
+                                variant="ghost"
+                              >
+                                ×
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <Button
+                    className="text-xs"
+                    onClick={addRankPolicy}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    + Add rank
+                  </Button>
+                </div>
+              </>
+            )}
+          </TabsContent>
+
+          {/* ── JSON tab ─────────────────────────────────────────────────── */}
+          <TabsContent value="json" className="space-y-3 pt-4">
             <div className="space-y-2">
-              <EnforcementBadge
-                enabled={summaryPolicy.enforcement.enabled}
-                label="Global guild enforcement"
+              <Label htmlFor="guild-policy-json">Guild policy JSON</Label>
+              <Textarea
+                className="min-h-[28rem] font-mono text-xs"
+                id="guild-policy-json"
+                onChange={(event) => setDraft(event.target.value)}
+                value={draft}
               />
-              <EnforcementBadge
-                enabled={summaryPolicy.enforcement.outbound_messages_enabled}
-                label="Outbound messages"
-              />
-              <EnforcementBadge
-                enabled={summaryPolicy.enforcement.friend_adds_enabled}
-                label="Friend adds"
-              />
-              <EnforcementBadge
-                enabled={summaryPolicy.enforcement.attachment_sends_enabled}
-                label="Attachments"
-              />
+              <p className="text-xs text-muted-foreground">
+                Edit the full policy directly to change caps, thresholds, or safe
+                attachment types. Save will fail if ranges overlap or required
+                fields are invalid.
+              </p>
             </div>
-          </div>
-
-          <div className="space-y-3 rounded-lg border p-4">
-            <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
-              Thresholds
-            </p>
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <div className="flex items-center justify-between gap-3">
-                <span>Level policies</span>
-                <span className="font-medium text-foreground">
-                  {summaryPolicy.level_policies.length}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Rank policies</span>
-                <span className="font-medium text-foreground">
-                  {summaryPolicy.rank_policies.length}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Upvote daily cap</span>
-                <span className="font-medium text-foreground">
-                  {summaryPolicy.community_upvote_daily_cap}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Counter retention</span>
-                <span className="font-medium text-foreground">
-                  {summaryPolicy.daily_counter_retention_days} days
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Score retention</span>
-                <span className="font-medium text-foreground">
-                  {summaryPolicy.score_event_retention_days} days
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3 rounded-lg border p-4">
-            <p className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
-              Attachment allowlist
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {summaryPolicy.safe_attachment_types.map((entry) => (
-                <Badge key={entry} variant="outline">
-                  {entry}
-                </Badge>
-              ))}
-              {summaryPolicy.safe_attachment_types.length === 0 ? (
-                <span className="text-sm text-muted-foreground">
-                  No attachment types allowed.
-                </span>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div className="space-y-2">
-          <Label htmlFor="guild-policy-json">Guild policy JSON</Label>
-          <Textarea
-            className="min-h-[28rem] font-mono text-xs"
-            id="guild-policy-json"
-            onChange={(event) => setDraft(event.target.value)}
-            value={draft}
-          />
-          <p className="text-xs text-muted-foreground">
-            Edit the full policy directly to change caps, thresholds, or safe
-            attachment types. Save will fail if ranges overlap or required
-            fields are invalid.
-          </p>
-        </div>
+            <Button onClick={formatDraft} size="sm" type="button" variant="outline">
+              Format JSON
+            </Button>
+          </TabsContent>
+        </Tabs>
       </section>
 
       {parseResult.error ? (
         <Alert variant="destructive">
-          <AlertDescription>
-            JSON parse error: {parseResult.error}
-          </AlertDescription>
+          <AlertDescription>JSON parse error: {parseResult.error}</AlertDescription>
         </Alert>
       ) : null}
 
@@ -313,9 +826,6 @@ export function GuildPolicyForm({ policy }: { policy: GuildPolicyConfig }) {
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={formatDraft} type="button" variant="outline">
-          Format JSON
-        </Button>
         <Button onClick={resetDraft} type="button" variant="outline">
           Reset draft
         </Button>

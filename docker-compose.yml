@@ -79,10 +79,17 @@ services:
       - certbot_webroot:/var/www/certbot:ro
     # envsubst replaces only ${INSTANCE_DOMAIN};
     # nginx's own $variables (no braces) are left untouched.
+    # We wait for `api` to be DNS-resolvable before starting nginx so that the
+    # upstream block doesn't fail on container restarts (depends_on only applies
+    # to the initial `docker compose up` ordering, not subsequent restarts).
     command:
       - /bin/sh
       - -c
-      - "envsubst '$$INSTANCE_DOMAIN' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"
+      - |
+        until getent hosts api > /dev/null 2>&1; do
+          echo "nginx: waiting for api DNS..."; sleep 2;
+        done
+        envsubst '$$INSTANCE_DOMAIN' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'
     depends_on:
       api:
         condition: service_healthy

@@ -39,23 +39,22 @@ export default async function StickersPage({
 
     return (
       <div className="space-y-8">
-        <div className="flex items-center gap-3">
+        <div className="space-y-2">
           <Link
             className="text-sm text-muted-foreground hover:text-foreground"
             href="/stickers"
           >
             ← Groups
           </Link>
-          <span className="text-muted-foreground">/</span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             {tabSticker ? (
               <Image
                 alt={group}
-                className="h-7 w-7 rounded object-contain"
-                height={28}
+                className="h-9 w-9 rounded object-contain"
+                height={36}
                 src={`/api/admin/stickers/${tabSticker.id}/image`}
                 unoptimized
-                width={28}
+                width={36}
               />
             ) : null}
             <h1 className="text-2xl font-semibold">{group}</h1>

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -59,6 +60,7 @@ export function StickerModeration({ stickers }: { stickers: StickerItem[] }) {
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
+              <TableHead className="w-14" />
               <TableHead>Sticker</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -67,13 +69,25 @@ export function StickerModeration({ stickers }: { stickers: StickerItem[] }) {
           <TableBody>
             {stickers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={3} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
                   No stickers to moderate.
                 </TableCell>
               </TableRow>
             ) : null}
             {stickers.map((sticker) => (
               <TableRow key={sticker.id}>
+                <TableCell className="pl-4">
+                  <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded bg-muted/40">
+                    <Image
+                      alt={sticker.name}
+                      className="h-10 w-10 object-contain"
+                      height={40}
+                      src={`/api/admin/stickers/${sticker.id}/image`}
+                      unoptimized
+                      width={40}
+                    />
+                  </div>
+                </TableCell>
                 <TableCell>
                   <p className="font-medium">{sticker.name}</p>
                   <p className="text-xs text-muted-foreground">

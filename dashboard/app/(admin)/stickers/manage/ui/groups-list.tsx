@@ -61,30 +61,29 @@ export function GroupsList({ stickers }: { stickers: StickerItem[] }) {
           No groups yet. Create one above.
         </p>
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {groups.map((group) => (
+        <div className="overflow-hidden rounded-lg border">
+          {groups.map((group, idx) => (
             <Link
-              className="group flex flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:bg-accent"
+              className="group flex items-center gap-4 px-4 py-3 transition-colors hover:bg-accent"
               href={`/stickers?group=${encodeURIComponent(group.name)}`}
               key={group.name}
+              style={idx > 0 ? { borderTop: "1px solid hsl(var(--border))" } : undefined}
             >
-              <div className="flex h-28 items-center justify-center bg-muted/40">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted/40">
                 {group.tabStickerId ? (
                   <Image
                     alt={group.name}
-                    className="h-24 w-24 object-contain"
-                    height={96}
+                    className="h-12 w-12 object-contain"
+                    height={48}
                     src={`/api/admin/stickers/${group.tabStickerId}/image`}
                     unoptimized
-                    width={96}
+                    width={48}
                   />
                 ) : (
-                  <div className="flex h-24 w-24 items-center justify-center rounded-lg bg-muted text-3xl text-muted-foreground">
-                    🖼
-                  </div>
+                  <span className="text-xl text-muted-foreground">🖼</span>
                 )}
               </div>
-              <div className="space-y-1 p-3">
+              <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{group.name}</p>
                 <p className="text-xs text-muted-foreground">
                   {group.total} sticker{group.total !== 1 ? "s" : ""}
@@ -93,6 +92,7 @@ export function GroupsList({ stickers }: { stickers: StickerItem[] }) {
                   ) : null}
                 </p>
               </div>
+              <span className="text-xs text-muted-foreground group-hover:text-foreground">→</span>
             </Link>
           ))}
         </div>

@@ -20,6 +20,7 @@ pub struct PlanetNewsListItem {
     pub summary: Option<String>,
     pub markdown_content: String,
     pub published_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -39,6 +40,7 @@ fn to_list_item(item: ServerNews) -> PlanetNewsListItem {
         summary: item.summary,
         markdown_content: item.markdown_content,
         published_at: item.published_at,
+        updated_at: item.updated_at,
     }
 }
 

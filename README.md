@@ -97,7 +97,44 @@ Then access:
 - `https://<INSTANCE_DOMAIN>`
 - `https://<INSTANCE_DOMAIN>/login`
 
-### 5. Common operations
+### 5. Public web UI (optional)
+
+The public-facing website (`/`) is served by a separate Next.js app living in `web/`, which is tracked as a git submodule pointing to [Sync-web](https://github.com/OpenTech-Lab/Sync-web.git). It is **excluded from the default stack** — the core API, dashboard, and nginx all start without it.
+
+#### 5.1 Pull the web submodule
+
+If you cloned the repo without submodules, initialise it first:
+```bash
+git submodule update --init web
+```
+
+To update to the latest web release later:
+```bash
+git submodule update --remote web
+git add web && git commit -m "chore: bump web submodule"
+```
+
+#### 5.2 Build and start the web service
+```bash
+docker compose --profile web build web
+docker compose --profile web up -d
+```
+
+The web container starts on port 3000 internally. Nginx automatically routes all traffic at `/` to it — no config change needed.
+
+To stop the web service without affecting the rest of the stack:
+```bash
+docker compose --profile web stop web
+```
+
+#### 5.3 Update the web app
+```bash
+cd web && git pull && cd ..
+docker compose --profile web build web
+docker compose --profile web up -d web
+```
+
+### 7. Common operations
 ```bash
 # View logs
 docker compose logs -f api

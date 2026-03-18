@@ -76,7 +76,7 @@ async function tryRefreshTokens(
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  const basePath = "";
+  const basePath = "/admin";
   const normalizedPath = path;
   const { needsSetup } = await fetchSetupStatus();
 

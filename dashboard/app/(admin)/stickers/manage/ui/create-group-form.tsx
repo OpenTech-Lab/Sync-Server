@@ -16,6 +16,7 @@ export function CreateGroupForm() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [groupName, setGroupName] = useState("");
+  const [groupAuthor, setGroupAuthor] = useState("");
   const [mimeType, setMimeType] = useState("image/png");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -63,6 +64,7 @@ export function CreateGroupForm() {
           name: "__tab__",
           mime_type: mimeType,
           content_base64: contentBase64,
+          ...(groupAuthor.trim() ? { group_author: groupAuthor.trim() } : {}),
         }),
       });
 
@@ -94,6 +96,16 @@ export function CreateGroupForm() {
               placeholder="e.g. Happy"
               type="text"
               value={groupName}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="new-group-author">Author <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            <Input
+              id="new-group-author"
+              onChange={(e) => setGroupAuthor(e.target.value)}
+              placeholder="e.g. Studio Name"
+              type="text"
+              value={groupAuthor}
             />
           </div>
           <div className="space-y-2">

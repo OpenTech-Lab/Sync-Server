@@ -25,6 +25,7 @@ WORKDIR /app
 
 # Copy runtime app artifacts
 COPY --from=builder --chown=nextjs:nextjs /app/package.json ./package.json
+COPY --from=builder --chown=nextjs:nextjs /app/next.config.ts ./next.config.ts
 COPY --from=builder --chown=nextjs:nextjs /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nextjs /app/.next ./.next
 COPY --from=builder --chown=nextjs:nextjs /app/public ./public

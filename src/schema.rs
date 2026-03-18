@@ -62,6 +62,7 @@ diesel::table! {
         status -> Text,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        group_author -> Nullable<Text>,
     }
 }
 

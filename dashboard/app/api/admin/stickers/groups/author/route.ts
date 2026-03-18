@@ -1,0 +1,40 @@
+import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
+
+import { ACCESS_COOKIE, syncServerUrl } from "@/lib/server-api";
+import { assertSameOrigin } from "@/lib/security";
+
+export async function PATCH(request: Request) {
+  if (!assertSameOrigin(request)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const jar = await cookies();
+  const access = jar.get(ACCESS_COOKIE)?.value;
+  if (!access) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const payload = await request.json();
+
+  const response = await fetch(syncServerUrl("/api/stickers/groups/author"), {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    return NextResponse.json(
+      { error: (body as { error?: string }).error ?? "Update failed" },
+      { status: response.status },
+    );
+  }
+
+  return NextResponse.json(await response.json());
+}

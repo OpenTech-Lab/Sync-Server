@@ -18,11 +18,13 @@ type StickerItem = {
   size_bytes: number;
   status: "active" | "pending" | "rejected";
   created_at: string;
+  group_author?: string | null;
 };
 
 type Group = {
   name: string;
   tabStickerId: string | null;
+  author: string | null;
   total: number;
   pending: number;
 };
@@ -35,6 +37,7 @@ function deriveGroups(stickers: StickerItem[]): Group[] {
       map.set(s.group_name, {
         name: s.group_name,
         tabStickerId: null,
+        author: null,
         total: 0,
         pending: 0,
       });
@@ -42,6 +45,7 @@ function deriveGroups(stickers: StickerItem[]): Group[] {
     const group = map.get(s.group_name)!;
     if (s.name === "__tab__") {
       group.tabStickerId = s.id;
+      group.author = s.group_author ?? null;
     } else {
       group.total += 1;
       if (s.status === "pending") {
@@ -56,11 +60,20 @@ function deriveGroups(stickers: StickerItem[]): Group[] {
 export function GroupsList({ stickers }: { stickers: StickerItem[] }) {
   const router = useRouter();
   const groups = deriveGroups(stickers);
+
+  // Rename state
   const [editing, setEditing] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Author edit state
+  const [editingAuthor, setEditingAuthor] = useState<string | null>(null);
+  const [newAuthor, setNewAuthor] = useState("");
+  const [savingAuthor, setSavingAuthor] = useState(false);
+  const [authorError, setAuthorError] = useState<string | null>(null);
+  const authorInputRef = useRef<HTMLInputElement | null>(null);
 
   function startEdit(groupName: string) {
     setEditing(groupName);
@@ -73,6 +86,48 @@ export function GroupsList({ stickers }: { stickers: StickerItem[] }) {
     setEditing(null);
     setNewName("");
     setRenameError(null);
+  }
+
+  function startEditAuthor(groupName: string, currentAuthor: string | null) {
+    setEditingAuthor(groupName);
+    setNewAuthor(currentAuthor ?? "");
+    setAuthorError(null);
+    setTimeout(() => authorInputRef.current?.select(), 0);
+  }
+
+  function cancelEditAuthor() {
+    setEditingAuthor(null);
+    setNewAuthor("");
+    setAuthorError(null);
+  }
+
+  async function confirmAuthor(groupName: string, currentAuthor: string | null) {
+    const trimmed = newAuthor.trim();
+    if (trimmed === (currentAuthor ?? "")) {
+      cancelEditAuthor();
+      return;
+    }
+
+    setSavingAuthor(true);
+    setAuthorError(null);
+
+    const response = await fetch("/api/admin/stickers/groups/author", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ group_name: groupName, author: trimmed || null }),
+    });
+
+    setSavingAuthor(false);
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setAuthorError((body as { error?: string }).error ?? "Update failed");
+      return;
+    }
+
+    setEditingAuthor(null);
+    setNewAuthor("");
+    router.refresh();
   }
 
   async function confirmRename(oldName: string) {
@@ -145,6 +200,9 @@ export function GroupsList({ stickers }: { stickers: StickerItem[] }) {
                   <p className="truncate text-sm font-medium">{group.name}</p>
                   <p className="text-xs text-muted-foreground">
                     {group.total} sticker{group.total !== 1 ? "s" : ""}
+                    {group.author ? (
+                      <span className="ml-1">· by {group.author}</span>
+                    ) : null}
                     {group.pending > 0 ? (
                       <span className="ml-1 text-amber-500">
                         · {group.pending} pending
@@ -157,8 +215,63 @@ export function GroupsList({ stickers }: { stickers: StickerItem[] }) {
                 </span>
               </Link>
 
-              {/* Rename controls — outside the Link so clicks don't navigate */}
-              <div className="shrink-0 px-3">
+              {/* Controls — outside the Link so clicks don't navigate */}
+              <div className="shrink-0 flex items-center gap-1 px-3">
+                {/* Author edit */}
+                {editingAuthor === group.name ? (
+                  <div className="flex items-center gap-1.5">
+                    <div className="space-y-1">
+                      <Input
+                        className="h-7 w-32 text-xs"
+                        disabled={savingAuthor}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") confirmAuthor(group.name, group.author);
+                          if (e.key === "Escape") cancelEditAuthor();
+                        }}
+                        onChange={(e) => setNewAuthor(e.target.value)}
+                        placeholder="Author name"
+                        ref={authorInputRef}
+                        type="text"
+                        value={newAuthor}
+                      />
+                      {authorError ? (
+                        <p className="text-[10px] text-destructive">{authorError}</p>
+                      ) : null}
+                    </div>
+                    <Button
+                      className="h-7 w-7"
+                      disabled={savingAuthor}
+                      onClick={() => confirmAuthor(group.name, group.author)}
+                      size="icon"
+                      type="button"
+                      variant="default"
+                    >
+                      ✓
+                    </Button>
+                    <Button
+                      className="h-7 w-7"
+                      disabled={savingAuthor}
+                      onClick={cancelEditAuthor}
+                      size="icon"
+                      type="button"
+                      variant="ghost"
+                    >
+                      ✕
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    className="h-7 px-2 text-xs text-muted-foreground"
+                    onClick={() => startEditAuthor(group.name, group.author)}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    {group.author ? "Edit author" : "Add author"}
+                  </Button>
+                )}
+
+                {/* Rename */}
                 {editing === group.name ? (
                   <div className="flex items-center gap-1.5">
                     <div className="space-y-1">

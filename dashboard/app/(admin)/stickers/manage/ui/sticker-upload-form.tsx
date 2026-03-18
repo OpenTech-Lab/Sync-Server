@@ -17,7 +17,6 @@ export function StickerUploadForm({ groupName: fixedGroupName }: { groupName?: s
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [groupName, setGroupName] = useState(fixedGroupName ?? "General");
   const [name, setName] = useState("");
-  const [author, setAuthor] = useState("");
   const [mimeType, setMimeType] = useState("image/png");
   const [file, setFile] = useState<File | null>(null);
   const [working, setWorking] = useState(false);
@@ -47,7 +46,6 @@ export function StickerUploadForm({ groupName: fixedGroupName }: { groupName?: s
         body: JSON.stringify({
           group_name: groupName,
           name: name || file.name,
-          author: author || undefined,
           mime_type: mimeType,
           content_base64: contentBase64,
         }),
@@ -57,7 +55,6 @@ export function StickerUploadForm({ groupName: fixedGroupName }: { groupName?: s
         setError("Upload failed.");
       } else {
         setName("");
-        setAuthor("");
         setGroupName(fixedGroupName ?? "General");
         setFile(null);
         if (fileInputRef.current) {
@@ -97,16 +94,6 @@ export function StickerUploadForm({ groupName: fixedGroupName }: { groupName?: s
               placeholder="Sticker name"
               type="text"
               value={name}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="sticker-author">Author</Label>
-            <Input
-              id="sticker-author"
-              onChange={(e) => setAuthor(e.target.value)}
-              placeholder="Artist / author"
-              type="text"
-              value={author}
             />
           </div>
           <div className="space-y-2">

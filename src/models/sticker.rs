@@ -18,6 +18,7 @@ pub struct Sticker {
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub group_author: Option<String>,
 }
 
 #[derive(Debug, Insertable, Deserialize)]
@@ -31,6 +32,7 @@ pub struct NewSticker {
     pub content_base64: String,
     pub size_bytes: i32,
     pub status: String,
+    pub group_author: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +45,7 @@ pub struct StickerListItem {
     pub size_bytes: i32,
     pub status: String,
     pub created_at: DateTime<Utc>,
+    pub group_author: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +59,7 @@ pub struct StickerDetail {
     pub status: String,
     pub content_base64: String,
     pub created_at: DateTime<Utc>,
+    pub group_author: Option<String>,
 }
 
 impl From<Sticker> for StickerListItem {
@@ -69,6 +73,7 @@ impl From<Sticker> for StickerListItem {
             size_bytes: value.size_bytes,
             status: value.status,
             created_at: value.created_at,
+            group_author: value.group_author,
         }
     }
 }
@@ -85,6 +90,7 @@ impl From<Sticker> for StickerDetail {
             status: value.status,
             content_base64: value.content_base64,
             created_at: value.created_at,
+            group_author: value.group_author,
         }
     }
 }

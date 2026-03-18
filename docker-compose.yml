@@ -62,6 +62,7 @@ services:
     restart: unless-stopped
 
   web:
+    profiles: ["web"]
     build:
       context: ./web
       dockerfile: Dockerfile
@@ -106,8 +107,6 @@ services:
       api:
         condition: service_healthy
       dashboard:
-        condition: service_started
-      web:
         condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health || exit 1"]

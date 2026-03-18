@@ -14,6 +14,7 @@ pub struct UploadStickerRequest {
     pub name: String,
     pub mime_type: String,
     pub content_base64: String,
+    pub group_author: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +26,12 @@ pub struct ModerateStickerRequest {
 pub struct RenameGroupRequest {
     pub old_name: String,
     pub new_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateGroupAuthorRequest {
+    pub group_name: String,
+    pub author: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +62,7 @@ pub async fn upload(
         name: body.name.clone(),
         mime_type: body.mime_type.clone(),
         content_base64: body.content_base64.clone(),
+        group_author: body.group_author.clone(),
     };
     let guild_mime_type = input.mime_type.clone();
     let created = if auth.0.role == "admin" {
@@ -152,6 +160,11 @@ fn sticker_upload_allowed_mime_types(guild: &crate::models::guild::GuildSnapshot
         .collect()
 }
 
+pub async fn list_groups_public(pool: web::Data<Pool>) -> Result<HttpResponse, AppError> {
+    let groups = sticker_service::list_sticker_groups(&pool)?;
+    Ok(HttpResponse::Ok().json(groups))
+}
+
 pub async fn list(pool: web::Data<Pool>, auth: AuthUser) -> Result<HttpResponse, AppError> {
     let requester_id = auth.0.user_id()?;
     let items = sticker_service::list_stickers(&pool, requester_id, &auth.0.role)?;
@@ -208,6 +221,33 @@ pub async fn moderate(
     Ok(HttpResponse::Ok().json(updated))
 }
 
+pub async fn update_group_author(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    body: web::Json<UpdateGroupAuthorRequest>,
+) -> Result<HttpResponse, AppError> {
+    let admin_user_id = admin.0.user_id()?;
+    sticker_service::update_group_author(
+        &pool,
+        &body.group_name,
+        body.author.as_deref(),
+    )?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_user_id),
+        "sticker.update_group_author",
+        None,
+        serde_json::json!({
+            "group_name": body.group_name,
+            "author": body.author,
+        }),
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "group_name": body.group_name,
+        "author": body.author,
+    })))
+}
+
 pub async fn rename_group(
     pool: web::Data<Pool>,
     admin: AdminUser,
@@ -234,9 +274,11 @@ pub async fn rename_group(
 }
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
-    cfg.route("/upload", web::post().to(upload))
+    cfg.route("/groups", web::get().to(list_groups_public))
+        .route("/upload", web::post().to(upload))
         .route("/list", web::get().to(list))
         .route("/groups/rename", web::patch().to(rename_group))
+        .route("/groups/author", web::patch().to(update_group_author))
         .route("/{id}", web::get().to(get_by_id))
         .route("/{id}/moderate", web::post().to(moderate));
 }

@@ -46,7 +46,7 @@ export default async function StickersPage({
           >
             ← Groups
           </Link>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 py-4">
             {tabSticker ? (
               <Image
                 alt={group}

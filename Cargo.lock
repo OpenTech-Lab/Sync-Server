@@ -2909,7 +2909,7 @@ dependencies = [
 
 [[package]]
 name = "sync-server"
-version = "1.4.11"
+version = "1.4.12"
 dependencies = [
  "actix-cors",
  "actix-governor",

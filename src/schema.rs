@@ -130,6 +130,8 @@ diesel::table! {
         last_seen_at -> Nullable<Timestamptz>,
         device_auth_pubkey -> Nullable<Text>,
         is_approved -> Bool,
+        ugc_terms_accepted_at -> Nullable<Timestamptz>,
+        ugc_terms_version -> Int4,
     }
 }
 
@@ -194,6 +196,45 @@ diesel::table! {
         room_id -> Uuid,
         sender_id -> Uuid,
         content -> Text,
+        deleted_at -> Nullable<Timestamptz>,
+        created_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    moderation_reports (id) {
+        id -> Uuid,
+        reporter_user_id -> Uuid,
+        reported_user_id -> Uuid,
+        source -> Text,
+        content_kind -> Text,
+        content_id -> Nullable<Text>,
+        reason_code -> Text,
+        reporter_note -> Nullable<Text>,
+        content_excerpt -> Nullable<Text>,
+        status -> Text,
+        resolution_action -> Nullable<Text>,
+        resolution_notes -> Nullable<Text>,
+        metadata -> Jsonb,
+        review_due_at -> Timestamptz,
+        reviewed_by_user_id -> Nullable<Uuid>,
+        reviewed_at -> Nullable<Timestamptz>,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    user_blocks (blocker_user_id, blocked_user_id) {
+        blocker_user_id -> Uuid,
+        blocked_user_id -> Uuid,
+        report_id -> Nullable<Uuid>,
+        reason_code -> Nullable<Text>,
+        reporter_note -> Nullable<Text>,
         created_at -> Timestamptz,
     }
 }
@@ -301,6 +342,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     rooms,
     room_members,
     room_messages,
+    moderation_reports,
+    user_blocks,
     federation_actor_keys,
     federation_inbox_activities,
     federation_deliveries,

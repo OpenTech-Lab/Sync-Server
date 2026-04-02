@@ -6,6 +6,7 @@ pub mod federation_service;
 pub mod geoip_service;
 pub mod guild_service;
 pub mod message_service;
+pub mod moderation_service;
 pub mod push_dispatch_service;
 pub mod push_token_service;
 pub mod redis_pubsub;

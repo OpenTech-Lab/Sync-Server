@@ -2,12 +2,14 @@ use chrono::{DateTime, Utc};
 use diesel::dsl::count_star;
 use diesel::prelude::*;
 use diesel::PgConnection;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::room::{NewRoom, NewRoomMember, NewRoomMessage, Room, RoomMember, RoomMessage};
 use crate::schema::{room_members, room_messages, rooms, users};
+use crate::services::moderation_service;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RoomMemberProfile {
@@ -273,9 +275,16 @@ pub fn get_room_messages(
 ) -> Result<Vec<RoomMessage>, AppError> {
     let mut conn = pool.get()?;
     ensure_room_member_conn(&mut conn, room_id, viewer_id)?;
+    let blocked_user_ids = moderation_service::list_blocked_user_ids_conn(&mut conn, viewer_id)?;
 
     let limit = limit.min(100) as i64;
-    let base = room_messages::table.filter(room_messages::room_id.eq(room_id));
+    let mut base = room_messages::table
+        .filter(room_messages::room_id.eq(room_id))
+        .filter(room_messages::deleted_at.is_null())
+        .into_boxed();
+    if !blocked_user_ids.is_empty() {
+        base = base.filter(room_messages::sender_id.ne_all(blocked_user_ids));
+    }
 
     let messages = if let Some(cursor_id) = before_id {
         let cursor = room_messages::table
@@ -320,6 +329,7 @@ pub fn send_room_message(
                 "Message content cannot be empty".into(),
             ));
         }
+        moderation_service::ensure_text_is_allowed("room message", trimmed)?;
 
         let message = diesel::insert_into(room_messages::table)
             .values(&NewRoomMessage {
@@ -451,6 +461,7 @@ fn normalize_room_name(raw: &str) -> Result<String, AppError> {
             "Room name must be <= 80 characters".into(),
         ));
     }
+    moderation_service::ensure_text_is_allowed("room name", normalized)?;
     Ok(normalized.to_string())
 }
 
@@ -536,12 +547,20 @@ fn room_summary_conn(
     membership: &RoomMember,
     viewer_id: Uuid,
 ) -> Result<RoomSummary, AppError> {
+    let blocked_user_ids = moderation_service::list_blocked_user_ids_conn(conn, viewer_id)?;
     let member_count = room_members::table
         .filter(room_members::room_id.eq(room.id))
         .select(count_star())
         .first::<i64>(conn)?;
-    let latest_message = room_messages::table
+    let mut latest_message_query = room_messages::table
         .filter(room_messages::room_id.eq(room.id))
+        .filter(room_messages::deleted_at.is_null())
+        .into_boxed();
+    if !blocked_user_ids.is_empty() {
+        latest_message_query =
+            latest_message_query.filter(room_messages::sender_id.ne_all(blocked_user_ids.clone()));
+    }
+    let latest_message = latest_message_query
         .order((room_messages::created_at.desc(), room_messages::id.desc()))
         .first::<RoomMessage>(conn)
         .optional()?;
@@ -567,10 +586,16 @@ fn room_unread_count_conn(
     viewer_id: Uuid,
     last_read_at: Option<DateTime<Utc>>,
 ) -> QueryResult<i64> {
+    let blocked_user_ids = moderation_service::list_blocked_user_ids_conn(conn, viewer_id)
+        .unwrap_or_else(|_| HashSet::new());
     let mut query = room_messages::table
         .filter(room_messages::room_id.eq(room_id_value))
         .filter(room_messages::sender_id.ne(viewer_id))
+        .filter(room_messages::deleted_at.is_null())
         .into_boxed();
+    if !blocked_user_ids.is_empty() {
+        query = query.filter(room_messages::sender_id.ne_all(blocked_user_ids));
+    }
     if let Some(last_read_at) = last_read_at {
         query = query.filter(room_messages::created_at.gt(last_read_at));
     }

@@ -168,6 +168,11 @@ async fn main() -> std::io::Result<()> {
                     .configure(routes::profile::configure),
             )
             .service(
+                web::scope("/api/safety")
+                    .wrap(Governor::new(&api_governor))
+                    .configure(routes::safety::configure),
+            )
+            .service(
                 web::scope("/api/push")
                     .wrap(Governor::new(&api_governor))
                     .configure(routes::push::configure),

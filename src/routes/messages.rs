@@ -10,7 +10,8 @@ use crate::models::guild::GuildSnapshot;
 use crate::routes::federation;
 use crate::services::user_service;
 use crate::services::{
-    admin_service, guild_service, message_service, push_dispatch_service, redis_pubsub,
+    admin_service, guild_service, message_service, moderation_service, push_dispatch_service,
+    redis_pubsub,
 };
 
 // ── Request DTOs ─────────────────────────────────────────────────────────────
@@ -191,6 +192,7 @@ pub async fn resolve_contact(
 
     if target_host == local_instance_host {
         let local_id = parse_local_uuid(&recipient_id)?;
+        moderation_service::ensure_no_block_between(&pool, user_id, local_id)?;
         let user = user_service::find_by_id(&pool, local_id)?.ok_or(AppError::NotFound)?;
         return Ok(HttpResponse::Ok().json(ResolveContactResponse {
             partner_id: user.id,
@@ -256,6 +258,7 @@ pub async fn send_message(
         let local_id = parse_local_uuid(&recipient_id_raw)?;
         user_service::find_by_id(&pool, local_id)?.ok_or(AppError::NotFound)?
     };
+    moderation_service::ensure_no_block_between(&pool, sender_id, recipient_user.id)?;
 
     let message =
         match guild_service::send_message_with_guild(&pool, sender_id, recipient_user.id, content)?

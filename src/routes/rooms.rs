@@ -7,7 +7,9 @@ use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::room::RoomMessage;
-use crate::services::{guild_service, push_dispatch_service, redis_pubsub, room_service};
+use crate::services::{
+    guild_service, moderation_service, push_dispatch_service, redis_pubsub, room_service,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateRoomRequest {
@@ -212,11 +214,19 @@ pub async fn send_room_message(
 
     let message = room_service::send_room_message(&pool, *room_id, sender_id, &content)?;
     let room_member_ids = room_service::list_room_member_ids(&pool, *room_id, sender_id)?;
-    publish_new_room_message_event(&redis, *room_id, &room_member_ids, &message).await;
+    let visible_member_ids = room_member_ids
+        .iter()
+        .copied()
+        .filter(|member_id| {
+            !moderation_service::is_block_active_between(&pool, sender_id, *member_id)
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    publish_new_room_message_event(&redis, *room_id, &visible_member_ids, &message).await;
     dispatch_push_for_room_message(
         pool.get_ref(),
         cfg.get_ref(),
-        room_member_ids,
+        visible_member_ids,
         sender_id,
         message.id,
         content,

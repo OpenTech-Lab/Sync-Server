@@ -227,11 +227,7 @@ pub async fn update_group_author(
     body: web::Json<UpdateGroupAuthorRequest>,
 ) -> Result<HttpResponse, AppError> {
     let admin_user_id = admin.0.user_id()?;
-    sticker_service::update_group_author(
-        &pool,
-        &body.group_name,
-        body.author.as_deref(),
-    )?;
+    sticker_service::update_group_author(&pool, &body.group_name, body.author.as_deref())?;
     admin_service::append_audit_log(
         &pool,
         Some(admin_user_id),

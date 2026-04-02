@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::models::guild::GuildSnapshot;
+use crate::models::moderation::UserSafetyStatePublic;
 use crate::schema::users;
 
 #[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
@@ -23,6 +24,8 @@ pub struct User {
     pub last_seen_at: Option<DateTime<Utc>>,
     pub device_auth_pubkey: Option<String>,
     pub is_approved: bool,
+    pub ugc_terms_accepted_at: Option<DateTime<Utc>>,
+    pub ugc_terms_version: i32,
 }
 
 #[derive(Debug, Insertable)]
@@ -58,6 +61,8 @@ pub struct UserProfilePublic {
     pub description: Option<String>,
     pub message_public_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub safety: Option<UserSafetyStatePublic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub guild: Option<GuildSnapshot>,
 }
 
@@ -84,6 +89,7 @@ impl From<User> for UserProfilePublic {
             avatar_base64: u.avatar_base64,
             description: u.description,
             message_public_key: u.message_public_key,
+            safety: None,
             guild: None,
         }
     }

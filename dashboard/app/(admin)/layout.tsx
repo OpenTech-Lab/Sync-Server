@@ -8,6 +8,7 @@ const navItems = [
   { href: "/dashboard", label: "Overview" },
   { href: "/guild", label: "Guild Review" },
   { href: "/users", label: "Users" },
+  { href: "/moderation", label: "Moderation" },
   { href: "/stickers", label: "Stickers" },
   { href: "/config", label: "Config" },
   { href: "/planet-news", label: "Planet News" },

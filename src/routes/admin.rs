@@ -12,7 +12,7 @@ use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::guild::GuildPolicyConfig;
 use crate::models::server_news::ServerNews;
-use crate::services::{admin_service, guild_service, server_news_service};
+use crate::services::{admin_service, guild_service, moderation_service, server_news_service};
 
 #[derive(Debug, Deserialize)]
 pub struct UserQuery {
@@ -40,6 +40,12 @@ pub struct GuildScoreEventsQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct TrustBlockedActionsQuery {
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModerationReportsQuery {
+    pub status: Option<String>,
     pub limit: Option<i64>,
 }
 
@@ -706,6 +712,12 @@ pub struct DismissAbuseReportRequest {
     pub report_reference_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ResolveModerationReportRequest {
+    pub resolution_action: String,
+    pub resolution_notes: Option<String>,
+}
+
 // ── Guild penalty handlers ─────────────────────────────────────────────────
 
 /// POST /api/admin/users/{user_id}/guild/clawback-score
@@ -834,9 +846,58 @@ pub async fn dismiss_abuse_report(
     Ok(HttpResponse::Ok().json(outcome))
 }
 
+pub async fn list_moderation_reports(
+    pool: web::Data<Pool>,
+    _admin: AdminUser,
+    query: web::Query<ModerationReportsQuery>,
+) -> Result<HttpResponse, AppError> {
+    let status_filter =
+        moderation_service::ModerationReportStatusFilter::parse(query.status.as_deref())?;
+    let reports =
+        moderation_service::list_reports(&pool, status_filter, query.limit.unwrap_or(100))?;
+    Ok(HttpResponse::Ok().json(reports))
+}
+
+pub async fn resolve_moderation_report(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    report_id: web::Path<Uuid>,
+    body: web::Json<ResolveModerationReportRequest>,
+) -> Result<HttpResponse, AppError> {
+    let admin_user_id = admin.0.user_id()?;
+    let report = moderation_service::resolve_report(
+        &pool,
+        *report_id,
+        admin_user_id,
+        &body.resolution_action,
+        body.resolution_notes.as_deref(),
+    )?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_user_id),
+        "moderation.report.resolve",
+        Some(&report.id.to_string()),
+        serde_json::json!({
+            "resolution_action": &report.resolution_action,
+            "resolution_notes": &report.resolution_notes,
+            "reported_user_id": report.reported_user_id,
+            "status": &report.status,
+        }),
+    )?;
+    Ok(HttpResponse::Ok().json(report))
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/overview", web::get().to(overview))
         .route("/users", web::get().to(list_users))
+        .route(
+            "/moderation/reports",
+            web::get().to(list_moderation_reports),
+        )
+        .route(
+            "/moderation/reports/{report_id}/resolve",
+            web::post().to(resolve_moderation_report),
+        )
         .route("/users/{user_id}/approve", web::post().to(approve_user))
         .route("/users/{user_id}/reject", web::post().to(reject_user))
         .route("/users/{user_id}/suspend", web::post().to(suspend_user))

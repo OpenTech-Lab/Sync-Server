@@ -108,7 +108,11 @@ pub fn upload_sticker_conn(
 
     // group_author is only meaningful on the __tab__ sentinel sticker
     let group_author = if name == "__tab__" {
-        input.group_author.as_deref().map(|a| a.trim().to_string()).filter(|a| !a.is_empty())
+        input
+            .group_author
+            .as_deref()
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
     } else {
         None
     };
@@ -151,9 +155,7 @@ pub fn rename_sticker_group(
         ));
     }
     if new_name.len() > 40 {
-        return Err(AppError::BadRequest(
-            "new_name must be <= 40 chars".into(),
-        ));
+        return Err(AppError::BadRequest("new_name must be <= 40 chars".into()));
     }
 
     let mut conn = pool.get()?;

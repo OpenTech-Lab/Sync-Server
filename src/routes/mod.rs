@@ -10,5 +10,6 @@ pub mod profile;
 pub mod push;
 pub mod push_relay;
 pub mod rooms;
+pub mod safety;
 pub mod stickers;
 pub mod ws;

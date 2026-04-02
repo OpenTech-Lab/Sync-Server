@@ -1,13 +1,15 @@
 use chrono::Utc;
 use diesel::prelude::*;
 use diesel::PgConnection;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::message::{Message, NewMessage};
 use crate::schema::messages::dsl::*;
+use crate::schema::user_blocks;
+use crate::services::moderation_service;
 
 /// Persist a new message and return the saved record.
 pub fn send_message(
@@ -48,6 +50,10 @@ pub fn get_conversation(
     before_id: Option<Uuid>,
     limit: u8,
 ) -> Result<Vec<Message>, AppError> {
+    if moderation_service::is_block_active_between(pool, user_a, user_b)? {
+        return Ok(Vec::new());
+    }
+
     let limit = limit.min(100) as i64;
     let mut conn = pool.get()?;
 
@@ -86,6 +92,10 @@ pub fn get_conversation(
 
 /// Mark all unread messages from `partner` to `viewer` as delivered and read.
 pub fn mark_read(pool: &Pool, viewer: Uuid, partner: Uuid) -> Result<usize, AppError> {
+    if moderation_service::is_block_active_between(pool, viewer, partner)? {
+        return Ok(0);
+    }
+
     let mut conn = pool.get()?;
     let now = Utc::now();
 
@@ -116,18 +126,43 @@ pub fn mark_read(pool: &Pool, viewer: Uuid, partner: Uuid) -> Result<usize, AppE
 
 /// Return a map of `partner_user_id → unread_count` for the given user.
 pub fn unread_counts(pool: &Pool, viewer: Uuid) -> Result<HashMap<Uuid, i64>, AppError> {
-    use crate::schema::messages;
-    use diesel::dsl::count_star;
-
     let mut conn = pool.get()?;
+    let blocked_partner_ids = blocked_partner_ids_conn(&mut conn, viewer)?;
+    let mut query = messages
+        .filter(recipient_id.eq(viewer))
+        .filter(read_at.is_null())
+        .filter(deleted_at.is_null())
+        .into_boxed();
+    if !blocked_partner_ids.is_empty() {
+        query = query.filter(sender_id.ne_all(blocked_partner_ids));
+    }
 
-    let rows: Vec<(Uuid, i64)> = messages::table
-        .filter(messages::recipient_id.eq(viewer))
-        .filter(messages::read_at.is_null())
-        .filter(messages::deleted_at.is_null())
-        .group_by(messages::sender_id)
-        .select((messages::sender_id, count_star()))
-        .load(&mut conn)?;
+    let rows = query.select(sender_id).load::<Uuid>(&mut conn)?;
+    let mut counts = HashMap::<Uuid, i64>::new();
+    for sender in rows {
+        *counts.entry(sender).or_insert(0) += 1;
+    }
+    Ok(counts)
+}
 
-    Ok(rows.into_iter().collect())
+fn blocked_partner_ids_conn(conn: &mut PgConnection, viewer: Uuid) -> QueryResult<HashSet<Uuid>> {
+    let pairs = user_blocks::table
+        .filter(
+            user_blocks::blocker_user_id
+                .eq(viewer)
+                .or(user_blocks::blocked_user_id.eq(viewer)),
+        )
+        .select((user_blocks::blocker_user_id, user_blocks::blocked_user_id))
+        .load::<(Uuid, Uuid)>(conn)?;
+
+    Ok(pairs
+        .into_iter()
+        .map(|(blocker_id, blocked_id)| {
+            if blocker_id == viewer {
+                blocked_id
+            } else {
+                blocker_id
+            }
+        })
+        .collect())
 }

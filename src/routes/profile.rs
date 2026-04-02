@@ -7,7 +7,7 @@ use crate::auth::AuthUser;
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::user::UserProfilePublic;
-use crate::services::{guild_service, user_service};
+use crate::services::{guild_service, moderation_service, user_service};
 
 const USERNAME_MIN_LEN: usize = 2;
 const USERNAME_MAX_LEN: usize = 32;
@@ -64,7 +64,9 @@ fn validate_message_public_key(message_public_key: &str) -> Result<(), AppError>
 pub async fn me(pool: web::Data<Pool>, auth: AuthUser) -> Result<HttpResponse, AppError> {
     let user = user_service::find_by_id(&pool, auth.0.user_id()?)?.ok_or(AppError::Unauthorized)?;
     let guild = guild_service::get_guild_snapshot(&pool, user.id)?;
+    let safety = moderation_service::safety_state_for_user(&user);
     let mut profile = UserProfilePublic::from(user);
+    profile.safety = Some(safety);
     profile.guild = Some(guild);
     Ok(HttpResponse::Ok().json(profile))
 }
@@ -87,6 +89,7 @@ pub async fn update_me(
                     .into(),
             ));
         }
+        moderation_service::ensure_text_is_allowed("username", username)?;
     }
 
     let next_description = match body.description.as_ref() {
@@ -100,6 +103,7 @@ pub async fn update_me(
                         "description must be 100 words or less".into(),
                     ));
                 }
+                moderation_service::ensure_text_is_allowed("description", &trimmed)?;
                 Some(Some(trimmed))
             }
         }
@@ -123,14 +127,19 @@ pub async fn update_me(
         body.message_public_key.clone(),
     )?;
 
-    Ok(HttpResponse::Ok().json(UserProfilePublic::from(updated)))
+    let mut profile = UserProfilePublic::from(updated.clone());
+    profile.safety = Some(moderation_service::safety_state_for_user(&updated));
+    Ok(HttpResponse::Ok().json(profile))
 }
 
 pub async fn get_user(
     pool: web::Data<Pool>,
-    _auth: AuthUser,
+    auth: AuthUser,
     user_id: web::Path<Uuid>,
 ) -> Result<HttpResponse, AppError> {
+    if moderation_service::is_block_active_between(&pool, auth.0.user_id()?, *user_id)? {
+        return Err(AppError::NotFound);
+    }
     let user = user_service::find_by_id(&pool, *user_id)?.ok_or(AppError::NotFound)?;
     let mut resp = serde_json::to_value(&UserProfilePublic::from(user.clone()))
         .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;

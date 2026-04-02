@@ -4,6 +4,7 @@ pub mod encrypted_backup;
 pub mod federation;
 pub mod guild;
 pub mod message;
+pub mod moderation;
 pub mod refresh_token;
 pub mod room;
 pub mod server_news;

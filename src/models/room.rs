@@ -52,6 +52,7 @@ pub struct RoomMessage {
     pub room_id: Uuid,
     pub sender_id: Uuid,
     pub content: String,
+    pub deleted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 

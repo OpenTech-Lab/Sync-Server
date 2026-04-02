@@ -23,7 +23,7 @@ use crate::models::refresh_token::{NewRefreshToken, RefreshToken};
 use crate::models::user::{NewUser, UserPublic};
 use crate::schema::refresh_tokens::dsl as rt_dsl;
 use crate::schema::users::dsl as user_dsl;
-use crate::services::{admin_service, email_service, user_service};
+use crate::services::{admin_service, email_service, moderation_service, user_service};
 
 // ── Request / Response DTOs ──────────────────────────────────────────────────
 
@@ -33,6 +33,7 @@ pub struct RegisterRequest {
     pub email: String,
     pub password: String,
     pub altcha_payload: Option<String>,
+    pub accepted_terms_version: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,12 +41,14 @@ pub struct LoginRequest {
     pub email: String,
     pub password: String,
     pub altcha_payload: Option<String>,
+    pub accepted_terms_version: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct DeviceLoginRequest {
     pub device_auth_pubkey: String,
     pub altcha_payload: Option<String>,
+    pub accepted_terms_version: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -464,6 +467,13 @@ pub async fn register(
 
     let max_users = user_service::resolved_max_users(&pool, &config)?;
     let user = user_service::create_user(&pool, new_user, max_users)?;
+    if body.accepted_terms_version == Some(moderation_service::CURRENT_SAFETY_TERMS_VERSION) {
+        let _ = moderation_service::record_terms_acceptance(
+            &pool,
+            user.id,
+            moderation_service::CURRENT_SAFETY_TERMS_VERSION,
+        )?;
+    }
     record_registration(&client_ip);
 
     if approval_required {
@@ -582,6 +592,13 @@ pub async fn login(
     }
 
     let mut conn = pool.get()?;
+    if body.accepted_terms_version == Some(moderation_service::CURRENT_SAFETY_TERMS_VERSION) {
+        moderation_service::record_terms_acceptance_conn(
+            &mut conn,
+            user.id,
+            moderation_service::CURRENT_SAFETY_TERMS_VERSION,
+        )?;
+    }
     let tokens = mint_tokens(
         &mut conn,
         user.id,
@@ -683,6 +700,13 @@ pub async fn device_login(
     };
 
     let mut conn = pool.get()?;
+    if body.accepted_terms_version == Some(moderation_service::CURRENT_SAFETY_TERMS_VERSION) {
+        moderation_service::record_terms_acceptance_conn(
+            &mut conn,
+            user.id,
+            moderation_service::CURRENT_SAFETY_TERMS_VERSION,
+        )?;
+    }
     let tokens = mint_tokens(
         &mut conn,
         user.id,

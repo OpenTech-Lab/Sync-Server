@@ -132,6 +132,8 @@ diesel::table! {
         is_approved -> Bool,
         ugc_terms_accepted_at -> Nullable<Timestamptz>,
         ugc_terms_version -> Int4,
+        dm_restricted_until -> Nullable<Timestamptz>,
+        safety_warning_count -> Int4,
     }
 }
 

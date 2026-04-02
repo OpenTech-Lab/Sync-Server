@@ -1,10 +1,11 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Timelike, Utc};
 use diesel::dsl::{exists, select};
 use diesel::prelude::*;
 use diesel::PgConnection;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
 use crate::db::Pool;
@@ -45,8 +46,16 @@ pub const REPORT_STATUS_RESOLVED: &str = "resolved";
 pub const REPORT_STATUS_DISMISSED: &str = "dismissed";
 pub const RESOLUTION_DISMISS: &str = "dismiss";
 pub const RESOLUTION_REMOVE_CONTENT: &str = "remove_content";
+pub const RESOLUTION_REMOVE_AND_LIMIT_NEW_DMS: &str =
+    "remove_content_and_limit_new_direct_messages";
 pub const RESOLUTION_SUSPEND_USER: &str = "suspend_user";
 pub const RESOLUTION_REMOVE_AND_SUSPEND: &str = "remove_content_and_suspend_user";
+const DAILY_AUTO_REVIEW_HOUR_UTC: u32 = 2;
+const NEW_DM_RESTRICTION_OPEN_REPORT_THRESHOLD: i64 = 2;
+const NEW_DM_RESTRICTION_LOOKBACK_DAYS: i64 = 7;
+const MODERATOR_DM_RESTRICTION_DAYS: i64 = 7;
+
+static LAST_DAILY_AUTO_REVIEW_DAY: OnceLock<Mutex<Option<chrono::NaiveDate>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockedUserView {
@@ -64,6 +73,7 @@ pub struct ReportInput {
     pub content_id: Option<String>,
     pub reason_code: String,
     pub reporter_note: Option<String>,
+    pub content_excerpt_override: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,6 +266,22 @@ pub fn ensure_no_block_between(pool: &Pool, user_a: Uuid, user_b: Uuid) -> Resul
     Ok(())
 }
 
+pub fn ensure_direct_message_allowed(
+    pool: &Pool,
+    sender_user_id: Uuid,
+    recipient_user_id: Uuid,
+) -> Result<(), AppError> {
+    ensure_no_block_between(pool, sender_user_id, recipient_user_id)?;
+
+    if is_new_dm_contact_restricted(pool, sender_user_id, recipient_user_id)? {
+        return Err(AppError::BadRequest(
+            "Private messages are temporarily limited to existing contacts while your account is under safety review".into(),
+        ));
+    }
+
+    Ok(())
+}
+
 pub fn create_report(
     pool: &Pool,
     reporter_user_id: Uuid,
@@ -306,6 +332,7 @@ pub fn block_user(
                     content_id: None,
                     reason_code: normalize_reason_code(reason_code.as_deref(), "abusive_user"),
                     reporter_note: normalize_optional_text(reporter_note.as_deref()),
+                    content_excerpt_override: None,
                 },
             )?;
 
@@ -400,39 +427,150 @@ pub fn resolve_report(
             ));
         }
 
-        let normalized_action = normalize_resolution_action(resolution_action)?;
-        if normalized_action == RESOLUTION_REMOVE_CONTENT
-            || normalized_action == RESOLUTION_REMOVE_AND_SUSPEND
-        {
-            remove_reported_content_conn(conn, &report)?;
-        }
-        if normalized_action == RESOLUTION_SUSPEND_USER
-            || normalized_action == RESOLUTION_REMOVE_AND_SUSPEND
-        {
-            diesel::update(users::table.find(report.reported_user_id))
-                .set(users::is_active.eq(false))
-                .execute(conn)?;
-        }
-
-        let next_status = if normalized_action == RESOLUTION_DISMISS {
-            REPORT_STATUS_DISMISSED
-        } else {
-            REPORT_STATUS_RESOLVED
-        };
-        let reviewed_at = Utc::now();
-        let updated = diesel::update(moderation_reports::table.find(report.id))
-            .set((
-                moderation_reports::status.eq(next_status),
-                moderation_reports::resolution_action.eq(Some(normalized_action.to_string())),
-                moderation_reports::resolution_notes.eq(normalize_optional_text(resolution_notes)),
-                moderation_reports::reviewed_by_user_id.eq(Some(reviewed_by_user_id)),
-                moderation_reports::reviewed_at.eq(Some(reviewed_at)),
-            ))
-            .get_result::<ModerationReport>(conn)?;
+        let updated = resolve_report_conn(
+            conn,
+            &report,
+            Some(reviewed_by_user_id),
+            resolution_action,
+            resolution_notes,
+        )?;
 
         let mut views = reports_to_admin_views(conn, vec![updated])?;
         views.pop().ok_or(AppError::NotFound)
     })
+}
+
+pub fn maybe_run_daily_automatic_review(pool: &Pool) -> Result<bool, AppError> {
+    let now = Utc::now();
+    if now.hour() != DAILY_AUTO_REVIEW_HOUR_UTC {
+        return Ok(false);
+    }
+
+    let today = now.date_naive();
+    let store = LAST_DAILY_AUTO_REVIEW_DAY.get_or_init(|| Mutex::new(None));
+    let mut last_run = store
+        .lock()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("daily moderation lock poisoned")))?;
+
+    if last_run.as_ref() == Some(&today) {
+        return Ok(false);
+    }
+
+    let processed = run_automatic_review_pass(pool)?;
+    *last_run = Some(today);
+    tracing::info!(processed, "daily automatic moderation review completed");
+    Ok(true)
+}
+
+pub fn spawn_daily_automatic_review(pool: Pool) {
+    actix_web::rt::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            if let Err(error) = maybe_run_daily_automatic_review(&pool) {
+                tracing::error!(error = %error, "daily automatic moderation review failed");
+            }
+        }
+    });
+}
+
+fn run_automatic_review_pass(pool: &Pool) -> Result<usize, AppError> {
+    let mut conn = pool.get()?;
+    conn.transaction::<usize, AppError, _>(|conn| {
+        let now = Utc::now();
+        let reports = moderation_reports::table
+            .filter(moderation_reports::status.eq(REPORT_STATUS_OPEN))
+            .filter(moderation_reports::review_due_at.le(now))
+            .order(moderation_reports::created_at.asc())
+            .select(ModerationReport::as_select())
+            .load::<ModerationReport>(conn)?;
+
+        if reports.is_empty() {
+            return Ok(0);
+        }
+
+        let mut overdue_counts_by_user = HashMap::<Uuid, usize>::new();
+        for report in &reports {
+            *overdue_counts_by_user
+                .entry(report.reported_user_id)
+                .or_insert(0) += 1;
+        }
+
+        for report in &reports {
+            let high_risk = report
+                .content_excerpt
+                .as_deref()
+                .and_then(detect_blocked_term)
+                .is_some();
+            let user_overdue_count = overdue_counts_by_user
+                .get(&report.reported_user_id)
+                .copied()
+                .unwrap_or(0);
+
+            let (action, notes) = if high_risk || user_overdue_count >= 3 {
+                (
+                    RESOLUTION_REMOVE_AND_SUSPEND,
+                    Some(
+                        "Automatic moderation: overdue report escalated by high-risk content or repeat offense",
+                    ),
+                )
+            } else {
+                (
+                    RESOLUTION_REMOVE_AND_LIMIT_NEW_DMS,
+                    Some(
+                        "Automatic moderation: overdue report content removed and new direct messages limited for follow-up",
+                    ),
+                )
+            };
+
+            let _ = resolve_report_conn(conn, report, None, action, notes)?;
+        }
+
+        Ok(reports.len())
+    })
+}
+
+fn resolve_report_conn(
+    conn: &mut PgConnection,
+    report: &ModerationReport,
+    reviewed_by_user_id: Option<Uuid>,
+    resolution_action: &str,
+    resolution_notes: Option<&str>,
+) -> Result<ModerationReport, AppError> {
+    let normalized_action = normalize_resolution_action(resolution_action)?;
+    if normalized_action == RESOLUTION_REMOVE_CONTENT
+        || normalized_action == RESOLUTION_REMOVE_AND_LIMIT_NEW_DMS
+        || normalized_action == RESOLUTION_REMOVE_AND_SUSPEND
+    {
+        remove_reported_content_conn(conn, report)?;
+    }
+    if normalized_action == RESOLUTION_REMOVE_AND_LIMIT_NEW_DMS {
+        apply_temporary_dm_restriction_conn(conn, report.reported_user_id)?;
+    }
+    if normalized_action == RESOLUTION_SUSPEND_USER
+        || normalized_action == RESOLUTION_REMOVE_AND_SUSPEND
+    {
+        diesel::update(users::table.find(report.reported_user_id))
+            .set(users::is_active.eq(false))
+            .execute(conn)?;
+    }
+
+    let next_status = if normalized_action == RESOLUTION_DISMISS {
+        REPORT_STATUS_DISMISSED
+    } else {
+        REPORT_STATUS_RESOLVED
+    };
+    let reviewed_at = Utc::now();
+    diesel::update(moderation_reports::table.find(report.id))
+        .set((
+            moderation_reports::status.eq(next_status),
+            moderation_reports::resolution_action.eq(Some(normalized_action.to_string())),
+            moderation_reports::resolution_notes.eq(normalize_optional_text(resolution_notes)),
+            moderation_reports::reviewed_by_user_id.eq(reviewed_by_user_id),
+            moderation_reports::reviewed_at.eq(Some(reviewed_at)),
+        ))
+        .get_result::<ModerationReport>(conn)
+        .map_err(AppError::from)
 }
 
 pub fn ensure_text_is_allowed(field_name: &str, value: &str) -> Result<(), AppError> {
@@ -492,12 +630,14 @@ fn create_report_conn(
     let content_id = normalize_optional_text(input.content_id.as_deref());
     let reason_code = normalize_reason_code(Some(&input.reason_code), "other");
     let reporter_note = normalize_optional_text(input.reporter_note.as_deref());
-    let content_excerpt = content_excerpt_conn(
+    let validated_excerpt = content_excerpt_conn(
         conn,
         input.reported_user_id,
         content_kind,
         content_id.as_deref(),
     )?;
+    let content_excerpt =
+        normalize_report_excerpt(input.content_excerpt_override.as_deref()).or(validated_excerpt);
 
     let new_report = NewModerationReport {
         id: Uuid::new_v4(),
@@ -517,6 +657,77 @@ fn create_report_conn(
         .values(&new_report)
         .get_result::<ModerationReport>(conn)
         .map_err(AppError::from)
+}
+
+fn is_new_dm_contact_restricted(
+    pool: &Pool,
+    sender_user_id: Uuid,
+    recipient_user_id: Uuid,
+) -> Result<bool, AppError> {
+    let mut conn = pool.get()?;
+    let now = Utc::now();
+    let sender = users::table
+        .find(sender_user_id)
+        .first::<User>(&mut conn)
+        .optional()?
+        .ok_or(AppError::NotFound)?;
+    let has_explicit_restriction = sender
+        .dm_restricted_until
+        .map(|until| until > now)
+        .unwrap_or(false);
+    let lookback = Utc::now() - Duration::days(NEW_DM_RESTRICTION_LOOKBACK_DAYS);
+
+    let open_report_count = moderation_reports::table
+        .filter(moderation_reports::reported_user_id.eq(sender_user_id))
+        .filter(moderation_reports::status.eq(REPORT_STATUS_OPEN))
+        .filter(moderation_reports::created_at.ge(lookback))
+        .count()
+        .get_result::<i64>(&mut conn)?;
+
+    if !has_explicit_restriction && open_report_count < NEW_DM_RESTRICTION_OPEN_REPORT_THRESHOLD {
+        return Ok(false);
+    }
+
+    let has_prior_contact = select(exists(
+        messages::table
+            .filter(messages::deleted_at.is_null())
+            .filter(
+                messages::sender_id
+                    .eq(sender_user_id)
+                    .and(messages::recipient_id.eq(recipient_user_id))
+                    .or(messages::sender_id
+                        .eq(recipient_user_id)
+                        .and(messages::recipient_id.eq(sender_user_id))),
+            ),
+    ))
+    .get_result::<bool>(&mut conn)?;
+
+    Ok(!has_prior_contact)
+}
+
+fn apply_temporary_dm_restriction_conn(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+) -> Result<(), AppError> {
+    let now = Utc::now();
+    let restriction_until = now + Duration::days(MODERATOR_DM_RESTRICTION_DAYS);
+    let user = users::table
+        .find(user_id)
+        .first::<User>(conn)
+        .optional()?
+        .ok_or(AppError::NotFound)?;
+    let effective_until = match user.dm_restricted_until {
+        Some(current) if current > restriction_until => current,
+        _ => restriction_until,
+    };
+
+    diesel::update(users::table.find(user_id))
+        .set((
+            users::dm_restricted_until.eq(Some(effective_until)),
+            users::safety_warning_count.eq(user.safety_warning_count + 1),
+        ))
+        .execute(conn)?;
+    Ok(())
 }
 
 fn reports_to_admin_views(
@@ -704,10 +915,11 @@ fn normalize_resolution_action(raw: &str) -> Result<&'static str, AppError> {
     match raw.trim() {
         RESOLUTION_DISMISS => Ok(RESOLUTION_DISMISS),
         RESOLUTION_REMOVE_CONTENT => Ok(RESOLUTION_REMOVE_CONTENT),
+        RESOLUTION_REMOVE_AND_LIMIT_NEW_DMS => Ok(RESOLUTION_REMOVE_AND_LIMIT_NEW_DMS),
         RESOLUTION_SUSPEND_USER => Ok(RESOLUTION_SUSPEND_USER),
         RESOLUTION_REMOVE_AND_SUSPEND => Ok(RESOLUTION_REMOVE_AND_SUSPEND),
         _ => Err(AppError::BadRequest(
-            "action must be one of dismiss, remove_content, suspend_user, remove_content_and_suspend_user"
+            "action must be one of dismiss, remove_content, remove_content_and_limit_new_direct_messages, suspend_user, remove_content_and_suspend_user"
                 .into(),
         )),
     }
@@ -716,6 +928,17 @@ fn normalize_resolution_action(raw: &str) -> Result<&'static str, AppError> {
 fn normalize_reason_code(raw: Option<&str>, fallback: &str) -> String {
     raw.and_then(|value| normalize_optional_text(Some(value)))
         .unwrap_or_else(|| fallback.to_string())
+}
+
+fn normalize_report_excerpt(raw: Option<&str>) -> Option<String> {
+    let normalized = normalize_optional_text(raw)?;
+    const MAX_CHARS: usize = 2000;
+    if normalized.chars().count() <= MAX_CHARS {
+        return Some(normalized);
+    }
+    let mut truncated = normalized.chars().take(MAX_CHARS).collect::<String>();
+    truncated.push_str("...");
+    Some(truncated)
 }
 
 fn normalize_optional_text(raw: Option<&str>) -> Option<String> {

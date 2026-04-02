@@ -26,6 +26,8 @@ pub struct User {
     pub is_approved: bool,
     pub ugc_terms_accepted_at: Option<DateTime<Utc>>,
     pub ugc_terms_version: i32,
+    pub dm_restricted_until: Option<DateTime<Utc>>,
+    pub safety_warning_count: i32,
 }
 
 #[derive(Debug, Insertable)]

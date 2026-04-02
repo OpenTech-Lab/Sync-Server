@@ -50,6 +50,7 @@ async fn main() -> std::io::Result<()> {
     db::run_migrations(&pool).expect("Failed to run database migrations");
     routes::auth::initialize_first_admin_setup_link(&pool, &config)
         .expect("Failed to initialize one-time admin setup URL");
+    services::moderation_service::spawn_daily_automatic_review(pool.clone());
 
     // Create Redis client (connection is lazy; verified on first use)
     let redis = redis::Client::open(config.redis_url.as_str()).expect("Invalid Redis URL");

@@ -20,6 +20,7 @@ pub struct CreateReportRequest {
     pub content_id: Option<String>,
     pub reason_code: String,
     pub reporter_note: Option<String>,
+    pub content_excerpt_override: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +59,7 @@ pub async fn create_report(
             content_id: body.content_id.clone(),
             reason_code: body.reason_code.clone(),
             reporter_note: body.reporter_note.clone(),
+            content_excerpt_override: body.content_excerpt_override.clone(),
         },
     )?;
     admin_service::append_audit_log(

@@ -19,6 +19,7 @@ import type { ModerationReportItem } from "../page";
 const actionLabels: Record<string, string> = {
   dismiss: "Dismiss",
   remove_content: "Remove content",
+  remove_content_and_limit_new_direct_messages: "Yellow card",
   suspend_user: "Suspend user",
   remove_content_and_suspend_user: "Remove + suspend",
 };
@@ -128,6 +129,20 @@ export function ModerationReportsTable({
                         onClick={() => resolveReport(report.id, "remove_content")}
                       >
                         Remove
+                      </Button>
+                      <Button
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                        disabled={isWorking}
+                        onClick={() =>
+                          resolveReport(
+                            report.id,
+                            "remove_content_and_limit_new_direct_messages",
+                          )
+                        }
+                      >
+                        Yellow card
                       </Button>
                       <Button
                         size="sm"

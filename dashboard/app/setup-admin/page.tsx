@@ -13,7 +13,7 @@ export default async function SetupAdminPage() {
     if (jar.get(ACCESS_COOKIE)?.value) {
       redirect("/dashboard");
     }
-    redirect("/login");
+    redirect("/");
   }
 
   return (
@@ -25,7 +25,7 @@ export default async function SetupAdminPage() {
         This endpoint requires a one-time token from the startup log.
       </p>
       <p className="mt-4 text-sm">
-        <Link className="underline" href="/login">
+        <Link className="underline" href="/">
           Back to login
         </Link>
       </p>

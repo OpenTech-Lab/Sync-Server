@@ -102,7 +102,7 @@ export function ForgotPasswordForm() {
       <div className="text-center">
         <Link
           className="text-sm text-muted-foreground underline-offset-4 hover:underline"
-          href="/login"
+          href="/"
         >
           Back to login
         </Link>

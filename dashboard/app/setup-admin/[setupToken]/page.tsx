@@ -18,7 +18,7 @@ export default async function SetupAdminTokenPage({
     if (jar.get(ACCESS_COOKIE)?.value) {
       redirect("/dashboard");
     }
-    redirect("/login");
+    redirect("/");
   }
 
   const { setupToken } = await params;

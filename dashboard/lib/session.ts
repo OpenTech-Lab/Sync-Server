@@ -19,18 +19,18 @@ export async function requireAdminSession(): Promise<{
   const jar = await cookies();
   const accessToken = jar.get(ACCESS_COOKIE)?.value;
   if (!accessToken) {
-    redirect("/login");
+    redirect("/");
   }
 
   let user: SessionUser;
   try {
     user = await apiGetJson<SessionUser>("/auth/me");
   } catch {
-    redirect("/login");
+    redirect("/");
   }
 
   if (user.role !== "admin") {
-    redirect("/login");
+    redirect("/");
   }
 
   return { accessToken, user };

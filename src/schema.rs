@@ -134,6 +134,7 @@ diesel::table! {
         ugc_terms_version -> Int4,
         dm_restricted_until -> Nullable<Timestamptz>,
         safety_warning_count -> Int4,
+        yellow_card_expires_at -> Nullable<Timestamptz>,
     }
 }
 

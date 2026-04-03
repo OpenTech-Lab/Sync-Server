@@ -15,6 +15,7 @@ use crate::models::guild::{
     DEFAULT_DAILY_COUNTER_RETENTION_DAYS, DEFAULT_SCORE_EVENT_RETENTION_DAYS,
 };
 use crate::models::message::Message;
+use crate::models::user::User;
 use crate::schema::{
     admin_audit_logs, admin_settings, daily_action_counters, guild_score_events, user_guild_stats,
     users,
@@ -675,6 +676,23 @@ pub fn resolve_contact_with_guild(
         } else {
             stats
         };
+
+        // Yellow card: block friend adds while card is active
+        let user = users::table
+            .find(user_id)
+            .first::<User>(conn)
+            .optional()?
+            .ok_or(AppError::NotFound)?;
+        if user
+            .yellow_card_expires_at
+            .map(|t| t > now)
+            .unwrap_or(false)
+        {
+            return Err(AppError::BadRequest(
+                "Your account has a temporary restriction and cannot add contacts at this time."
+                    .into(),
+            ));
+        }
 
         let friend_adds_today = daily_action_count(conn, user_id, ACTION_FRIEND_ADD, today)?;
         let outbound_messages_sent =

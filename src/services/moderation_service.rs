@@ -266,11 +266,32 @@ pub fn ensure_no_block_between(pool: &Pool, user_a: Uuid, user_b: Uuid) -> Resul
     Ok(())
 }
 
+fn ensure_no_yellow_card(pool: &Pool, user_id: Uuid) -> Result<(), AppError> {
+    let mut conn = pool.get()?;
+    let user = users::table
+        .find(user_id)
+        .first::<User>(&mut conn)
+        .optional()?
+        .ok_or(AppError::NotFound)?;
+    if user
+        .yellow_card_expires_at
+        .map(|t| t > Utc::now())
+        .unwrap_or(false)
+    {
+        return Err(AppError::BadRequest(
+            "Your account has a temporary restriction and cannot send messages at this time."
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn ensure_direct_message_allowed(
     pool: &Pool,
     sender_user_id: Uuid,
     recipient_user_id: Uuid,
 ) -> Result<(), AppError> {
+    ensure_no_yellow_card(pool, sender_user_id)?;
     ensure_no_block_between(pool, sender_user_id, recipient_user_id)?;
 
     if is_new_dm_contact_restricted(pool, sender_user_id, recipient_user_id)? {

@@ -28,6 +28,7 @@ pub struct User {
     pub ugc_terms_version: i32,
     pub dm_restricted_until: Option<DateTime<Utc>>,
     pub safety_warning_count: i32,
+    pub yellow_card_expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Insertable)]

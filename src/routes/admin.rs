@@ -887,6 +887,38 @@ pub async fn resolve_moderation_report(
     Ok(HttpResponse::Ok().json(report))
 }
 
+pub async fn issue_yellow_card(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    user_id: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    admin_service::issue_yellow_card(&pool, *user_id, 3)?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin.0.user_id()?),
+        "user.yellow_card",
+        Some(&user_id.to_string()),
+        serde_json::json!({ "duration_days": 3 }),
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "status": "yellow_card_issued" })))
+}
+
+pub async fn clear_yellow_card(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    user_id: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    admin_service::clear_yellow_card(&pool, *user_id)?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin.0.user_id()?),
+        "user.yellow_card_cleared",
+        Some(&user_id.to_string()),
+        serde_json::json!({}),
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "status": "yellow_card_cleared" })))
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/overview", web::get().to(overview))
         .route("/users", web::get().to(list_users))
@@ -944,5 +976,13 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route(
             "/users/{user_id}/guild/dismiss-report",
             web::post().to(dismiss_abuse_report),
+        )
+        .route(
+            "/users/{user_id}/yellow-card",
+            web::post().to(issue_yellow_card),
+        )
+        .route(
+            "/users/{user_id}/yellow-card",
+            web::delete().to(clear_yellow_card),
         );
 }

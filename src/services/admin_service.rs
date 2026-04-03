@@ -78,6 +78,8 @@ pub struct AdminUserView {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
     pub guild: Option<AdminTrustReviewView>,
+    pub yellow_card_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub yellow_card_active: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -93,6 +95,10 @@ pub struct AdminTrustReviewView {
 
 impl AdminUserView {
     fn from_parts(value: User, guild: Option<UserGuildStats>) -> Self {
+        let yellow_card_active = value
+            .yellow_card_expires_at
+            .map(|t| t > chrono::Utc::now())
+            .unwrap_or(false);
         Self {
             id: value.id,
             username: value.username,
@@ -102,6 +108,8 @@ impl AdminUserView {
             is_approved: value.is_approved,
             created_at: value.created_at,
             last_seen_at: value.last_seen_at,
+            yellow_card_expires_at: value.yellow_card_expires_at,
+            yellow_card_active,
             guild: Some(
                 guild
                     .map(|guild| AdminTrustReviewView {
@@ -327,6 +335,29 @@ pub fn set_user_active(pool: &Pool, user_id: Uuid, active: bool) -> Result<(), A
         .set(user_dsl::is_active.eq(active))
         .execute(&mut conn)?;
 
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(())
+}
+
+pub fn issue_yellow_card(pool: &Pool, user_id: Uuid, days: i64) -> Result<(), AppError> {
+    let mut conn = pool.get()?;
+    let expires = chrono::Utc::now() + chrono::Duration::days(days);
+    let changed = diesel::update(user_dsl::users.find(user_id))
+        .set(user_dsl::yellow_card_expires_at.eq(Some(expires)))
+        .execute(&mut conn)?;
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(())
+}
+
+pub fn clear_yellow_card(pool: &Pool, user_id: Uuid) -> Result<(), AppError> {
+    let mut conn = pool.get()?;
+    let changed = diesel::update(user_dsl::users.find(user_id))
+        .set(user_dsl::yellow_card_expires_at.eq(None::<chrono::DateTime<chrono::Utc>>))
+        .execute(&mut conn)?;
     if changed == 0 {
         return Err(AppError::NotFound);
     }

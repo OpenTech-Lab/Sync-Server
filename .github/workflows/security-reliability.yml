@@ -51,21 +51,25 @@ jobs:
       - name: Build dashboard image
         run: docker build -t sync-dashboard:scan ./server/dashboard
 
+      # SECURITY: aquasecurity/trivy-action tags were compromised 2026-03-19.
+      # Install Trivy directly from a pinned GitHub release binary instead.
+      # Before running: set TRIVY_VERSION and TRIVY_DEB_SHA256 to values you have
+      # verified from https://github.com/aquasecurity/trivy/releases (use any version < 0.69.4).
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: "REPLACE_ME"     # e.g. 0.59.1
+          TRIVY_DEB_SHA256: "REPLACE_ME"  # SHA256 of trivy_${TRIVY_VERSION}_Linux-64bit.deb
+        run: |
+          DEB="trivy_${TRIVY_VERSION}_Linux-64bit.deb"
+          curl -sLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${DEB}"
+          echo "${TRIVY_DEB_SHA256}  ${DEB}" | sha256sum --check
+          sudo dpkg -i "${DEB}"
+
       - name: Scan server image
-        uses: aquasecurity/trivy-action@0.24.0
-        with:
-          image-ref: sync-server:scan
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+        run: trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 sync-server:scan
 
       - name: Scan dashboard image
-        uses: aquasecurity/trivy-action@0.24.0
-        with:
-          image-ref: sync-dashboard:scan
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+        run: trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 sync-dashboard:scan
 
   load-baseline:
     name: Load baseline smoke

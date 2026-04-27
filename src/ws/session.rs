@@ -148,6 +148,7 @@ pub async fn run_ws_session(
     mut msg_stream: MessageStream,
     redis_client: redis::Client,
     db_pool: crate::db::Pool,
+    config: crate::config::Config,
 ) {
     let mut publish_conn = crate::services::redis_pubsub::get_async_conn(&redis_client)
         .await
@@ -233,21 +234,31 @@ pub async fn run_ws_session(
                                             continue;
                                         }
                                     };
-                                    let Some(conn) = publish_conn.as_mut() else { continue; };
-                                    let payload = RelayIncomingCall {
-                                        r#type: "incoming_call",
-                                        call_id,
-                                        caller_id: user_id,
-                                        call_type,
-                                        sdp_offer,
-                                    };
-                                    let channel = crate::services::redis_pubsub::user_channel(callee_id);
-                                    if let Err(e) = conn.publish::<_, _, ()>(
-                                        channel,
-                                        serde_json::to_string(&payload).unwrap_or_default(),
-                                    ).await {
-                                        tracing::warn!(%user_id, %callee_id, error = %e, "Failed to relay CallOffer");
+                                    if let Some(conn) = publish_conn.as_mut() {
+                                        let payload = RelayIncomingCall {
+                                            r#type: "incoming_call",
+                                            call_id,
+                                            caller_id: user_id,
+                                            call_type: call_type.clone(),
+                                            sdp_offer,
+                                        };
+                                        let channel = crate::services::redis_pubsub::user_channel(callee_id);
+                                        if let Err(e) = conn.publish::<_, _, ()>(
+                                            channel,
+                                            serde_json::to_string(&payload).unwrap_or_default(),
+                                        ).await {
+                                            tracing::warn!(%user_id, %callee_id, error = %e, "Failed to relay CallOffer");
+                                        }
                                     }
+                                    let pool_clone = db_pool.clone();
+                                    let cfg_clone = config.clone();
+                                    tokio::spawn(async move {
+                                        if let Err(e) = crate::services::push_dispatch_service::dispatch_incoming_call(
+                                            &pool_clone, &cfg_clone, callee_id, user_id, call_id, &call_type,
+                                        ).await {
+                                            tracing::warn!(error = %e, %user_id, %callee_id, "Failed to dispatch call push notification");
+                                        }
+                                    });
                                 }
                                 ClientEvent::CallAnswer { call_id, caller_id, sdp_answer } => {
                                     let _ = crate::services::call_service::update_status(&db_pool, call_id, "answered");

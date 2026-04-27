@@ -50,7 +50,7 @@ pub async fn ws_handler(
     let db_pool = pool.get_ref().clone();
     // actix_web::rt::spawn does not require Send, which is needed because
     // MessageStream wraps a non-Send payload stream.
-    actix_web::rt::spawn(run_ws_session(user_id, session, msg_stream, redis_client, db_pool));
+    actix_web::rt::spawn(run_ws_session(user_id, session, msg_stream, redis_client, db_pool, config.get_ref().clone()));
 
     Ok(response)
 }

@@ -25,6 +25,16 @@ struct PushTarget<'a> {
 }
 
 #[derive(Debug, Serialize)]
+struct IncomingCallPushPayload<'a> {
+    event: &'static str,
+    recipient_id: Uuid,
+    caller_id: Uuid,
+    call_id: Uuid,
+    call_type: &'a str,
+    targets: Vec<PushTarget<'a>>,
+}
+
+#[derive(Debug, Serialize)]
 struct NewMessagePushPayload<'a> {
     event: &'static str,
     recipient_id: Uuid,
@@ -203,6 +213,103 @@ pub async fn dispatch_new_message(
     }
 }
 
+pub async fn dispatch_incoming_call(
+    pool: &Pool,
+    cfg: &Config,
+    callee_id: Uuid,
+    caller_id: Uuid,
+    call_id: Uuid,
+    call_type: &str,
+) -> Result<(), AppError> {
+    let configured_webhook_url =
+        admin_service::get_setting(pool, admin_service::SETTING_WEBHOOK_URL)?
+            .map(|item| item.value)
+            .filter(|url| !url.trim().is_empty());
+    let webhook_url =
+        configured_webhook_url.or_else(|| Some(DEFAULT_RELAY_WEBHOOK_URL.to_string()));
+    let tokens = push_token_service::list_tokens_for_user(pool, callee_id)?;
+    if tokens.is_empty() {
+        return Ok(());
+    }
+
+    let all_targets = tokens
+        .iter()
+        .map(|item| PushTargetData {
+            platform: item.platform.clone(),
+            token: item.token.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let mut ios_targets = Vec::new();
+    let mut webhook_targets = Vec::new();
+    for target in all_targets {
+        if target.platform.eq_ignore_ascii_case("ios") {
+            ios_targets.push(target);
+        } else if is_relay_deliverable_platform(&target.platform) {
+            webhook_targets.push(target);
+        }
+    }
+
+    let mut dispatch_errors = Vec::new();
+
+    match cfg.push_delivery_mode {
+        PushDeliveryMode::Relay => {
+            webhook_targets.extend(ios_targets);
+        }
+        PushDeliveryMode::Direct => {
+            if !ios_targets.is_empty() {
+                if let Some(apns_cfg) = apns_service::parse_apns_config(cfg) {
+                    let tokens: Vec<String> =
+                        ios_targets.iter().map(|t| t.token.clone()).collect();
+                    if let Err(error) = apns_service::send_call_alert_to_tokens(
+                        &apns_cfg, &tokens, callee_id, caller_id, call_id, call_type,
+                    )
+                    .await
+                    {
+                        dispatch_errors.push(format!("APNs call dispatch failed: {error}"));
+                    }
+                }
+            }
+        }
+        PushDeliveryMode::Hybrid => {
+            if !ios_targets.is_empty() {
+                if let Some(apns_cfg) = apns_service::parse_apns_config(cfg) {
+                    let tokens: Vec<String> =
+                        ios_targets.iter().map(|t| t.token.clone()).collect();
+                    if let Err(_) = apns_service::send_call_alert_to_tokens(
+                        &apns_cfg, &tokens, callee_id, caller_id, call_id, call_type,
+                    )
+                    .await
+                    {
+                        webhook_targets.extend(ios_targets);
+                    }
+                } else {
+                    webhook_targets.extend(ios_targets);
+                }
+            }
+        }
+    };
+
+    if !webhook_targets.is_empty() {
+        if let Some(url) = webhook_url {
+            if let Err(error) =
+                send_call_webhook_push(cfg, &url, &webhook_targets, callee_id, caller_id, call_id, call_type)
+                    .await
+            {
+                dispatch_errors.push(format!("Webhook call dispatch failed: {error}"));
+            }
+        }
+    }
+
+    if dispatch_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Internal(anyhow::anyhow!(
+            dispatch_errors.join("; ")
+        )))
+    }
+}
+
 /// Returns true for mobile platforms that a webhook push relay can reach via
 /// APNs or FCM-style delivery.  Desktop and web platforms (linux, windows,
 /// macos, web) rely on a persistent SSE/WebSocket connection for real-time
@@ -287,6 +394,56 @@ async fn send_webhook_push(
         let body = response.text().await.unwrap_or_default();
         return Err(AppError::Internal(anyhow::anyhow!(
             "Push webhook returned {}: {}",
+            status,
+            body
+        )));
+    }
+
+    Ok(())
+}
+
+async fn send_call_webhook_push(
+    cfg: &Config,
+    webhook_url: &str,
+    targets: &[PushTargetData],
+    callee_id: Uuid,
+    caller_id: Uuid,
+    call_id: Uuid,
+    call_type: &str,
+) -> Result<(), AppError> {
+    let payload = IncomingCallPushPayload {
+        event: "incoming_call",
+        recipient_id: callee_id,
+        caller_id,
+        call_id,
+        call_type,
+        targets: targets
+            .iter()
+            .map(|item| PushTarget {
+                platform: item.platform.as_str(),
+                token: item.token.as_str(),
+            })
+            .collect(),
+    };
+
+    let client = reqwest::Client::new();
+    let mut request = client
+        .post(webhook_url)
+        .json(&payload)
+        .timeout(std::time::Duration::from_secs(5));
+    if let Some(secret) = cfg.push_relay_shared_secret.as_ref() {
+        request = request.header("x-sync-push-secret", secret.as_str());
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Call push webhook send failed: {e}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "Call push webhook returned {}: {}",
             status,
             body
         )));

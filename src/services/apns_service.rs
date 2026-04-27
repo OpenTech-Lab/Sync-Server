@@ -45,6 +45,92 @@ struct ApnsAlert<'a> {
     body: &'a str,
 }
 
+#[derive(Debug, Serialize)]
+struct ApnsCallPayload<'a> {
+    aps: ApnsAps<'a>,
+    call_id: String,
+    caller_id: String,
+    callee_id: String,
+    call_type: &'a str,
+}
+
+pub async fn send_call_alert_to_tokens(
+    cfg: &ApnsConfig,
+    tokens: &[String],
+    callee_id: Uuid,
+    caller_id: Uuid,
+    call_id: Uuid,
+    call_type: &str,
+) -> Result<(), AppError> {
+    if tokens.is_empty() {
+        return Ok(());
+    }
+
+    let call_label = if call_type.eq_ignore_ascii_case("video") {
+        "Incoming video call"
+    } else {
+        "Incoming voice call"
+    };
+
+    let base_url = if cfg.use_sandbox {
+        APNS_SANDBOX_URL
+    } else {
+        APNS_PRODUCTION_URL
+    };
+    let auth_token = make_apns_jwt(cfg)?;
+    let payload = ApnsCallPayload {
+        aps: ApnsAps {
+            alert: ApnsAlert {
+                title: "Sync",
+                body: call_label,
+            },
+            sound: "default",
+        },
+        call_id: call_id.to_string(),
+        caller_id: caller_id.to_string(),
+        callee_id: callee_id.to_string(),
+        call_type,
+    };
+
+    let client = reqwest::Client::new();
+    let mut failures = Vec::new();
+    for token in tokens {
+        let url = format!("{base_url}/3/device/{token}");
+        let expiration = (chrono::Utc::now().timestamp() + 55).to_string();
+        let response: reqwest::Response = client
+            .post(&url)
+            .version(reqwest::Version::HTTP_2)
+            .header("authorization", format!("bearer {auth_token}"))
+            .header("apns-topic", cfg.bundle_id.as_str())
+            .header("apns-push-type", "alert")
+            .header("apns-priority", "10")
+            .header("apns-expiration", expiration.as_str())
+            .json(&payload)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("APNs call send failed: {}", e))
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            failures.push(format!("token={token} status={status} body={body}"));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Internal(anyhow::anyhow!(
+            "APNs call alerts failed for {} target(s): {}",
+            failures.len(),
+            failures.join(" | ")
+        )))
+    }
+}
+
 pub fn parse_apns_config(cfg: &Config) -> Option<ApnsConfig> {
     let team_id = cfg.apns_team_id.as_ref()?.trim().to_string();
     let key_id = cfg.apns_key_id.as_ref()?.trim().to_string();

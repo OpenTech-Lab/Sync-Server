@@ -315,6 +315,21 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    use diesel::sql_types::*;
+
+    call_records (id) {
+        id -> Uuid,
+        caller_id -> Uuid,
+        callee_id -> Uuid,
+        call_type -> Text,
+        status -> Text,
+        started_at -> Timestamptz,
+        answered_at -> Nullable<Timestamptz>,
+        ended_at -> Nullable<Timestamptz>,
+    }
+}
+
 diesel::joinable!(refresh_tokens -> users (user_id));
 diesel::joinable!(messages -> users (sender_id));
 diesel::joinable!(rooms -> users (created_by));
@@ -334,6 +349,7 @@ diesel::joinable!(user_guild_stats -> users (user_id));
 diesel::allow_tables_to_appear_in_same_query!(
     admin_settings,
     admin_audit_logs,
+    call_records,
     daily_action_counters,
     guild_score_events,
     users,

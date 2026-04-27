@@ -2,6 +2,7 @@ pub mod admin;
 pub mod altcha;
 pub mod auth;
 pub mod backup;
+pub mod calls;
 pub mod federation;
 pub mod health;
 pub mod messages;

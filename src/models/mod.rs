@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod call_record;
 pub mod device_push_token;
 pub mod encrypted_backup;
 pub mod federation;
@@ -13,6 +14,8 @@ pub mod user;
 
 #[allow(unused_imports)]
 pub use admin::{AdminAuditLog, AdminSetting, NewAdminAuditLog, NewAdminSetting};
+#[allow(unused_imports)]
+pub use call_record::{CallRecord, NewCallRecord};
 #[allow(unused_imports)]
 pub use device_push_token::{DevicePushToken, NewDevicePushToken};
 #[allow(unused_imports)]

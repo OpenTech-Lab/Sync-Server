@@ -21,6 +21,32 @@ pub enum ServerEvent {
     Error {
         message: String,
     },
+    IncomingCall {
+        call_id: Uuid,
+        caller_id: Uuid,
+        call_type: String,
+        sdp_offer: String,
+    },
+    CallAnswered {
+        call_id: Uuid,
+        callee_id: Uuid,
+        sdp_answer: String,
+    },
+    CallRejected {
+        call_id: Uuid,
+        callee_id: Uuid,
+    },
+    CallHangup {
+        call_id: Uuid,
+        from_user_id: Uuid,
+    },
+    IceCandidate {
+        call_id: Uuid,
+        from_user_id: Uuid,
+        candidate: String,
+        sdp_mid: Option<String>,
+        sdp_mline_index: Option<u32>,
+    },
 }
 
 /// Events received from the WebSocket client.
@@ -29,14 +55,82 @@ pub enum ServerEvent {
 pub enum ClientEvent {
     Ping,
     Typing { partner_id: Uuid, is_typing: bool },
+    CallOffer {
+        callee_id: Uuid,
+        call_type: String,
+        sdp_offer: String,
+    },
+    CallAnswer {
+        call_id: Uuid,
+        caller_id: Uuid,
+        sdp_answer: String,
+    },
+    CallReject {
+        call_id: Uuid,
+        caller_id: Uuid,
+    },
+    CallHangup {
+        call_id: Uuid,
+        peer_id: Uuid,
+    },
+    IceCandidate {
+        call_id: Uuid,
+        peer_id: Uuid,
+        candidate: String,
+        sdp_mid: Option<String>,
+        sdp_mline_index: Option<u32>,
+    },
 }
 
-#[derive(Debug, serde::Serialize)]
+// ── Relay structs (Redis pubsub payloads) ────────────────────────────────────
+
+#[derive(serde::Serialize)]
 struct TypingEvent {
     r#type: &'static str,
     sender_id: Uuid,
     recipient_id: Uuid,
     is_typing: bool,
+}
+
+#[derive(serde::Serialize)]
+struct RelayIncomingCall {
+    r#type: &'static str,
+    call_id: Uuid,
+    caller_id: Uuid,
+    call_type: String,
+    sdp_offer: String,
+}
+
+#[derive(serde::Serialize)]
+struct RelayCallAnswer {
+    r#type: &'static str,
+    call_id: Uuid,
+    callee_id: Uuid,
+    sdp_answer: String,
+}
+
+#[derive(serde::Serialize)]
+struct RelayCallReject {
+    r#type: &'static str,
+    call_id: Uuid,
+    callee_id: Uuid,
+}
+
+#[derive(serde::Serialize)]
+struct RelayCallHangup {
+    r#type: &'static str,
+    call_id: Uuid,
+    from_user_id: Uuid,
+}
+
+#[derive(serde::Serialize)]
+struct RelayIceCandidate {
+    r#type: &'static str,
+    call_id: Uuid,
+    from_user_id: Uuid,
+    candidate: String,
+    sdp_mid: Option<String>,
+    sdp_mline_index: Option<u32>,
 }
 
 // ── Session driver ────────────────────────────────────────────────────────────
@@ -53,6 +147,7 @@ pub async fn run_ws_session(
     mut session: Session,
     mut msg_stream: MessageStream,
     redis_client: redis::Client,
+    db_pool: crate::db::Pool,
 ) {
     let mut publish_conn = crate::services::redis_pubsub::get_async_conn(&redis_client)
         .await
@@ -125,6 +220,100 @@ pub async fn run_ws_session(
                                             %error,
                                             "Failed to publish typing event"
                                         );
+                                    }
+                                }
+                                ClientEvent::CallOffer { callee_id, call_type, sdp_offer } => {
+                                    let record = crate::services::call_service::create(
+                                        &db_pool, user_id, callee_id, &call_type,
+                                    );
+                                    let call_id = match record {
+                                        Ok(r) => r.id,
+                                        Err(e) => {
+                                            tracing::warn!(%user_id, %callee_id, error = %e, "Failed to create call record");
+                                            continue;
+                                        }
+                                    };
+                                    let Some(conn) = publish_conn.as_mut() else { continue; };
+                                    let payload = RelayIncomingCall {
+                                        r#type: "incoming_call",
+                                        call_id,
+                                        caller_id: user_id,
+                                        call_type,
+                                        sdp_offer,
+                                    };
+                                    let channel = crate::services::redis_pubsub::user_channel(callee_id);
+                                    if let Err(e) = conn.publish::<_, _, ()>(
+                                        channel,
+                                        serde_json::to_string(&payload).unwrap_or_default(),
+                                    ).await {
+                                        tracing::warn!(%user_id, %callee_id, error = %e, "Failed to relay CallOffer");
+                                    }
+                                }
+                                ClientEvent::CallAnswer { call_id, caller_id, sdp_answer } => {
+                                    let _ = crate::services::call_service::update_status(&db_pool, call_id, "answered");
+                                    let Some(conn) = publish_conn.as_mut() else { continue; };
+                                    let payload = RelayCallAnswer {
+                                        r#type: "call_answered",
+                                        call_id,
+                                        callee_id: user_id,
+                                        sdp_answer,
+                                    };
+                                    let channel = crate::services::redis_pubsub::user_channel(caller_id);
+                                    if let Err(e) = conn.publish::<_, _, ()>(
+                                        channel,
+                                        serde_json::to_string(&payload).unwrap_or_default(),
+                                    ).await {
+                                        tracing::warn!(%user_id, %caller_id, error = %e, "Failed to relay CallAnswer");
+                                    }
+                                }
+                                ClientEvent::CallReject { call_id, caller_id } => {
+                                    let _ = crate::services::call_service::update_status(&db_pool, call_id, "rejected");
+                                    let Some(conn) = publish_conn.as_mut() else { continue; };
+                                    let payload = RelayCallReject {
+                                        r#type: "call_rejected",
+                                        call_id,
+                                        callee_id: user_id,
+                                    };
+                                    let channel = crate::services::redis_pubsub::user_channel(caller_id);
+                                    if let Err(e) = conn.publish::<_, _, ()>(
+                                        channel,
+                                        serde_json::to_string(&payload).unwrap_or_default(),
+                                    ).await {
+                                        tracing::warn!(%user_id, %caller_id, error = %e, "Failed to relay CallReject");
+                                    }
+                                }
+                                ClientEvent::CallHangup { call_id, peer_id } => {
+                                    let _ = crate::services::call_service::update_status(&db_pool, call_id, "ended");
+                                    let Some(conn) = publish_conn.as_mut() else { continue; };
+                                    let payload = RelayCallHangup {
+                                        r#type: "call_hangup",
+                                        call_id,
+                                        from_user_id: user_id,
+                                    };
+                                    let channel = crate::services::redis_pubsub::user_channel(peer_id);
+                                    if let Err(e) = conn.publish::<_, _, ()>(
+                                        channel,
+                                        serde_json::to_string(&payload).unwrap_or_default(),
+                                    ).await {
+                                        tracing::warn!(%user_id, %peer_id, error = %e, "Failed to relay CallHangup");
+                                    }
+                                }
+                                ClientEvent::IceCandidate { call_id, peer_id, candidate, sdp_mid, sdp_mline_index } => {
+                                    let Some(conn) = publish_conn.as_mut() else { continue; };
+                                    let payload = RelayIceCandidate {
+                                        r#type: "ice_candidate",
+                                        call_id,
+                                        from_user_id: user_id,
+                                        candidate,
+                                        sdp_mid,
+                                        sdp_mline_index,
+                                    };
+                                    let channel = crate::services::redis_pubsub::user_channel(peer_id);
+                                    if let Err(e) = conn.publish::<_, _, ()>(
+                                        channel,
+                                        serde_json::to_string(&payload).unwrap_or_default(),
+                                    ).await {
+                                        tracing::warn!(%user_id, %peer_id, error = %e, "Failed to relay IceCandidate");
                                     }
                                 }
                             }

@@ -134,6 +134,16 @@ docker compose --profile web build web
 docker compose --profile web up -d web
 ```
 
+#### 5.4 Install Turn server
+```bash
+echo "TURN_SECRET=$(openssl rand -hex 32)" >> ~/project/Sync-Server/.env
+```
+
+Open the required ports (Oracle Cloud Security List / AWS Security Group):
+  - UDP + TCP 3478 (TURN / STUN signaling)
+  - TCP 5349 TURNS (TLS fallback)
+  - UDP 49152–65535 (relay media)
+
 ### 7. Common operations
 ```bash
 # View logs

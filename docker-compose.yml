@@ -116,6 +116,29 @@ services:
       start_period: 30s   # give nginx time to start + certbot to run
     restart: unless-stopped
 
+  coturn:
+    image: coturn/coturn:latest
+    # host networking lets coturn see real client IPs for NAT traversal.
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      # Reuse the same Let's Encrypt cert already obtained by certbot.
+      - letsencrypt:/etc/letsencrypt:ro
+    command: >
+      turnserver
+      -n
+      --use-auth-secret
+      --static-auth-secret=${TURN_SECRET}
+      --fingerprint
+      --realm=${INSTANCE_DOMAIN:-localhost}
+      --cert=/etc/letsencrypt/live/${INSTANCE_DOMAIN}/fullchain.pem
+      --pkey=/etc/letsencrypt/live/${INSTANCE_DOMAIN}/privkey.pem
+      --listening-port=3478
+      --tls-listening-port=5349
+      --min-port=49152
+      --max-port=65535
+      --log-file=stdout
+
   certbot:
     image: certbot/certbot:latest
     volumes:

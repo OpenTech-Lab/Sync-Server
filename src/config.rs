@@ -63,6 +63,10 @@ pub struct Config {
     pub push_relay_shared_secret: Option<String>,
     /// HMAC key for generating ALTCHA challenges. If None, ALTCHA is disabled.
     pub altcha_hmac_key: Option<String>,
+    /// Shared secret for coturn's --use-auth-secret mode.
+    /// When set, GET /api/calls/ice-servers returns short-lived HMAC credentials
+    /// instead of a static password, so the long-term secret never reaches clients.
+    pub turn_secret: Option<String>,
 }
 
 impl Config {
@@ -146,6 +150,9 @@ impl Config {
                 .ok()
                 .filter(|v| !v.trim().is_empty()),
             altcha_hmac_key: std::env::var("ALTCHA_HMAC_KEY")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
+            turn_secret: std::env::var("TURN_SECRET")
                 .ok()
                 .filter(|v| !v.trim().is_empty()),
         })

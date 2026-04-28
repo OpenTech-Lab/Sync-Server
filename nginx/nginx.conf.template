@@ -49,19 +49,12 @@ http {
     access_log /var/log/nginx/access.log main;
     error_log  /var/log/nginx/error.log warn;
 
-    # ── Upstreams ─────────────────────────────────────────────────────────────
-    upstream api_backend {
-        server api:8080;
-        keepalive 32;
-    }
-
-    upstream dashboard_backend {
-        server dashboard:3000;
-        keepalive 8;
-    }
-
-    # web_backend is optional (profile-gated). Use Docker's internal resolver
-    # with a variable so nginx doesn't fail at startup if web is not running.
+    # ── DNS resolver (Docker's internal DNS) ─────────────────────────────────
+    # Must be set before any variable-based proxy_pass so nginx re-resolves
+    # container hostnames every 10 s instead of caching at startup.
+    # This means `docker compose up --build api` no longer requires a manual
+    # `docker compose restart nginx` — nginx picks up the new container IP
+    # automatically within 10 seconds.
     resolver 127.0.0.11 valid=10s ipv6=off;
 
     # ── Block direct IP access ────────────────────────────────────────────────
@@ -125,7 +118,14 @@ http {
         add_header X-Frame-Options DENY always;
         add_header X-XSS-Protection "1; mode=block" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+        add_header Permissions-Policy "geolocation=(), microphone=()" always;
+
+        # Variables force nginx to use the resolver for each connection so the
+        # container IP is re-resolved every 10 s (resolver TTL above).
+        # Without this, nginx caches the IP at startup and breaks after any
+        # `docker compose up --build api` that assigns a new container IP.
+        set $api       "http://api:8080";
+        set $dashboard "http://dashboard:3000";
 
         client_max_body_size  10m;
         client_body_timeout   15s;
@@ -135,7 +135,7 @@ http {
         location /auth/ {
             limit_req zone=auth_limit burst=10 nodelay;
             limit_req_status 429;
-            proxy_pass         http://api_backend;
+            proxy_pass         $api;
             proxy_http_version 1.1;
             proxy_set_header   Host              $host;
             proxy_set_header   X-Real-IP         $remote_addr;
@@ -146,7 +146,7 @@ http {
 
         location /ws {
             limit_req zone=ws_limit burst=20 nodelay;
-            proxy_pass         http://api_backend;
+            proxy_pass         $api;
             proxy_http_version 1.1;
             proxy_set_header   Upgrade           $http_upgrade;
             proxy_set_header   Connection        "upgrade";
@@ -165,7 +165,7 @@ http {
             limit_req  zone=auth_limit burst=10 nodelay;
             limit_req_status 429;
             rewrite ^/api/(.*)$ /admin/api/$1 break;
-            proxy_pass         http://dashboard_backend;
+            proxy_pass         $dashboard;
             proxy_http_version 1.1;
             proxy_set_header   Host              $host;
             proxy_set_header   X-Real-IP         $remote_addr;
@@ -178,7 +178,7 @@ http {
             limit_req zone=auth_limit burst=10 nodelay;
             limit_req_status 429;
             rewrite ^/api/(.*)$ /admin/api/$1 break;
-            proxy_pass         http://dashboard_backend;
+            proxy_pass         $dashboard;
             proxy_http_version 1.1;
             proxy_set_header   Host              $host;
             proxy_set_header   X-Real-IP         $remote_addr;
@@ -191,7 +191,7 @@ http {
             limit_conn conn_limit 20;
             limit_req  zone=api_limit burst=30 nodelay;
             rewrite ^/api/(.*)$ /admin/api/$1 break;
-            proxy_pass         http://dashboard_backend;
+            proxy_pass         $dashboard;
             proxy_http_version 1.1;
             proxy_set_header   Host              $host;
             proxy_set_header   X-Real-IP         $remote_addr;
@@ -207,7 +207,7 @@ http {
             limit_conn conn_limit 20;
             limit_req  zone=auth_limit burst=10 nodelay;
             limit_req_status 429;
-            proxy_pass         http://dashboard_backend;
+            proxy_pass         $dashboard;
             proxy_http_version 1.1;
             proxy_set_header   Host              $host;
             proxy_set_header   X-Real-IP         $remote_addr;
@@ -219,7 +219,7 @@ http {
         location ^~ /admin/api/altcha {
             limit_req zone=auth_limit burst=10 nodelay;
             limit_req_status 429;
-            proxy_pass         http://dashboard_backend;
+            proxy_pass         $dashboard;
             proxy_http_version 1.1;
             proxy_set_header   Host              $host;
             proxy_set_header   X-Real-IP         $remote_addr;
@@ -232,7 +232,7 @@ http {
         location ^~ /admin {
             limit_conn conn_limit 20;
             limit_req  zone=api_limit burst=30 nodelay;
-            proxy_pass         http://dashboard_backend;
+            proxy_pass         $dashboard;
             proxy_http_version 1.1;
             proxy_set_header   Host              $host;
             proxy_set_header   X-Real-IP         $remote_addr;
@@ -244,7 +244,7 @@ http {
         location /api/ {
             limit_req zone=api_limit burst=60 nodelay;
             limit_req_status 429;
-            proxy_pass         http://api_backend;
+            proxy_pass         $api;
             proxy_http_version 1.1;
             proxy_set_header   Host              $host;
             proxy_set_header   X-Real-IP         $remote_addr;
@@ -259,7 +259,7 @@ http {
         location ^~ /v1/push/ {
             limit_req zone=api_limit burst=30 nodelay;
             limit_req_status 429;
-            proxy_pass         http://api_backend;
+            proxy_pass         $api;
             proxy_http_version 1.1;
             proxy_set_header   Host              $host;
             proxy_set_header   X-Real-IP         $remote_addr;
@@ -272,7 +272,7 @@ http {
         }
 
         location ~ ^/(health|ready|planet-image)$ {
-            proxy_pass http://api_backend;
+            proxy_pass $api;
             proxy_http_version 1.1;
             proxy_set_header Connection "";
             access_log off;

@@ -135,7 +135,9 @@ docker compose --profile web up -d web
 ```
 
 #### 5.4 Install Turn server
-```bash
+Setup (one time): 
+```bash  
+# Add to your .env  
 echo "TURN_SECRET=$(openssl rand -hex 32)" >> ~/project/Sync-Server/.env
 ```
 
@@ -150,6 +152,7 @@ Open the required ports (Oracle Cloud Security List / AWS Security Group):
 docker compose logs -f api
 docker compose logs -f dashboard
 docker compose logs -f nginx
+docker compose logs -f coturn
 
 # Restart services
 docker compose restart api dashboard nginx

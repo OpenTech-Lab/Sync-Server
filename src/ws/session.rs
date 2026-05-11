@@ -21,6 +21,10 @@ pub enum ServerEvent {
     Error {
         message: String,
     },
+    CallCreated {
+        call_id: Uuid,
+        callee_id: Uuid,
+    },
     IncomingCall {
         call_id: Uuid,
         caller_id: Uuid,
@@ -54,7 +58,10 @@ pub enum ServerEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientEvent {
     Ping,
-    Typing { partner_id: Uuid, is_typing: bool },
+    Typing {
+        partner_id: Uuid,
+        is_typing: bool,
+    },
     CallOffer {
         callee_id: Uuid,
         call_type: String,
@@ -234,6 +241,12 @@ pub async fn run_ws_session(
                                             continue;
                                         }
                                     };
+                                    let ack = ServerEvent::CallCreated { call_id, callee_id };
+                                    let ack_payload = serde_json::to_string(&ack)
+                                        .unwrap_or_else(|_| r#"{"type":"error","message":"Failed to create call"}"#.to_string());
+                                    if session.text(ack_payload).await.is_err() {
+                                        break;
+                                    }
                                     if let Some(conn) = publish_conn.as_mut() {
                                         let payload = RelayIncomingCall {
                                             r#type: "incoming_call",

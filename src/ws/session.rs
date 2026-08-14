@@ -190,6 +190,11 @@ pub async fn run_ws_session(
     // ── Session loop ──────────────────────────────────────────────────────────
     let mut last_heartbeat = Instant::now();
     let mut heartbeat_interval = tokio::time::interval(HEARTBEAT_INTERVAL);
+    // The call (call_id, peer_id) this session is currently a party to, if any.
+    // Set when this session starts or answers a call, cleared when it hangs up
+    // or rejects one. Used to clean up call state if the socket disconnects
+    // mid-call (see cleanup after the loop below).
+    let mut active_call: Option<(Uuid, Uuid)> = None;
 
     loop {
         tokio::select! {
@@ -247,6 +252,7 @@ pub async fn run_ws_session(
                                     if session.text(ack_payload).await.is_err() {
                                         break;
                                     }
+                                    active_call = Some((call_id, callee_id));
                                     if let Some(conn) = publish_conn.as_mut() {
                                         let payload = RelayIncomingCall {
                                             r#type: "incoming_call",
@@ -274,7 +280,19 @@ pub async fn run_ws_session(
                                     });
                                 }
                                 ClientEvent::CallAnswer { call_id, caller_id, sdp_answer } => {
+                                    match crate::services::call_service::is_call_participant(&db_pool, call_id, user_id) {
+                                        Ok(true) => {}
+                                        Ok(false) => {
+                                            tracing::warn!(%user_id, %call_id, "CallAnswer rejected: not a participant of this call");
+                                            continue;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(%user_id, %call_id, error = %e, "CallAnswer: failed to verify call participant");
+                                            continue;
+                                        }
+                                    }
                                     let _ = crate::services::call_service::update_status(&db_pool, call_id, "answered");
+                                    active_call = Some((call_id, caller_id));
                                     let Some(conn) = publish_conn.as_mut() else { continue; };
                                     let payload = RelayCallAnswer {
                                         r#type: "call_answered",
@@ -291,7 +309,19 @@ pub async fn run_ws_session(
                                     }
                                 }
                                 ClientEvent::CallReject { call_id, caller_id } => {
+                                    match crate::services::call_service::is_call_participant(&db_pool, call_id, user_id) {
+                                        Ok(true) => {}
+                                        Ok(false) => {
+                                            tracing::warn!(%user_id, %call_id, "CallReject rejected: not a participant of this call");
+                                            continue;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(%user_id, %call_id, error = %e, "CallReject: failed to verify call participant");
+                                            continue;
+                                        }
+                                    }
                                     let _ = crate::services::call_service::update_status(&db_pool, call_id, "rejected");
+                                    active_call = None;
                                     let Some(conn) = publish_conn.as_mut() else { continue; };
                                     let payload = RelayCallReject {
                                         r#type: "call_rejected",
@@ -307,7 +337,19 @@ pub async fn run_ws_session(
                                     }
                                 }
                                 ClientEvent::CallHangup { call_id, peer_id } => {
+                                    match crate::services::call_service::is_call_participant(&db_pool, call_id, user_id) {
+                                        Ok(true) => {}
+                                        Ok(false) => {
+                                            tracing::warn!(%user_id, %call_id, "CallHangup rejected: not a participant of this call");
+                                            continue;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(%user_id, %call_id, error = %e, "CallHangup: failed to verify call participant");
+                                            continue;
+                                        }
+                                    }
                                     let _ = crate::services::call_service::update_status(&db_pool, call_id, "ended");
+                                    active_call = None;
                                     let Some(conn) = publish_conn.as_mut() else { continue; };
                                     let payload = RelayCallHangup {
                                         r#type: "call_hangup",
@@ -323,6 +365,17 @@ pub async fn run_ws_session(
                                     }
                                 }
                                 ClientEvent::IceCandidate { call_id, peer_id, candidate, sdp_mid, sdp_mline_index } => {
+                                    match crate::services::call_service::is_call_participant(&db_pool, call_id, user_id) {
+                                        Ok(true) => {}
+                                        Ok(false) => {
+                                            tracing::warn!(%user_id, %call_id, "IceCandidate rejected: not a participant of this call");
+                                            continue;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(%user_id, %call_id, error = %e, "IceCandidate: failed to verify call participant");
+                                            continue;
+                                        }
+                                    }
                                     let Some(conn) = publish_conn.as_mut() else { continue; };
                                     let payload = RelayIceCandidate {
                                         r#type: "ice_candidate",
@@ -369,6 +422,28 @@ pub async fn run_ws_session(
                 }
             }
         }
+    }
+
+    // If the socket dropped while this session was still a party to a call,
+    // mark it ended and let the peer know rather than leaving both sides
+    // (and the call_records row) stuck mid-call.
+    if let Some((call_id, peer_id)) = active_call.take() {
+        let _ = crate::services::call_service::update_status(&db_pool, call_id, "ended");
+        if let Some(conn) = publish_conn.as_mut() {
+            let payload = RelayCallHangup {
+                r#type: "call_hangup",
+                call_id,
+                from_user_id: user_id,
+            };
+            let channel = crate::services::redis_pubsub::user_channel(peer_id);
+            if let Err(e) = conn
+                .publish::<_, _, ()>(channel, serde_json::to_string(&payload).unwrap_or_default())
+                .await
+            {
+                tracing::warn!(%user_id, %peer_id, %call_id, error = %e, "Failed to relay hangup on disconnect");
+            }
+        }
+        tracing::info!(%user_id, %call_id, %peer_id, "Ended active call due to session disconnect");
     }
 
     let _ = session.close(None).await;

@@ -51,6 +51,19 @@ pub fn update_status(pool: &Pool, record_id: Uuid, new_status: &str) -> Result<(
     Ok(())
 }
 
+/// Returns true if `user_id` is the caller or callee on `call_id`.
+///
+/// Returns `Ok(false)` (not an error) if the call record doesn't exist, so
+/// callers can treat "no such call" and "not a participant" the same way.
+pub fn is_call_participant(pool: &Pool, call_id: Uuid, user_id: Uuid) -> Result<bool, AppError> {
+    let mut conn = pool.get()?;
+    let record: Option<CallRecord> = call_records::table
+        .find(call_id)
+        .first(&mut conn)
+        .optional()?;
+    Ok(record.is_some_and(|r| r.caller_id == user_id || r.callee_id == user_id))
+}
+
 pub fn history_for_user(
     pool: &Pool,
     user_id: Uuid,

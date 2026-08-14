@@ -15,6 +15,7 @@ pub struct DevicePushToken {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_seen_at: Option<DateTime<Utc>>,
+    pub token_kind: String,
 }
 
 #[derive(Debug, Insertable)]
@@ -25,4 +26,5 @@ pub struct NewDevicePushToken {
     pub platform: String,
     pub token: String,
     pub last_seen_at: Option<DateTime<Utc>>,
+    pub token_kind: String,
 }

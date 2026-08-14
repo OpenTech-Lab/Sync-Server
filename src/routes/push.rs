@@ -13,6 +13,7 @@ const TOKEN_MAX_LEN: usize = 1024;
 pub struct PushTokenRequest {
     pub token: String,
     pub platform: Option<String>,
+    pub token_kind: Option<String>,
 }
 
 fn normalize_platform(raw: Option<&str>) -> Result<String, AppError> {
@@ -20,6 +21,14 @@ fn normalize_platform(raw: Option<&str>) -> Result<String, AppError> {
     match normalized.as_str() {
         "ios" | "android" | "macos" | "windows" | "linux" | "web" | "unknown" => Ok(normalized),
         _ => Err(AppError::BadRequest("Unsupported platform".into())),
+    }
+}
+
+fn normalize_token_kind(raw: Option<&str>) -> Result<String, AppError> {
+    let normalized = raw.unwrap_or("default").trim().to_lowercase();
+    match normalized.as_str() {
+        "default" | "voip" => Ok(normalized),
+        _ => Err(AppError::BadRequest("Unsupported token_kind".into())),
     }
 }
 
@@ -40,8 +49,9 @@ pub async fn register(
     let user_id = auth.0.user_id()?;
     let token = validate_token(&body.token)?;
     let platform = normalize_platform(body.platform.as_deref())?;
+    let token_kind = normalize_token_kind(body.token_kind.as_deref())?;
 
-    push_token_service::upsert_token(&pool, user_id, &platform, &token)?;
+    push_token_service::upsert_token(&pool, user_id, &platform, &token, &token_kind)?;
     Ok(HttpResponse::NoContent().finish())
 }
 
@@ -64,7 +74,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_platform;
+    use super::{normalize_platform, normalize_token_kind};
 
     #[test]
     fn normalize_platform_accepts_known_values() {
@@ -76,5 +86,17 @@ mod tests {
     #[test]
     fn normalize_platform_rejects_invalid_values() {
         assert!(normalize_platform(Some("beeper")).is_err());
+    }
+
+    #[test]
+    fn normalize_token_kind_accepts_known_values() {
+        assert_eq!(normalize_token_kind(Some("VoIP")).unwrap(), "voip");
+        assert_eq!(normalize_token_kind(Some("default")).unwrap(), "default");
+        assert_eq!(normalize_token_kind(None).unwrap(), "default");
+    }
+
+    #[test]
+    fn normalize_token_kind_rejects_invalid_values() {
+        assert!(normalize_token_kind(Some("bogus")).is_err());
     }
 }

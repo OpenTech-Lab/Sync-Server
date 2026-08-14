@@ -12,6 +12,7 @@ pub fn upsert_token(
     user_id: Uuid,
     platform: &str,
     token: &str,
+    token_kind: &str,
 ) -> Result<DevicePushToken, AppError> {
     let mut conn = pool.get()?;
     let now = Utc::now();
@@ -23,6 +24,7 @@ pub fn upsert_token(
             platform: platform.to_string(),
             token: token.to_string(),
             last_seen_at: Some(now),
+            token_kind: token_kind.to_string(),
         })
         .on_conflict(dpt_dsl::token)
         .do_update()
@@ -31,6 +33,7 @@ pub fn upsert_token(
             dpt_dsl::platform.eq(platform),
             dpt_dsl::updated_at.eq(now),
             dpt_dsl::last_seen_at.eq(Some(now)),
+            dpt_dsl::token_kind.eq(token_kind),
         ))
         .execute(&mut conn)?;
 

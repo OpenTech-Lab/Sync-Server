@@ -51,6 +51,16 @@ pub fn update_status(pool: &Pool, record_id: Uuid, new_status: &str) -> Result<(
     Ok(())
 }
 
+/// Looks up a call record by id.
+pub fn find(pool: &Pool, call_id: Uuid) -> Result<Option<CallRecord>, AppError> {
+    let mut conn = pool.get()?;
+    call_records::table
+        .find(call_id)
+        .first(&mut conn)
+        .optional()
+        .map_err(Into::into)
+}
+
 /// Returns true if `user_id` is the caller or callee on `call_id`.
 ///
 /// Returns `Ok(false)` (not an error) if the call record doesn't exist, so

@@ -41,3 +41,11 @@ pub async fn subscribe(client: &redis::Client, channels: &[&str]) -> Result<PubS
 pub fn user_channel(user_id: uuid::Uuid) -> String {
     format!("ws:user:{}", user_id)
 }
+
+/// Redis key used to stash a call's SDP offer for a short window so the
+/// callee can fetch it via `GET /api/calls/offer/{call_id}` even if it
+/// wasn't connected over the WebSocket relay to receive it directly (e.g.
+/// woken from a PushKit VoIP push).
+pub fn call_offer_key(call_id: uuid::Uuid) -> String {
+    format!("call_offer:{}", call_id)
+}

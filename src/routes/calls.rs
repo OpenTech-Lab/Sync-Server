@@ -1,13 +1,15 @@
 use actix_web::{web, HttpResponse};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use redis::AsyncCommands;
 use ring::hmac;
 use serde::Serialize;
+use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
 use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
-use crate::services::call_service;
+use crate::services::{call_service, redis_pubsub};
 
 const TURN_CREDENTIAL_TTL_SECS: u64 = 3600;
 
@@ -73,7 +75,47 @@ async fn ice_servers(
     Ok(HttpResponse::Ok().json(IceServersResponse { ice_servers: servers }))
 }
 
+#[derive(Serialize)]
+struct CallOfferResponse {
+    call_id: Uuid,
+    sdp_offer: String,
+}
+
+/// Returns the stashed SDP offer for `call_id` and deletes it from Redis
+/// (GETDEL semantics), so it can only be consumed once. Only the call's
+/// callee may fetch it. This exists so a device woken by a PushKit VoIP
+/// push (with no live WebSocket connection to have received the offer via
+/// pubsub) can still retrieve it to answer the call.
+async fn get_call_offer(
+    pool: web::Data<Pool>,
+    redis_client: web::Data<redis::Client>,
+    auth: AuthUser,
+    path: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    let user_id = auth.0.user_id()?;
+    let call_id = path.into_inner();
+
+    let record = call_service::find(&pool, call_id)?.ok_or(AppError::NotFound)?;
+    if record.callee_id != user_id {
+        return Err(AppError::Forbidden);
+    }
+
+    let mut conn = redis_client
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis connection error: {e}")))?;
+    let key = redis_pubsub::call_offer_key(call_id);
+    let sdp_offer: Option<String> = conn
+        .get_del(&key)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis GETDEL error: {e}")))?;
+    let sdp_offer = sdp_offer.filter(|s| !s.is_empty()).ok_or(AppError::NotFound)?;
+
+    Ok(HttpResponse::Ok().json(CallOfferResponse { call_id, sdp_offer }))
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("", web::get().to(call_history));
     cfg.route("/ice-servers", web::get().to(ice_servers));
+    cfg.route("/offer/{call_id}", web::get().to(get_call_offer));
 }

@@ -259,7 +259,7 @@ pub async fn run_ws_session(
                                             call_id,
                                             caller_id: user_id,
                                             call_type: call_type.clone(),
-                                            sdp_offer,
+                                            sdp_offer: sdp_offer.clone(),
                                         };
                                         let channel = crate::services::redis_pubsub::user_channel(callee_id);
                                         if let Err(e) = conn.publish::<_, _, ()>(
@@ -268,12 +268,25 @@ pub async fn run_ws_session(
                                         ).await {
                                             tracing::warn!(%user_id, %callee_id, error = %e, "Failed to relay CallOffer");
                                         }
+                                        // Stash the offer so the callee can fetch it via
+                                        // GET /api/calls/offer/{call_id} if it wasn't
+                                        // connected to receive the pubsub relay above (e.g.
+                                        // woken from a PushKit VoIP push).
+                                        let offer_key = crate::services::redis_pubsub::call_offer_key(call_id);
+                                        if let Err(e) = conn.set_ex::<_, _, ()>(&offer_key, sdp_offer.as_str(), 60).await {
+                                            tracing::warn!(%user_id, %callee_id, %call_id, error = %e, "Failed to stash call offer in Redis");
+                                        }
                                     }
                                     let pool_clone = db_pool.clone();
                                     let cfg_clone = config.clone();
+                                    let caller_display_name = crate::services::user_service::find_by_id(&db_pool, user_id)
+                                        .ok()
+                                        .flatten()
+                                        .map(|u| u.username)
+                                        .unwrap_or_default();
                                     tokio::spawn(async move {
                                         if let Err(e) = crate::services::push_dispatch_service::dispatch_incoming_call(
-                                            &pool_clone, &cfg_clone, callee_id, user_id, call_id, &call_type,
+                                            &pool_clone, &cfg_clone, callee_id, user_id, &caller_display_name, call_id, &call_type,
                                         ).await {
                                             tracing::warn!(error = %e, %user_id, %callee_id, "Failed to dispatch call push notification");
                                         }

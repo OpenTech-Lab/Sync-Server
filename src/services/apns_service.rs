@@ -54,6 +54,15 @@ struct ApnsCallPayload<'a> {
     call_type: &'a str,
 }
 
+#[derive(Debug, Serialize)]
+struct ApnsVoipCallPayload<'a> {
+    call_id: String,
+    caller_id: String,
+    caller_display_name: &'a str,
+    callee_id: String,
+    call_type: &'a str,
+}
+
 pub async fn send_call_alert_to_tokens(
     cfg: &ApnsConfig,
     tokens: &[String],
@@ -125,6 +134,77 @@ pub async fn send_call_alert_to_tokens(
     } else {
         Err(AppError::Internal(anyhow::anyhow!(
             "APNs call alerts failed for {} target(s): {}",
+            failures.len(),
+            failures.join(" | ")
+        )))
+    }
+}
+
+/// Sends a PushKit VoIP call push (no `aps.alert`; the app wakes in the
+/// background and must present CallKit UI itself from the top-level call
+/// fields). Structurally a copy of `send_call_alert_to_tokens`, differing in
+/// the push-type/topic headers and payload shape required by PushKit.
+pub async fn send_voip_call_push_to_tokens(
+    cfg: &ApnsConfig,
+    tokens: &[String],
+    callee_id: Uuid,
+    caller_id: Uuid,
+    caller_display_name: &str,
+    call_id: Uuid,
+    call_type: &str,
+) -> Result<(), AppError> {
+    if tokens.is_empty() {
+        return Ok(());
+    }
+
+    let base_url = if cfg.use_sandbox {
+        APNS_SANDBOX_URL
+    } else {
+        APNS_PRODUCTION_URL
+    };
+    let auth_token = make_apns_jwt(cfg)?;
+    let apns_topic = format!("{}.voip", cfg.bundle_id);
+    let payload = ApnsVoipCallPayload {
+        call_id: call_id.to_string(),
+        caller_id: caller_id.to_string(),
+        caller_display_name,
+        callee_id: callee_id.to_string(),
+        call_type,
+    };
+
+    let client = reqwest::Client::new();
+    let mut failures = Vec::new();
+    for token in tokens {
+        let url = format!("{base_url}/3/device/{token}");
+        let expiration = (chrono::Utc::now().timestamp() + 55).to_string();
+        let response: reqwest::Response = client
+            .post(&url)
+            .version(reqwest::Version::HTTP_2)
+            .header("authorization", format!("bearer {auth_token}"))
+            .header("apns-topic", apns_topic.as_str())
+            .header("apns-push-type", "voip")
+            .header("apns-priority", "10")
+            .header("apns-expiration", expiration.as_str())
+            .json(&payload)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("APNs VoIP call send failed: {}", e))
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            failures.push(format!("token={token} status={status} body={body}"));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Internal(anyhow::anyhow!(
+            "APNs VoIP call pushes failed for {} target(s): {}",
             failures.len(),
             failures.join(" | ")
         )))

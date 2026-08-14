@@ -16,12 +16,14 @@ const DEFAULT_RELAY_WEBHOOK_URL: &str = "https://push.sync.icyanstudio.net/v1/pu
 struct PushTargetData {
     platform: String,
     token: String,
+    token_kind: String,
 }
 
 #[derive(Debug, Serialize)]
 struct PushTarget<'a> {
     platform: &'a str,
     token: &'a str,
+    token_kind: &'a str,
 }
 
 #[derive(Debug, Serialize)]
@@ -29,6 +31,7 @@ struct IncomingCallPushPayload<'a> {
     event: &'static str,
     recipient_id: Uuid,
     caller_id: Uuid,
+    caller_display_name: &'a str,
     call_id: Uuid,
     call_type: &'a str,
     targets: Vec<PushTarget<'a>>,
@@ -70,6 +73,7 @@ pub async fn dispatch_new_message(
         .map(|item| PushTargetData {
             platform: item.platform.clone(),
             token: item.token.clone(),
+            token_kind: item.token_kind.clone(),
         })
         .collect::<Vec<_>>();
 
@@ -218,6 +222,7 @@ pub async fn dispatch_incoming_call(
     cfg: &Config,
     callee_id: Uuid,
     caller_id: Uuid,
+    caller_display_name: &str,
     call_id: Uuid,
     call_type: &str,
 ) -> Result<(), AppError> {
@@ -237,6 +242,7 @@ pub async fn dispatch_incoming_call(
         .map(|item| PushTargetData {
             platform: item.platform.clone(),
             token: item.token.clone(),
+            token_kind: item.token_kind.clone(),
         })
         .collect::<Vec<_>>();
 
@@ -250,17 +256,44 @@ pub async fn dispatch_incoming_call(
         }
     }
 
+    // Within the iOS targets, VoIP-kind tokens get the PushKit VoIP push
+    // (wakes the app for CallKit); any remaining default-kind tokens keep
+    // the existing alert-style call push as a fallback.
+    let (voip_ios_targets, default_ios_targets): (Vec<_>, Vec<_>) = ios_targets
+        .into_iter()
+        .partition(|t| t.token_kind == "voip");
+
     let mut dispatch_errors = Vec::new();
 
     match cfg.push_delivery_mode {
         PushDeliveryMode::Relay => {
-            webhook_targets.extend(ios_targets);
+            webhook_targets.extend(voip_ios_targets);
+            webhook_targets.extend(default_ios_targets);
         }
         PushDeliveryMode::Direct => {
-            if !ios_targets.is_empty() {
-                if let Some(apns_cfg) = apns_service::parse_apns_config(cfg) {
+            if let Some(apns_cfg) = apns_service::parse_apns_config(cfg) {
+                if !voip_ios_targets.is_empty() {
                     let tokens: Vec<String> =
-                        ios_targets.iter().map(|t| t.token.clone()).collect();
+                        voip_ios_targets.iter().map(|t| t.token.clone()).collect();
+                    if let Err(error) = apns_service::send_voip_call_push_to_tokens(
+                        &apns_cfg,
+                        &tokens,
+                        callee_id,
+                        caller_id,
+                        caller_display_name,
+                        call_id,
+                        call_type,
+                    )
+                    .await
+                    {
+                        dispatch_errors.push(format!("APNs VoIP call dispatch failed: {error}"));
+                    }
+                }
+                if !default_ios_targets.is_empty() {
+                    let tokens: Vec<String> = default_ios_targets
+                        .iter()
+                        .map(|t| t.token.clone())
+                        .collect();
                     if let Err(error) = apns_service::send_call_alert_to_tokens(
                         &apns_cfg, &tokens, callee_id, caller_id, call_id, call_type,
                     )
@@ -272,29 +305,57 @@ pub async fn dispatch_incoming_call(
             }
         }
         PushDeliveryMode::Hybrid => {
-            if !ios_targets.is_empty() {
-                if let Some(apns_cfg) = apns_service::parse_apns_config(cfg) {
+            if let Some(apns_cfg) = apns_service::parse_apns_config(cfg) {
+                if !voip_ios_targets.is_empty() {
                     let tokens: Vec<String> =
-                        ios_targets.iter().map(|t| t.token.clone()).collect();
-                    if let Err(_) = apns_service::send_call_alert_to_tokens(
+                        voip_ios_targets.iter().map(|t| t.token.clone()).collect();
+                    if apns_service::send_voip_call_push_to_tokens(
+                        &apns_cfg,
+                        &tokens,
+                        callee_id,
+                        caller_id,
+                        caller_display_name,
+                        call_id,
+                        call_type,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        webhook_targets.extend(voip_ios_targets);
+                    }
+                }
+                if !default_ios_targets.is_empty() {
+                    let tokens: Vec<String> = default_ios_targets
+                        .iter()
+                        .map(|t| t.token.clone())
+                        .collect();
+                    if apns_service::send_call_alert_to_tokens(
                         &apns_cfg, &tokens, callee_id, caller_id, call_id, call_type,
                     )
                     .await
+                    .is_err()
                     {
-                        webhook_targets.extend(ios_targets);
+                        webhook_targets.extend(default_ios_targets);
                     }
-                } else {
-                    webhook_targets.extend(ios_targets);
                 }
+            } else {
+                webhook_targets.extend(voip_ios_targets);
+                webhook_targets.extend(default_ios_targets);
             }
         }
     };
 
     if !webhook_targets.is_empty() {
         if let Some(url) = webhook_url {
+            let call = CallPushContext {
+                callee_id,
+                caller_id,
+                caller_display_name,
+                call_id,
+                call_type,
+            };
             if let Err(error) =
-                send_call_webhook_push(cfg, &url, &webhook_targets, callee_id, caller_id, call_id, call_type)
-                    .await
+                send_call_webhook_push(cfg, &url, &webhook_targets, &call).await
             {
                 dispatch_errors.push(format!("Webhook call dispatch failed: {error}"));
             }
@@ -372,6 +433,7 @@ async fn send_webhook_push(
             .map(|item| PushTarget {
                 platform: item.platform.as_str(),
                 token: item.token.as_str(),
+                token_kind: item.token_kind.as_str(),
             })
             .collect(),
     };
@@ -402,26 +464,36 @@ async fn send_webhook_push(
     Ok(())
 }
 
+/// Bundles the identifying fields of an in-flight call so functions that
+/// dispatch a call push don't need a long, error-prone positional argument
+/// list (clippy flags anything past 7 plain arguments).
+struct CallPushContext<'a> {
+    callee_id: Uuid,
+    caller_id: Uuid,
+    caller_display_name: &'a str,
+    call_id: Uuid,
+    call_type: &'a str,
+}
+
 async fn send_call_webhook_push(
     cfg: &Config,
     webhook_url: &str,
     targets: &[PushTargetData],
-    callee_id: Uuid,
-    caller_id: Uuid,
-    call_id: Uuid,
-    call_type: &str,
+    call: &CallPushContext<'_>,
 ) -> Result<(), AppError> {
     let payload = IncomingCallPushPayload {
         event: "incoming_call",
-        recipient_id: callee_id,
-        caller_id,
-        call_id,
-        call_type,
+        recipient_id: call.callee_id,
+        caller_id: call.caller_id,
+        caller_display_name: call.caller_display_name,
+        call_id: call.call_id,
+        call_type: call.call_type,
         targets: targets
             .iter()
             .map(|item| PushTarget {
                 platform: item.platform.as_str(),
                 token: item.token.as_str(),
+                token_kind: item.token_kind.as_str(),
             })
             .collect(),
     };

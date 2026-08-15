@@ -51,6 +51,18 @@ pub fn compute_expires_at(
     }
 }
 
+/// Generates a fresh `agt_`-prefixed raw token and the hash `verify()` will
+/// later look it up by. Kept as its own function so a test can assert the
+/// invariant directly against production code, rather than re-deriving the
+/// hash inline (which would pass even if `create()` regressed to hashing
+/// the unprefixed generator output).
+fn issue_raw_token() -> (String, String) {
+    let (raw_suffix, _) = generate_refresh_token();
+    let raw_token = format!("agt_{raw_suffix}");
+    let hash = hash_token(&raw_token);
+    (raw_token, hash)
+}
+
 /// Generates a new agent token, stores its hash, and returns the row plus
 /// the raw secret. The raw secret is not recoverable after this call returns.
 pub fn create(
@@ -62,9 +74,7 @@ pub fn create(
     let normalized_name = normalize_name(name)?;
     let expires_at = compute_expires_at(Utc::now(), expires_in_days)?;
 
-    let (raw_suffix, _) = generate_refresh_token();
-    let raw_token = format!("agt_{raw_suffix}");
-    let hash = hash_token(&raw_token);
+    let (raw_token, hash) = issue_raw_token();
 
     let mut conn = pool.get()?;
     let payload = NewAgentToken {
@@ -186,19 +196,19 @@ mod tests {
     }
 
     #[test]
-    fn create_hash_matches_what_verify_would_compute() {
-        // create() must hash the same string verify() will be asked to hash later
-        // (the "agt_"-prefixed token, since that's the full bearer string a
-        // client presents) — this is a regression test for a bug where create()
-        // hashed the unprefixed generator output instead.
-        let (raw_suffix, _) = crate::auth::tokens::generate_refresh_token();
-        let raw_token = format!("agt_{raw_suffix}");
-        let stored_hash = hash_token(&raw_token);
+    fn issue_raw_token_hash_matches_what_verify_would_compute() {
+        // Exercises the actual function create() calls — not a re-derivation —
+        // so this fails if create() ever regresses to hashing the unprefixed
+        // generator output instead of the full "agt_"-prefixed bearer string
+        // a client actually presents (the bug this test guards against).
+        let (raw_token, stored_hash) = issue_raw_token();
+        assert!(raw_token.starts_with("agt_"));
         let verify_lookup_hash = hash_token(&raw_token);
         assert_eq!(stored_hash, verify_lookup_hash);
-        // Also assert it's NOT equal to hashing the unprefixed suffix alone —
-        // this is what the bug produced, and would make this test meaningless
-        // if create() regresses to the old behavior.
-        assert_ne!(stored_hash, hash_token(&raw_suffix));
+
+        // The unprefixed suffix must NOT be what got hashed — this is
+        // exactly the value the original bug stored instead.
+        let raw_suffix = raw_token.strip_prefix("agt_").unwrap();
+        assert_ne!(stored_hash, hash_token(raw_suffix));
     }
 }

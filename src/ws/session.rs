@@ -288,7 +288,10 @@ pub async fn run_ws_session(
                                         if let Err(e) = crate::services::push_dispatch_service::dispatch_incoming_call(
                                             &pool_clone, &cfg_clone, callee_id, user_id, &caller_display_name, call_id, &call_type,
                                         ).await {
-                                            tracing::warn!(error = %e, %user_id, %callee_id, "Failed to dispatch call push notification");
+                                            // Debug, not Display: AppError::Internal's Display is
+                                            // the masked "Internal server error", which hides the
+                                            // APNs status/response body needed to diagnose this.
+                                            tracing::warn!(error = ?e, %user_id, %callee_id, "Failed to dispatch call push notification");
                                         }
                                     });
                                 }

@@ -134,10 +134,10 @@ pub async fn dispatch_new_message(
                             tracing::warn!(
                                 recipient_id = %recipient_id,
                                 ios_target_count = ios_targets.len(),
-                                error = %error,
+                                error = ?error,
                                 "APNs direct push failed"
                             );
-                            dispatch_errors.push(format!("APNs dispatch failed: {error}"));
+                            dispatch_errors.push(format!("APNs dispatch failed: {error:?}"));
                         }
                     }
                 } else {
@@ -196,7 +196,7 @@ pub async fn dispatch_new_message(
             )
             .await
             {
-                dispatch_errors.push(format!("Webhook dispatch failed: {error}"));
+                dispatch_errors.push(format!("Webhook dispatch failed: {error:?}"));
             }
         } else {
             tracing::warn!(
@@ -293,7 +293,7 @@ pub async fn dispatch_incoming_call(
                     )
                     .await
                     {
-                        dispatch_errors.push(format!("APNs VoIP call dispatch failed: {error}"));
+                        dispatch_errors.push(format!("APNs VoIP call dispatch failed: {error:?}"));
                     }
                 }
                 if !default_ios_targets.is_empty() {
@@ -306,7 +306,7 @@ pub async fn dispatch_incoming_call(
                     )
                     .await
                     {
-                        dispatch_errors.push(format!("APNs call dispatch failed: {error}"));
+                        dispatch_errors.push(format!("APNs call dispatch failed: {error:?}"));
                     }
                 }
             }
@@ -364,7 +364,7 @@ pub async fn dispatch_incoming_call(
             if let Err(error) =
                 send_call_webhook_push(cfg, &url, &webhook_targets, &call).await
             {
-                dispatch_errors.push(format!("Webhook call dispatch failed: {error}"));
+                dispatch_errors.push(format!("Webhook call dispatch failed: {error:?}"));
             }
         }
     }

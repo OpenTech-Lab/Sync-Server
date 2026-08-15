@@ -330,6 +330,22 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    use diesel::sql_types::*;
+
+    agent_tokens (id) {
+        id -> Uuid,
+        name -> Text,
+        token_hash -> Text,
+        token_prefix -> Text,
+        created_by -> Uuid,
+        created_at -> Timestamptz,
+        expires_at -> Nullable<Timestamptz>,
+        last_used_at -> Nullable<Timestamptz>,
+        revoked_at -> Nullable<Timestamptz>,
+    }
+}
+
 diesel::joinable!(refresh_tokens -> users (user_id));
 diesel::joinable!(messages -> users (sender_id));
 diesel::joinable!(rooms -> users (created_by));
@@ -345,10 +361,12 @@ diesel::joinable!(encrypted_backups -> users (user_id));
 diesel::joinable!(server_news -> users (created_by));
 diesel::joinable!(guild_score_events -> users (user_id));
 diesel::joinable!(user_guild_stats -> users (user_id));
+diesel::joinable!(agent_tokens -> users (created_by));
 
 diesel::allow_tables_to_appear_in_same_query!(
     admin_settings,
     admin_audit_logs,
+    agent_tokens,
     call_records,
     daily_action_counters,
     guild_score_events,

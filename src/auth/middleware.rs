@@ -64,10 +64,19 @@ async fn extract_admin_auth(req: &HttpRequest, pool: &Pool) -> Result<AdminAuth,
     }
 
     let agent_token = agent_token_service::verify(pool, token)?.ok_or(AppError::Unauthorized)?;
+
+    // A token loses power the moment its creator does: require the creator
+    // to still be an active admin, rather than trusting the token forever.
+    let creator = user_service::find_by_id(pool, agent_token.created_by)?;
+    let creator = match creator {
+        Some(u) if u.is_active && u.role == "admin" => u,
+        _ => return Err(AppError::Unauthorized),
+    };
+
     let now = chrono::Utc::now().timestamp();
     Ok(AdminAuth::AgentToken(Claims::new(
         agent_token.created_by,
-        "admin".to_string(),
+        creator.role,
         now,
         now + 300,
     )))

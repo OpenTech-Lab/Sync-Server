@@ -12,6 +12,7 @@ const navItems = [
   { href: "/stickers", label: "Stickers" },
   { href: "/config", label: "Config" },
   { href: "/planet-news", label: "Planet News" },
+  { href: "/agent-access", label: "Agent Access" },
   { href: "/audit", label: "Audit Logs" },
 ];
 

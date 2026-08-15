@@ -12,7 +12,10 @@ use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::guild::GuildPolicyConfig;
 use crate::models::server_news::ServerNews;
-use crate::services::{admin_service, guild_service, moderation_service, server_news_service};
+use crate::services::{
+    admin_service, agent_token_service as agent_service, guild_service, moderation_service,
+    server_news_service,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct UserQuery {
@@ -70,6 +73,45 @@ pub struct CreateServerNewsRequest {
     pub title: String,
     pub summary: Option<String>,
     pub markdown_content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAgentTokenRequest {
+    pub name: String,
+    pub expires_in_days: Option<i64>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct AgentTokenCreatedView {
+    pub id: Uuid,
+    pub name: String,
+    pub token: String,
+    pub token_prefix: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct AgentTokenView {
+    pub id: Uuid,
+    pub name: String,
+    pub token_prefix: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+fn to_agent_token_view(token: crate::models::AgentToken) -> AgentTokenView {
+    AgentTokenView {
+        id: token.id,
+        name: token.name,
+        token_prefix: token.token_prefix,
+        created_at: token.created_at,
+        expires_at: token.expires_at,
+        last_used_at: token.last_used_at,
+        revoked_at: token.revoked_at,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -409,6 +451,65 @@ pub async fn delete_server_news(
         }),
     )?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "status": "deleted" })))
+}
+
+pub async fn create_agent_token(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    body: web::Json<CreateAgentTokenRequest>,
+) -> Result<HttpResponse, AppError> {
+    let admin_user_id = admin.0.user_id()?;
+    let (created, raw_token) =
+        agent_service::create(&pool, admin_user_id, &body.name, body.expires_in_days)?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_user_id),
+        "agent_token.create",
+        Some(&created.id.to_string()),
+        serde_json::json!({
+            "name": created.name,
+            "token_prefix": created.token_prefix,
+            "expires_at": created.expires_at,
+        }),
+    )?;
+    Ok(HttpResponse::Created().json(AgentTokenCreatedView {
+        id: created.id,
+        name: created.name,
+        token: raw_token,
+        token_prefix: created.token_prefix,
+        created_at: created.created_at,
+        expires_at: created.expires_at,
+    }))
+}
+
+pub async fn list_agent_tokens(
+    pool: web::Data<Pool>,
+    _admin: AdminUser,
+) -> Result<HttpResponse, AppError> {
+    let items = agent_service::list(&pool)?;
+    Ok(HttpResponse::Ok().json(
+        items
+            .into_iter()
+            .map(to_agent_token_view)
+            .collect::<Vec<_>>(),
+    ))
+}
+
+pub async fn revoke_agent_token(
+    pool: web::Data<Pool>,
+    admin: AdminUser,
+    token_id: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    let admin_user_id = admin.0.user_id()?;
+    agent_service::revoke(&pool, *token_id)?;
+    admin_service::append_audit_log(
+        &pool,
+        Some(admin_user_id),
+        "agent_token.revoke",
+        Some(&token_id.to_string()),
+        serde_json::json!({}),
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "status": "revoked" })))
 }
 
 pub async fn get_config(
@@ -940,6 +1041,12 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route(
             "/server-news/{news_id}",
             web::delete().to(delete_server_news),
+        )
+        .route("/agent-tokens", web::get().to(list_agent_tokens))
+        .route("/agent-tokens", web::post().to(create_agent_token))
+        .route(
+            "/agent-tokens/{token_id}",
+            web::delete().to(revoke_agent_token),
         )
         .route("/config", web::get().to(get_config))
         .route("/config", web::put().to(update_config))

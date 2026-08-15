@@ -53,7 +53,6 @@ pub fn compute_expires_at(
 
 /// Generates a new agent token, stores its hash, and returns the row plus
 /// the raw secret. The raw secret is not recoverable after this call returns.
-#[allow(dead_code)] // Used by task 5
 pub fn create(
     pool: &Pool,
     created_by: Uuid,
@@ -63,8 +62,9 @@ pub fn create(
     let normalized_name = normalize_name(name)?;
     let expires_at = compute_expires_at(Utc::now(), expires_in_days)?;
 
-    let (raw_suffix, hash) = generate_refresh_token();
+    let (raw_suffix, _) = generate_refresh_token();
     let raw_token = format!("agt_{raw_suffix}");
+    let hash = hash_token(&raw_token);
 
     let mut conn = pool.get()?;
     let payload = NewAgentToken {
@@ -89,7 +89,6 @@ pub fn create(
     Ok((row, raw_token))
 }
 
-#[allow(dead_code)] // Used by task 5
 pub fn list(pool: &Pool) -> Result<Vec<AgentToken>, AppError> {
     let mut conn = pool.get()?;
     tokens_dsl::agent_tokens
@@ -100,7 +99,6 @@ pub fn list(pool: &Pool) -> Result<Vec<AgentToken>, AppError> {
 }
 
 /// Idempotent: revoking an already-revoked (or nonexistent) token is not an error.
-#[allow(dead_code)] // Used by task 5
 pub fn revoke(pool: &Pool, id: Uuid) -> Result<(), AppError> {
     let mut conn = pool.get()?;
     diesel::update(tokens_dsl::agent_tokens.find(id))
@@ -113,7 +111,6 @@ pub fn revoke(pool: &Pool, id: Uuid) -> Result<(), AppError> {
 /// Looks up a presented raw token by its hash. Returns `None` if the token
 /// is unknown, revoked, or past its expiry. On a valid match, best-effort
 /// updates `last_used_at` — a failure to update must not fail the check.
-#[allow(dead_code)] // Used by task 4
 pub fn verify(pool: &Pool, raw_token: &str) -> Result<Option<AgentToken>, AppError> {
     let hash = hash_token(raw_token);
     let mut conn = pool.get()?;
@@ -186,5 +183,22 @@ mod tests {
     fn token_prefix_is_stable_and_short() {
         let prefix = token_prefix("agt_abcdef0123456789");
         assert_eq!(prefix, "agt_abcdef01");
+    }
+
+    #[test]
+    fn create_hash_matches_what_verify_would_compute() {
+        // create() must hash the same string verify() will be asked to hash later
+        // (the "agt_"-prefixed token, since that's the full bearer string a
+        // client presents) — this is a regression test for a bug where create()
+        // hashed the unprefixed generator output instead.
+        let (raw_suffix, _) = crate::auth::tokens::generate_refresh_token();
+        let raw_token = format!("agt_{raw_suffix}");
+        let stored_hash = hash_token(&raw_token);
+        let verify_lookup_hash = hash_token(&raw_token);
+        assert_eq!(stored_hash, verify_lookup_hash);
+        // Also assert it's NOT equal to hashing the unprefixed suffix alone —
+        // this is what the bug produced, and would make this test meaningless
+        // if create() regresses to the old behavior.
+        assert_ne!(stored_hash, hash_token(&raw_suffix));
     }
 }

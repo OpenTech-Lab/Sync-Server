@@ -53,12 +53,14 @@ export function AgentAccessPanel({ initialTokens }: { initialTokens: AgentTokenV
   const [error, setError] = useState<string | null>(null);
   const [justCreated, setJustCreated] = useState<CreatedToken | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCreating(true);
     setError(null);
     setCopied(false);
+    setCopyError(null);
 
     try {
       const response = await fetch("/api/admin/agent-tokens", {
@@ -133,8 +135,13 @@ export function AgentAccessPanel({ initialTokens }: { initialTokens: AgentTokenV
     if (!justCreated) {
       return;
     }
-    await navigator.clipboard.writeText(justCreated.token);
-    setCopied(true);
+    try {
+      await navigator.clipboard.writeText(justCreated.token);
+      setCopied(true);
+      setCopyError(null);
+    } catch {
+      setCopyError("Copy failed — select the token text manually.");
+    }
   }
 
   return (
@@ -155,6 +162,7 @@ export function AgentAccessPanel({ initialTokens }: { initialTokens: AgentTokenV
                 Dismiss
               </Button>
             </div>
+            {copyError ? <p className="text-xs text-destructive">{copyError}</p> : null}
             <p className="text-xs text-muted-foreground">
               Have the agent send this in every admin API request as{" "}
               <code className="rounded bg-muted px-1">Authorization: Bearer {justCreated.token_prefix}…</code>

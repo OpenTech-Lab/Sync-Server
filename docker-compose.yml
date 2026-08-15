@@ -131,6 +131,7 @@ services:
       --static-auth-secret=${TURN_SECRET}
       --fingerprint
       --realm=${INSTANCE_DOMAIN:-localhost}
+      --external-ip=${TURN_EXTERNAL_IP}
       --cert=/etc/letsencrypt/live/${INSTANCE_DOMAIN}/fullchain.pem
       --pkey=/etc/letsencrypt/live/${INSTANCE_DOMAIN}/privkey.pem
       --listening-port=3478

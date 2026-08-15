@@ -257,11 +257,18 @@ pub async fn dispatch_incoming_call(
     }
 
     // Within the iOS targets, VoIP-kind tokens get the PushKit VoIP push
-    // (wakes the app for CallKit); any remaining default-kind tokens keep
-    // the existing alert-style call push as a fallback.
-    let (voip_ios_targets, default_ios_targets): (Vec<_>, Vec<_>) = ios_targets
+    // (wakes the app for CallKit); default-kind tokens only get the
+    // alert-style call push as a fallback when no VoIP token exists for this
+    // user. A device registers both kinds, so without this the same device
+    // would get the alert push *and* the VoIP push for the same call — the
+    // stray alert notification then gets recorded as a "missed call" on the
+    // client even when the user answered via CallKit.
+    let (voip_ios_targets, mut default_ios_targets): (Vec<_>, Vec<_>) = ios_targets
         .into_iter()
         .partition(|t| t.token_kind == "voip");
+    if !voip_ios_targets.is_empty() {
+        default_ios_targets.clear();
+    }
 
     let mut dispatch_errors = Vec::new();
 

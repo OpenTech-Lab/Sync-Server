@@ -3,6 +3,7 @@ import { requireAdminSession } from "@/lib/session";
 
 import { AdminNav } from "./ui/admin-nav";
 import { LogoutButton } from "./ui/logout-button";
+import { ThemeToggle } from "./ui/theme-toggle";
 
 const navItems = [
   { href: "/dashboard", label: "Overview" },
@@ -30,6 +31,7 @@ export default async function AdminLayout({
           <div className="flex items-center gap-3">
             <span className="hidden text-sm text-muted-foreground sm:inline">{user.username}</span>
             <Badge className="text-xs" variant="outline">{user.role}</Badge>
+            <ThemeToggle />
             <LogoutButton />
           </div>
         </div>

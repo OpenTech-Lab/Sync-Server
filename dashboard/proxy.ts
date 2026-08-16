@@ -83,9 +83,14 @@ export async function proxy(request: NextRequest) {
   const isSetupPath =
     normalizedPath === "/setup-admin" ||
     normalizedPath.startsWith("/setup-admin/");
-  const isSetupApiPath = normalizedPath === "/api/session/setup-admin";
+  // API routes return JSON, not HTML — redirecting them to /setup-admin (an
+  // HTML page) breaks any client-side fetch(), including endpoints the setup
+  // and login pages themselves depend on (e.g. /api/altcha). Each API route
+  // is responsible for its own authorization, so exempt the whole /api tree
+  // from this page-level redirect rather than special-casing individual paths.
+  const isApiPath = normalizedPath.startsWith("/api/");
 
-  if (needsSetup && !isSetupPath && !isSetupApiPath) {
+  if (needsSetup && !isSetupPath && !isApiPath) {
     return secureHeaders(
       NextResponse.redirect(
         new URL(`${basePath}/setup-admin`, request.url),
@@ -183,5 +188,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)"],
 };

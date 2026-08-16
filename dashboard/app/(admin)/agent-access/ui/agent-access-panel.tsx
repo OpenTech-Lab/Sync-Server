@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { apiUrl } from "@/lib/client-api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,7 +64,7 @@ export function AgentAccessPanel({ initialTokens }: { initialTokens: AgentTokenV
     setCopyError(null);
 
     try {
-      const response = await fetch("/api/admin/agent-tokens", {
+      const response = await fetch(apiUrl("/api/admin/agent-tokens"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -109,7 +110,7 @@ export function AgentAccessPanel({ initialTokens }: { initialTokens: AgentTokenV
     setError(null);
 
     try {
-      const response = await fetch(`/api/admin/agent-tokens/${token.id}`, {
+      const response = await fetch(apiUrl(`/api/admin/agent-tokens/${token.id}`), {
         method: "DELETE",
       });
 

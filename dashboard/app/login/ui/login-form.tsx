@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { apiUrl } from "@/lib/client-api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AltchaWidget } from "@/components/ui/altcha-widget";
 import { Button } from "@/components/ui/button";
@@ -38,7 +39,7 @@ export function LoginForm() {
     setError(null);
 
     try {
-      const response = await fetch("./api/session/login", {
+      const response = await fetch(apiUrl("/api/session/login"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

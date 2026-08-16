@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 
 import { useRouter } from "next/navigation";
 
+import { apiUrl } from "@/lib/client-api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AltchaWidget } from "@/components/ui/altcha-widget";
 import { Button } from "@/components/ui/button";
@@ -42,7 +43,7 @@ export function SetupAdminForm({ setupToken }: { setupToken: string }) {
     }
 
     try {
-      const response = await fetch("/api/session/setup-admin", {
+      const response = await fetch(apiUrl("/api/session/setup-admin"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

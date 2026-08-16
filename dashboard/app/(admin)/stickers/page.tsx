@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { apiUrl } from "@/lib/client-api";
 import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
 
@@ -52,7 +53,7 @@ export default async function StickersPage({
                 alt={group}
                 className="h-9 w-9 rounded object-contain"
                 height={36}
-                src={`/api/admin/stickers/${tabSticker.id}/image`}
+                src={apiUrl(`/api/admin/stickers/${tabSticker.id}/image`)}
                 unoptimized
                 width={36}
               />

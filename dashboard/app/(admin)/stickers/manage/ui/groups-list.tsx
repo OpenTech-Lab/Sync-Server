@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+import { apiUrl } from "@/lib/client-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -111,7 +112,7 @@ export function GroupsList({ stickers }: { stickers: StickerItem[] }) {
     setSavingAuthor(true);
     setAuthorError(null);
 
-    const response = await fetch("/api/admin/stickers/groups/author", {
+    const response = await fetch(apiUrl("/api/admin/stickers/groups/author"), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ group_name: groupName, author: trimmed || null }),
@@ -140,7 +141,7 @@ export function GroupsList({ stickers }: { stickers: StickerItem[] }) {
     setRenaming(true);
     setRenameError(null);
 
-    const response = await fetch("/api/admin/stickers/groups/rename", {
+    const response = await fetch(apiUrl("/api/admin/stickers/groups/rename"), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ old_name: oldName, new_name: trimmed }),
@@ -188,7 +189,7 @@ export function GroupsList({ stickers }: { stickers: StickerItem[] }) {
                       alt={group.name}
                       className="h-12 w-12 object-contain"
                       height={48}
-                      src={`/api/admin/stickers/${group.tabStickerId}/image`}
+                      src={apiUrl(`/api/admin/stickers/${group.tabStickerId}/image`)}
                       unoptimized
                       width={48}
                     />

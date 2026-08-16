@@ -2,6 +2,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import { apiUrl } from "@/lib/client-api";
+
 type AltchaWidgetProps = {
   /**
    * Called with the base64-encoded verified payload, or `null` when ALTCHA is
@@ -21,7 +23,7 @@ type AltchaChallenge = {
   maxNumber?: number;
 };
 
-const ALTCHA_CANDIDATE_URLS = ["/api/altcha", "/auth/altcha"] as const;
+const ALTCHA_CANDIDATE_URLS = [apiUrl("/api/altcha"), "/auth/altcha"] as const;
 
 function toHex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer))

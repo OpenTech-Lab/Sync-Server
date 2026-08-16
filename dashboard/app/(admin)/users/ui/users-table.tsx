@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { apiUrl } from "@/lib/client-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,14 +34,14 @@ export function UsersTable({ users }: { users: UserItem[] }) {
   async function toggleStatus(user: UserItem) {
     setWorkingUserId(user.id);
     const action = user.is_active ? "suspend" : "activate";
-    await fetch(`/api/admin/users/${user.id}/${action}`, { method: "POST" });
+    await fetch(apiUrl(`/api/admin/users/${user.id}/${action}`), { method: "POST" });
     setWorkingUserId(null);
     router.refresh();
   }
 
   async function approveUser(user: UserItem) {
     setWorkingUserId(user.id);
-    await fetch(`/api/admin/users/${user.id}/approve`, { method: "POST" });
+    await fetch(apiUrl(`/api/admin/users/${user.id}/approve`), { method: "POST" });
     setWorkingUserId(null);
     router.refresh();
   }
@@ -48,7 +49,7 @@ export function UsersTable({ users }: { users: UserItem[] }) {
   async function rejectUser(user: UserItem) {
     if (!confirm(`Reject and permanently delete account for "${user.username}"?`)) return;
     setWorkingUserId(user.id);
-    await fetch(`/api/admin/users/${user.id}/reject`, { method: "POST" });
+    await fetch(apiUrl(`/api/admin/users/${user.id}/reject`), { method: "POST" });
     setWorkingUserId(null);
     router.refresh();
   }

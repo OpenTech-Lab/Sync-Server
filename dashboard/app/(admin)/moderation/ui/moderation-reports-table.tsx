@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { apiUrl } from "@/lib/client-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,7 +35,7 @@ export function ModerationReportsTable({
 
   async function resolveReport(reportId: string, resolutionAction: string) {
     setWorkingReportId(reportId);
-    await fetch(`/api/admin/moderation/reports/${reportId}/resolve`, {
+    await fetch(apiUrl(`/api/admin/moderation/reports/${reportId}/resolve`), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

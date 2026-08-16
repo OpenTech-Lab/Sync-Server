@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { apiUrl } from "@/lib/client-api";
 import { renderSimpleMarkdownToHtml } from "@/lib/simple-markdown";
 
 type ServerNewsItem = {
@@ -48,7 +49,7 @@ export function PlanetNewsForm({ initialNews }: { initialNews: ServerNewsItem[] 
 
     try {
       const response = await fetch(
-        editingId ? `/api/admin/server-news/${editingId}` : "/api/admin/server-news",
+        apiUrl(editingId ? `/api/admin/server-news/${editingId}` : "/api/admin/server-news"),
         {
           method: editingId ? "PUT" : "POST",
           headers: {
@@ -94,7 +95,7 @@ export function PlanetNewsForm({ initialNews }: { initialNews: ServerNewsItem[] 
     setError(null);
 
     try {
-      const response = await fetch(`/api/admin/server-news/${item.id}`, {
+      const response = await fetch(apiUrl(`/api/admin/server-news/${item.id}`), {
         method: "DELETE",
       });
 

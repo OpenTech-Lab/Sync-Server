@@ -3,13 +3,14 @@
 import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+import { apiUrl } from "@/lib/client-api";
 import { Button } from "@/components/ui/button";
 
 export function LogoutButton() {
   const router = useRouter();
 
   async function logout() {
-    const response = await fetch("./api/session/logout", { method: "POST" });
+    const response = await fetch(apiUrl("/api/session/logout"), { method: "POST" });
     if (!response.ok) {
       return;
     }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { apiUrl } from "@/lib/client-api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +38,7 @@ export function ForgotPasswordForm() {
     setMessage(null);
 
     try {
-      const response = await fetch("/api/session/forgot-password", {
+      const response = await fetch(apiUrl("/api/session/forgot-password"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { apiUrl } from "@/lib/client-api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -134,7 +135,7 @@ export function GuildPolicyForm({ policy }: { policy: GuildPolicyConfig }) {
     }
 
     setSaving(true);
-    const response = await fetch("/api/admin/guild-policy", {
+    const response = await fetch(apiUrl("/api/admin/guild-policy"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(parseResult.value),
@@ -163,7 +164,7 @@ export function GuildPolicyForm({ policy }: { policy: GuildPolicyConfig }) {
     setNotice(null);
     setPruning(true);
 
-    const response = await fetch("/api/admin/guild-policy/prune-history", { method: "POST" });
+    const response = await fetch(apiUrl("/api/admin/guild-policy/prune-history"), { method: "POST" });
 
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;

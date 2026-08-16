@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { apiUrl } from "@/lib/client-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -38,7 +39,7 @@ export function StickerModeration({ stickers }: { stickers: StickerItem[] }) {
 
   async function moderate(stickerId: string, action: "approve" | "reject") {
     setWorkingId(stickerId);
-    await fetch(`/api/admin/stickers/${stickerId}/moderate`, {
+    await fetch(apiUrl(`/api/admin/stickers/${stickerId}/moderate`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action }),
@@ -82,7 +83,7 @@ export function StickerModeration({ stickers }: { stickers: StickerItem[] }) {
                       alt={sticker.name}
                       className="h-10 w-10 object-contain"
                       height={40}
-                      src={`/api/admin/stickers/${sticker.id}/image`}
+                      src={apiUrl(`/api/admin/stickers/${sticker.id}/image`)}
                       unoptimized
                       width={40}
                     />

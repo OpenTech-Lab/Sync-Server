@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+import { apiUrl } from "@/lib/client-api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,7 +57,7 @@ export function CreateGroupForm() {
       });
       const contentBase64 = btoa(binary);
 
-      const response = await fetch("/api/admin/stickers/upload", {
+      const response = await fetch(apiUrl("/api/admin/stickers/upload"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

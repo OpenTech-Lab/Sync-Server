@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { apiUrl } from "@/lib/client-api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,7 +68,7 @@ export function ConfigForm({
       require_approval: nextRequireApproval,
     };
 
-    const response = await fetch("/api/admin/config", {
+    const response = await fetch(apiUrl("/api/admin/config"), {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",

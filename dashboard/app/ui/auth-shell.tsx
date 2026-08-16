@@ -14,11 +14,12 @@ export function AuthShell({
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
           <Image
-            src="/logo.png"
+            src="/admin/logo.png"
             alt="Sync logo"
             width={48}
             height={48}
             priority
+            unoptimized
             className="rounded-xl"
           />
           <div>

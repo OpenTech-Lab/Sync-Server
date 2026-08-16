@@ -34,7 +34,7 @@ function reviewStateBadge(state: string | undefined) {
   }
   if (state === "challenged") {
     return (
-      <Badge className="border-amber-400 text-amber-700" variant="outline">
+      <Badge className="border-warning/40 text-warning" variant="outline">
         challenged
       </Badge>
     );

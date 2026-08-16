@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -287,7 +289,7 @@ export default async function TrustPage({
             </div>
             <div className="flex items-center gap-2">
               {(["flagged", "challenged", "frozen"] as const).map((item) => (
-                <a
+                <Link
                   className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
                     reviewFilter === item
                       ? "border-foreground bg-foreground text-background"
@@ -297,7 +299,7 @@ export default async function TrustPage({
                   key={item}
                 >
                   {item}
-                </a>
+                </Link>
               ))}
             </div>
           </div>

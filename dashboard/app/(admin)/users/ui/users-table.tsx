@@ -56,7 +56,7 @@ export function UsersTable({ users }: { users: UserItem[] }) {
 
   function statusBadge(user: UserItem) {
     if (!user.is_approved) {
-      return <Badge variant="outline" className="text-xs border-amber-400 text-amber-600">pending</Badge>;
+      return <Badge variant="outline" className="text-xs border-warning/40 text-warning">pending</Badge>;
     }
     return (
       <Badge variant={user.is_active ? "default" : "secondary"} className="text-xs">

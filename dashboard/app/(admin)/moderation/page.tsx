@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Badge } from "@/components/ui/badge";
 import { apiGetJson } from "@/lib/server-api";
 import { requireAdminSession } from "@/lib/session";
@@ -67,7 +69,7 @@ export default async function ModerationPage({
         {statusTabs.map((tab) => {
           const active = selectedStatus === tab.status;
           return (
-            <a
+            <Link
               key={tab.href}
               href={tab.href}
               className={`pb-1 text-sm font-medium transition-colors border-b-2 ${
@@ -77,7 +79,7 @@ export default async function ModerationPage({
               }`}
             >
               {tab.label}
-            </a>
+            </Link>
           );
         })}
       </div>

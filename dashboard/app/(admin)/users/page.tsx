@@ -1,4 +1,5 @@
 import { Search } from "lucide-react";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,23 +45,23 @@ export default async function UsersPage({
       </div>
 
       <div className="flex items-center gap-3">
-        <a
+        <Link
           href="/users"
           className={`text-sm font-medium pb-1 border-b-2 transition-colors ${!showPending ? "border-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
         >
           All users
-        </a>
-        <a
+        </Link>
+        <Link
           href="/users?pending=1"
           className={`flex items-center gap-1.5 text-sm font-medium pb-1 border-b-2 transition-colors ${showPending ? "border-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
         >
           Pending approval
           {pendingCount > 0 && (
-            <span className="inline-flex items-center justify-center rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">
+            <span className="inline-flex items-center justify-center rounded-full bg-warning/15 px-1.5 py-0.5 text-xs font-semibold text-warning">
               {pendingCount}
             </span>
           )}
-        </a>
+        </Link>
       </div>
 
       <form className="flex gap-2" method="get">

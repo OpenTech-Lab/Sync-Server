@@ -1,20 +1,31 @@
-import { Badge } from "@/components/ui/badge";
+import Image from "next/image";
+import Link from "next/link";
+
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarInset,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 import { requireAdminSession } from "@/lib/session";
 
-import { AdminNav } from "./ui/admin-nav";
-import { LogoutButton } from "./ui/logout-button";
-import { ThemeToggle } from "./ui/theme-toggle";
+import { AdminNav, type AdminNavItem } from "./ui/admin-nav";
+import { NavUser } from "./ui/nav-user";
 
-const navItems = [
-  { href: "/dashboard", label: "Overview" },
-  { href: "/guild", label: "Guild Review" },
-  { href: "/users", label: "Users" },
-  { href: "/moderation", label: "Moderation" },
-  { href: "/stickers", label: "Stickers" },
-  { href: "/config", label: "Config" },
-  { href: "/planet-news", label: "Planet News" },
-  { href: "/agent-access", label: "Agent Access" },
-  { href: "/audit", label: "Audit Logs" },
+const navItems: AdminNavItem[] = [
+  { href: "/dashboard", label: "Overview", icon: "overview", section: "workspace" },
+  { href: "/guild", label: "Guild review", icon: "guild", section: "operations" },
+  { href: "/users", label: "Users", icon: "users", section: "operations" },
+  { href: "/moderation", label: "Moderation", icon: "moderation", section: "operations" },
+  { href: "/stickers", label: "Stickers", icon: "stickers", section: "operations" },
+  { href: "/config", label: "Configuration", icon: "config", section: "system" },
+  { href: "/planet-news", label: "Planet news", icon: "news", section: "system" },
+  { href: "/agent-access", label: "Agent access", icon: "agents", section: "system" },
+  { href: "/audit", label: "Audit logs", icon: "audit", section: "system" },
 ];
 
 export default async function AdminLayout({
@@ -23,34 +34,52 @@ export default async function AdminLayout({
   const { user } = await requireAdminSession();
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="flex h-14 items-center gap-4 px-6">
-          <span className="text-sm font-semibold tracking-tight">Sync Admin</span>
-          <div className="flex-1" />
-          <div className="flex items-center gap-3">
-            <span className="hidden text-sm text-muted-foreground sm:inline">{user.username}</span>
-            <Badge className="text-xs" variant="outline">{user.role}</Badge>
-            <ThemeToggle />
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
+    <SidebarProvider>
+      <Sidebar collapsible="icon">
+        <SidebarHeader className="border-b border-sidebar-border p-3">
+          <Link
+            className="group flex items-center gap-3 rounded-lg px-1 py-1.5 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:justify-center"
+            href="/dashboard"
+          >
+            <span className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted shadow-sm ring-1 ring-border/70">
+              <Image
+                alt="Sync"
+                className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
+                height={36}
+                priority
+                src="/admin/logo.png"
+                width={36}
+              />
+            </span>
+            <span className="min-w-0 group-data-[collapsible=icon]:hidden">
+              <span className="block truncate text-sm font-semibold tracking-tight">
+                Sync <span className="font-normal text-muted-foreground">/ Admin</span>
+              </span>
+              <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                Instance control room
+              </span>
+            </span>
+          </Link>
+        </SidebarHeader>
 
-      <div className="flex flex-1">
-        <aside className="hidden w-52 shrink-0 border-r md:block">
-          <div className="sticky top-14 overflow-y-auto p-4">
-            <p className="mb-2 px-2 text-[11px] font-semibold tracking-widest text-muted-foreground/70 uppercase">
-              Menu
-            </p>
-            <AdminNav items={navItems} />
-          </div>
-        </aside>
+        <SidebarContent className="gap-0">
+          <AdminNav items={navItems} />
+        </SidebarContent>
 
-        <main className="min-w-0 flex-1 p-6 lg:px-8">
-          <div className="mx-auto max-w-5xl space-y-6">{children}</div>
+        <SidebarFooter className="border-t border-sidebar-border p-3">
+          <NavUser role={user.role} username={user.username} />
+        </SidebarFooter>
+        <SidebarRail />
+      </Sidebar>
+
+      <SidebarInset className="bg-muted/30">
+        <main className="min-h-svh px-3 py-4 sm:px-4 lg:px-6 lg:py-6">
+          <div className="mb-3 flex items-center">
+            <SidebarTrigger className="shrink-0" />
+          </div>
+          <div className="mx-auto max-w-6xl">{children}</div>
         </main>
-      </div>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

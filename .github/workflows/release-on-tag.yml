@@ -39,3 +39,21 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           body_path: ${{ steps.notes.outputs.notes_file }}
+
+  notify-mix-sync-server:
+    name: Notify mix-Sync-Server
+    needs: create-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Dispatch server-released event
+        env:
+          TOKEN: ${{ secrets.MIX_SYNC_SERVER_DISPATCH_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/OpenTech-Lab/mix-Sync-Server/dispatches \
+            -d "{\"event_type\":\"server-released\",\"client_payload\":{\"ref\":\"${REF_NAME}\"}}"

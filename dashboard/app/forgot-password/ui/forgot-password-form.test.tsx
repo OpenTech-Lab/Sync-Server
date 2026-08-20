@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
-import { vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ForgotPasswordForm } from "./forgot-password-form";
 

@@ -4,8 +4,10 @@ use base64::Engine;
 use chrono::Utc;
 use diesel::prelude::*;
 use redis::AsyncCommands;
+use ring::agreement;
 use ring::digest::{digest, SHA256};
-use ring::rand::SecureRandom;
+use ring::hmac;
+use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -47,8 +49,28 @@ pub struct LoginRequest {
 #[derive(Debug, Deserialize)]
 pub struct DeviceLoginRequest {
     pub device_auth_pubkey: String,
+    pub challenge_id: String,
+    pub proof: String,
     pub altcha_payload: Option<String>,
     pub accepted_terms_version: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeviceLoginChallengeRequest {
+    pub device_auth_pubkey: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeviceLoginChallengeResponse {
+    pub challenge_id: String,
+    pub server_ephemeral_pubkey: String,
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DeviceLoginChallengeRecord {
+    device_auth_pubkey: String,
+    proof_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,8 +112,14 @@ pub struct QrLoginSessionPath {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct QrLoginSessionQuery {
+pub struct QrLoginPollRequest {
     pub secret: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WsTicketResponse {
+    pub ticket: String,
+    pub expires_in: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +149,8 @@ const QR_LOGIN_TTL_SECS: u64 = 30;
 const QR_LOGIN_STATUS_PENDING: &str = "pending";
 const QR_LOGIN_STATUS_APPROVED: &str = "approved";
 const QR_LOGIN_STATUS_EXPIRED: &str = "expired";
+const DEVICE_LOGIN_CHALLENGE_TTL_SECS: u64 = 60;
+const WS_TICKET_TTL_SECS: u64 = 30;
 
 static QR_LOGIN_FALLBACK_STORE: OnceLock<Mutex<HashMap<String, (QrLoginSessionRecord, i64)>>> =
     OnceLock::new();
@@ -176,6 +206,26 @@ fn record_registration(ip: &str) {
         return;
     };
     store.entry(ip.to_string()).or_default().push(now);
+}
+
+fn decode_device_public_key(encoded: &str) -> Result<Vec<u8>, AppError> {
+    let decoded = BASE64_STANDARD
+        .decode(encoded.trim())
+        .map_err(|_| AppError::BadRequest("device_auth_pubkey must be valid base64".into()))?;
+    if decoded.len() != 32 {
+        return Err(AppError::BadRequest(
+            "device_auth_pubkey must encode a 32-byte X25519 public key".into(),
+        ));
+    }
+    Ok(decoded)
+}
+
+fn device_login_proof_message(challenge_id: &str, device_auth_pubkey: &str) -> String {
+    format!(
+        "device-login:{}:{}",
+        challenge_id,
+        device_auth_pubkey.trim()
+    )
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -614,18 +664,149 @@ pub async fn login(
 ///
 /// Authenticates by a device-generated public key. If this key has never been
 /// seen on this server, a new local user is created automatically.
+/// POST /auth/device-login/challenge
+///
+/// Creates a short-lived X25519 challenge. The server stores only the derived
+/// proof key for one minute; the ephemeral private key is consumed immediately.
+/// A caller must prove possession of the device's private X25519 key before the
+/// login endpoint will issue tokens.
+pub async fn create_device_login_challenge(
+    redis: web::Data<redis::Client>,
+    body: web::Json<DeviceLoginChallengeRequest>,
+) -> Result<HttpResponse, AppError> {
+    let pubkey = body.device_auth_pubkey.trim();
+    let peer_public_bytes = decode_device_public_key(pubkey)?;
+
+    let rng = SystemRandom::new();
+    let server_private = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &rng)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("X25519 key generation failed")))?;
+    let server_public = server_private
+        .compute_public_key()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("X25519 public key generation failed")))?;
+    let peer_public = agreement::UnparsedPublicKey::new(&agreement::X25519, peer_public_bytes);
+    let proof_key = agreement::agree_ephemeral(server_private, &peer_public, |key_material| {
+        key_material.to_vec()
+    })
+    .map_err(|_| AppError::BadRequest("invalid X25519 device public key".into()))?;
+
+    let mut challenge_bytes = [0u8; 32];
+    rng.fill(&mut challenge_bytes)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("RNG failed")))?;
+    let challenge_id = hex::encode(challenge_bytes);
+    let record = DeviceLoginChallengeRecord {
+        device_auth_pubkey: pubkey.to_string(),
+        proof_key: BASE64_STANDARD.encode(proof_key),
+    };
+    let record_json = serde_json::to_string(&record)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("challenge serialization: {e}")))?;
+
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {e}")))?;
+    conn.set_ex::<_, _, ()>(
+        format!("device_login_challenge:{challenge_id}"),
+        record_json,
+        DEVICE_LOGIN_CHALLENGE_TTL_SECS,
+    )
+    .await
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis set: {e}")))?;
+
+    Ok(HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(DeviceLoginChallengeResponse {
+            challenge_id,
+            server_ephemeral_pubkey: BASE64_STANDARD.encode(server_public.as_ref()),
+            expires_in: DEVICE_LOGIN_CHALLENGE_TTL_SECS,
+        }))
+}
+
+/// POST /auth/ws-ticket → a short-lived, single-use WebSocket ticket.
+///
+/// The reusable access token stays in the Authorization header and is never
+/// placed in a URL. The ticket is consumed atomically by the WebSocket route.
+pub async fn create_ws_ticket(
+    redis: web::Data<redis::Client>,
+    auth: AuthUser,
+) -> Result<HttpResponse, AppError> {
+    let user_id = auth.0.user_id()?;
+    let rng = SystemRandom::new();
+    let mut raw = [0u8; 32];
+    rng.fill(&mut raw)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("RNG failed")))?;
+    let ticket = hex::encode(raw);
+
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {e}")))?;
+    conn.set_ex::<_, _, ()>(
+        format!("ws_ticket:{ticket}"),
+        user_id.to_string(),
+        WS_TICKET_TTL_SECS,
+    )
+    .await
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis set: {e}")))?;
+
+    Ok(HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(WsTicketResponse {
+            ticket,
+            expires_in: WS_TICKET_TTL_SECS,
+        }))
+}
+
+async fn verify_device_login_proof(
+    redis: &redis::Client,
+    device_auth_pubkey: &str,
+    challenge_id: &str,
+    proof: &str,
+) -> Result<(), AppError> {
+    if challenge_id.len() != 64 || !challenge_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(AppError::Unauthorized);
+    }
+
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {e}")))?;
+    // GETDEL makes each challenge single-use, including failed proof attempts.
+    let record_json: Option<String> = conn
+        .get_del(format!("device_login_challenge:{challenge_id}"))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis getdel: {e}")))?;
+    let record_json = record_json.ok_or(AppError::Unauthorized)?;
+    let record: DeviceLoginChallengeRecord =
+        serde_json::from_str(&record_json).map_err(|_| AppError::Unauthorized)?;
+
+    if record.device_auth_pubkey != device_auth_pubkey.trim() {
+        return Err(AppError::Unauthorized);
+    }
+    let proof_key = BASE64_STANDARD
+        .decode(record.proof_key)
+        .map_err(|_| AppError::Unauthorized)?;
+    let proof = BASE64_STANDARD
+        .decode(proof.trim())
+        .map_err(|_| AppError::Unauthorized)?;
+    let key = hmac::Key::new(hmac::HMAC_SHA256, &proof_key);
+    hmac::verify(
+        &key,
+        device_login_proof_message(challenge_id, device_auth_pubkey).as_bytes(),
+        &proof,
+    )
+    .map_err(|_| AppError::Unauthorized)
+}
+
 pub async fn device_login(
     req: HttpRequest,
     pool: web::Data<Pool>,
+    redis: web::Data<redis::Client>,
     config: web::Data<Config>,
     body: web::Json<DeviceLoginRequest>,
 ) -> Result<HttpResponse, AppError> {
     let pubkey = body.device_auth_pubkey.trim();
-    if pubkey.is_empty() {
-        return Err(AppError::BadRequest(
-            "device_auth_pubkey is required".into(),
-        ));
-    }
+    decode_device_public_key(pubkey)?;
+    verify_device_login_proof(&redis, pubkey, &body.challenge_id, &body.proof).await?;
     // Extract client IP early; we'll apply the registration limiter only when
     // this is a *new* device (i.e. account creation, not re-login).
     let client_ip = extract_client_ip(&req);
@@ -753,14 +934,14 @@ pub async fn create_qr_login_session(
     }))
 }
 
-/// GET /auth/qr-login/session/{session_id}?secret=... → 200 QrLoginStatusResponse
+/// POST /auth/qr-login/session/{session_id} → 200 QrLoginStatusResponse
 pub async fn poll_qr_login_session(
     redis: web::Data<redis::Client>,
     path: web::Path<QrLoginSessionPath>,
-    query: web::Query<QrLoginSessionQuery>,
+    body: web::Json<QrLoginPollRequest>,
 ) -> Result<HttpResponse, AppError> {
     let session_id = path.session_id.trim();
-    if session_id.is_empty() || query.secret.trim().is_empty() {
+    if session_id.is_empty() || body.secret.trim().is_empty() {
         return Err(AppError::BadRequest(
             "session_id and secret are required".into(),
         ));
@@ -775,7 +956,7 @@ pub async fn poll_qr_login_session(
         }));
     };
 
-    if record.secret != query.secret {
+    if record.secret != body.secret {
         return Err(AppError::Unauthorized);
     }
 
@@ -783,12 +964,14 @@ pub async fn poll_qr_login_session(
         delete_qr_login_record(&redis, session_id).await?;
     }
 
-    Ok(HttpResponse::Ok().json(QrLoginStatusResponse {
-        status: record.status,
-        access_token: record.access_token,
-        refresh_token: record.refresh_token,
-        expires_in: record.expires_in,
-    }))
+    Ok(HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(QrLoginStatusResponse {
+            status: record.status,
+            access_token: record.access_token,
+            refresh_token: record.refresh_token,
+            expires_in: record.expires_in,
+        }))
 }
 
 /// POST /auth/qr-login/approve → 200 { status: "approved" }
@@ -1112,11 +1295,16 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/setup-admin", web::post().to(setup_admin))
         .route("/register", web::post().to(register))
         .route("/login", web::post().to(login))
+        .route(
+            "/device-login/challenge",
+            web::post().to(create_device_login_challenge),
+        )
         .route("/device-login", web::post().to(device_login))
+        .route("/ws-ticket", web::post().to(create_ws_ticket))
         .route("/qr-login/session", web::post().to(create_qr_login_session))
         .route(
             "/qr-login/session/{session_id}",
-            web::get().to(poll_qr_login_session),
+            web::post().to(poll_qr_login_session),
         )
         .route("/qr-login/approve", web::post().to(approve_qr_login))
         .route("/me", web::get().to(me))

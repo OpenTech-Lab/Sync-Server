@@ -10,6 +10,18 @@ use crate::errors::AppError;
 const APNS_PRODUCTION_URL: &str = "https://api.push.apple.com";
 const APNS_SANDBOX_URL: &str = "https://api.sandbox.push.apple.com";
 
+fn apns_transport_error(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connection"
+    } else if error.is_request() {
+        "request"
+    } else {
+        "transport"
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ApnsConfig {
     pub team_id: String,
@@ -119,13 +131,15 @@ pub async fn send_call_alert_to_tokens(
             .send()
             .await
             .map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("APNs call send failed: {}", e))
+                AppError::Internal(anyhow::anyhow!(
+                    "APNs call send failed ({})",
+                    apns_transport_error(&e)
+                ))
             })?;
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            failures.push(format!("token={token} status={status} body={body}"));
+            failures.push(status.to_string());
         }
     }
 
@@ -190,13 +204,15 @@ pub async fn send_voip_call_push_to_tokens(
             .send()
             .await
             .map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("APNs VoIP call send failed: {}", e))
+                AppError::Internal(anyhow::anyhow!(
+                    "APNs VoIP call send failed ({})",
+                    apns_transport_error(&e)
+                ))
             })?;
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            failures.push(format!("token={token} status={status} body={body}"));
+            failures.push(status.to_string());
         }
     }
 
@@ -286,17 +302,14 @@ pub async fn send_alert_to_tokens(
             .await
             .map_err(|e| {
                 AppError::Internal(anyhow::anyhow!(
-                    "APNs send request failed: {}; debug={:?}; url={}",
-                    e,
-                    e,
-                    url
+                    "APNs send request failed ({})",
+                    apns_transport_error(&e)
                 ))
             })?;
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            failures.push(format!("token={token} status={status} body={body}"));
+            failures.push(status.to_string());
         }
     }
 

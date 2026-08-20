@@ -9,6 +9,7 @@ target/
 *.db
 *.sqlite
 *.sqlite3
+.drills/
 
 # Diesel
 diesel_migrations/

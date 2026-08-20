@@ -1,4 +1,5 @@
 use actix_web::{web, HttpRequest, HttpResponse};
+use ring::hmac;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -37,15 +38,28 @@ async fn webhook(
     cfg: web::Data<Config>,
     body: web::Json<RelayPayload>,
 ) -> Result<HttpResponse, AppError> {
-    if let Some(expected_secret) = cfg.push_relay_shared_secret.as_ref() {
-        let provided = req
-            .headers()
-            .get("x-sync-push-secret")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default();
-        if provided != expected_secret {
-            return Err(AppError::Unauthorized);
-        }
+    let expected_secret = cfg
+        .push_relay_shared_secret
+        .as_deref()
+        .ok_or(AppError::Unauthorized)?;
+    let provided = req
+        .headers()
+        .get("x-sync-push-secret")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    const AUTH_CONTEXT: &[u8] = b"sync-push-relay-auth-v1";
+    let candidate = hmac::sign(
+        &hmac::Key::new(hmac::HMAC_SHA256, provided.as_bytes()),
+        AUTH_CONTEXT,
+    );
+    if hmac::verify(
+        &hmac::Key::new(hmac::HMAC_SHA256, expected_secret.as_bytes()),
+        AUTH_CONTEXT,
+        candidate.as_ref(),
+    )
+    .is_err()
+    {
+        return Err(AppError::Unauthorized);
     }
 
     match body.event.trim() {

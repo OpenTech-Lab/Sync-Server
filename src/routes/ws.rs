@@ -1,7 +1,8 @@
 use actix_web::{web, HttpRequest, HttpResponse};
+use redis::AsyncCommands;
 use serde::Deserialize;
+use uuid::Uuid;
 
-use crate::auth::tokens::verify_access_token;
 use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
@@ -12,16 +13,15 @@ use crate::ws::session::run_ws_session;
 
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
-    token: String,
+    ticket: String,
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
-/// GET /ws?token=<jwt>
+/// GET /ws?ticket=<single-use-ticket>
 ///
-/// Upgrades the connection to WebSocket after verifying the bearer token
-/// supplied in the query string (headers cannot carry custom values during
-/// the browser WS handshake).
+/// Upgrades the connection after atomically consuming a short-lived ticket
+/// issued by the authenticated `/auth/ws-ticket` endpoint.
 pub async fn ws_handler(
     req: HttpRequest,
     stream: web::Payload,
@@ -30,11 +30,21 @@ pub async fn ws_handler(
     pool: web::Data<Pool>,
     redis: web::Data<redis::Client>,
 ) -> Result<HttpResponse, AppError> {
-    // Validate the JWT from the query parameter
-    let claims = verify_access_token(&query.token, &config.jwt_secret)
-        .map_err(|_| AppError::Unauthorized)?;
-
-    let user_id = claims.user_id()?;
+    if query.ticket.len() != 64 || !query.ticket.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(AppError::Unauthorized);
+    }
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {e}")))?;
+    // GETDEL prevents replay even when the subsequent WebSocket upgrade fails.
+    let user_id: Option<String> = conn
+        .get_del(format!("ws_ticket:{}", query.ticket))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis getdel: {e}")))?;
+    let user_id = user_id
+        .and_then(|value| Uuid::parse_str(&value).ok())
+        .ok_or(AppError::Unauthorized)?;
 
     // Ensure the user exists and is active
     user_service::find_by_id(&pool, user_id)?.ok_or(AppError::Unauthorized)?;
@@ -50,7 +60,14 @@ pub async fn ws_handler(
     let db_pool = pool.get_ref().clone();
     // actix_web::rt::spawn does not require Send, which is needed because
     // MessageStream wraps a non-Send payload stream.
-    actix_web::rt::spawn(run_ws_session(user_id, session, msg_stream, redis_client, db_pool, config.get_ref().clone()));
+    actix_web::rt::spawn(run_ws_session(
+        user_id,
+        session,
+        msg_stream,
+        redis_client,
+        db_pool,
+        config.get_ref().clone(),
+    ));
 
     Ok(response)
 }

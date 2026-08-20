@@ -59,7 +59,7 @@ pub struct Config {
     pub apns_use_sandbox: bool,
     /// Push delivery mode. relay (default): webhook only.
     pub push_delivery_mode: PushDeliveryMode,
-    /// Optional shared secret for webhook relay calls.
+    /// Required shared secret for webhook relay calls.
     pub push_relay_shared_secret: Option<String>,
     /// HMAC key for generating ALTCHA challenges. If None, ALTCHA is disabled.
     pub altcha_hmac_key: Option<String>,
@@ -175,6 +175,18 @@ impl Config {
             if self.instance_domain.eq_ignore_ascii_case("localhost") {
                 return Err(anyhow::anyhow!(
                     "INSTANCE_DOMAIN must be a public domain in production"
+                ));
+            }
+
+            if self
+                .push_relay_shared_secret
+                .as_deref()
+                .is_none_or(|secret| {
+                    secret.len() < 32 || secret.to_ascii_lowercase().contains("change-me")
+                })
+            {
+                return Err(anyhow::anyhow!(
+                    "PUSH_RELAY_SHARED_SECRET must be a strong non-default value in production"
                 ));
             }
         }

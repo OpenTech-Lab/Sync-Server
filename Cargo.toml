@@ -25,7 +25,7 @@ diesel_migrations = "2"
 redis = { version = "0.27", features = ["tokio-comp"] }
 
 # Auth
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10.3", default-features = false, features = ["rust_crypto", "use_pem"] }
 ring = "0.17"
 base64 = "0.22"
 bcrypt = "0.15"

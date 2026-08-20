@@ -3,6 +3,7 @@ mod config;
 mod db;
 mod errors;
 mod models;
+mod outbound_http;
 mod routes;
 mod schema;
 mod services;

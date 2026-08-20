@@ -21,10 +21,7 @@ pub async fn send_password_reset(
     reset_url: &str,
 ) -> Result<(), AppError> {
     let Some(key) = api_key else {
-        tracing::warn!(
-            recipient = %to,
-            "RESEND_API_KEY not set — password-reset email skipped"
-        );
+        tracing::warn!("RESEND_API_KEY not set — password-reset email skipped");
         return Ok(());
     };
 
@@ -65,14 +62,13 @@ pub async fn send_password_reset(
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        tracing::error!(%status, %text, "Resend API error");
+        tracing::error!(%status, "Resend API error");
         return Err(AppError::Internal(anyhow::anyhow!(
             "Email provider returned {}",
             status
         )));
     }
 
-    tracing::info!(recipient = %to, "Password-reset email sent");
+    tracing::info!("Password-reset email sent");
     Ok(())
 }

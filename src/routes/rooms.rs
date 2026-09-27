@@ -32,6 +32,7 @@ pub struct UpdateRoomRequest {
 #[derive(Debug, Deserialize)]
 pub struct RoomMessagesQuery {
     pub before: Option<Uuid>,
+    pub after: Option<Uuid>,
     pub limit: Option<u8>,
 }
 
@@ -192,7 +193,19 @@ pub async fn get_room_messages(
 ) -> Result<HttpResponse, AppError> {
     let user_id = auth.0.user_id()?;
     let limit = query.limit.unwrap_or(50);
-    let messages = room_service::get_room_messages(&pool, *room_id, user_id, query.before, limit)?;
+    if query.before.is_some() && query.after.is_some() {
+        return Err(AppError::BadRequest(
+            "before and after cannot be combined".into(),
+        ));
+    }
+    let messages = room_service::get_room_messages(
+        &pool,
+        *room_id,
+        user_id,
+        query.before,
+        query.after,
+        limit,
+    )?;
     Ok(HttpResponse::Ok().json(messages))
 }
 

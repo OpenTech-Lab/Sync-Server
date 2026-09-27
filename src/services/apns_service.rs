@@ -139,7 +139,10 @@ pub async fn send_call_alert_to_tokens(
 
         if !response.status().is_success() {
             let status = response.status();
-            failures.push(status.to_string());
+            // APNs error bodies are just `{"reason":"..."}` — safe to log, and
+            // the only way to tell e.g. BadDeviceToken from DeviceTokenNotForTopic.
+            let body = response.text().await.unwrap_or_default();
+            failures.push(format!("{status} {body}"));
         }
     }
 
@@ -212,7 +215,10 @@ pub async fn send_voip_call_push_to_tokens(
 
         if !response.status().is_success() {
             let status = response.status();
-            failures.push(status.to_string());
+            // APNs error bodies are just `{"reason":"..."}` — safe to log, and
+            // the only way to tell e.g. BadDeviceToken from DeviceTokenNotForTopic.
+            let body = response.text().await.unwrap_or_default();
+            failures.push(format!("{status} {body}"));
         }
     }
 
@@ -309,7 +315,10 @@ pub async fn send_alert_to_tokens(
 
         if !response.status().is_success() {
             let status = response.status();
-            failures.push(status.to_string());
+            // APNs error bodies are just `{"reason":"..."}` — safe to log, and
+            // the only way to tell e.g. BadDeviceToken from DeviceTokenNotForTopic.
+            let body = response.text().await.unwrap_or_default();
+            failures.push(format!("{status} {body}"));
         }
     }
 

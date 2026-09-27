@@ -266,11 +266,14 @@ pub fn remove_room_member(
     })
 }
 
+/// Newest-first page of a room's messages, optionally before `before_id`;
+/// or, with `after_id`, the messages strictly newer than it, oldest-first.
 pub fn get_room_messages(
     pool: &Pool,
     room_id: Uuid,
     viewer_id: Uuid,
     before_id: Option<Uuid>,
+    after_id: Option<Uuid>,
     limit: u8,
 ) -> Result<Vec<RoomMessage>, AppError> {
     let mut conn = pool.get()?;
@@ -303,6 +306,25 @@ pub fn get_room_messages(
                     .and(room_messages::id.lt(cursor_id))),
         )
         .order((room_messages::created_at.desc(), room_messages::id.desc()))
+        .limit(limit)
+        .load::<RoomMessage>(&mut conn)?
+    } else if let Some(cursor_id) = after_id {
+        let cursor = room_messages::table
+            .find(cursor_id)
+            .first::<RoomMessage>(&mut conn)
+            .optional()?
+            .ok_or(AppError::NotFound)?;
+        if cursor.room_id != room_id {
+            return Err(AppError::NotFound);
+        }
+        base.filter(
+            room_messages::created_at
+                .gt(cursor.created_at)
+                .or(room_messages::created_at
+                    .eq(cursor.created_at)
+                    .and(room_messages::id.gt(cursor_id))),
+        )
+        .order((room_messages::created_at.asc(), room_messages::id.asc()))
         .limit(limit)
         .load::<RoomMessage>(&mut conn)?
     } else {

@@ -144,8 +144,9 @@ struct RelayIceCandidate {
 
 /// Drive a WebSocket session for `user_id`.
 ///
-/// Spawns a Redis subscriber task that forwards incoming pubsub messages over
-/// an mpsc channel, then loops over three arms:
+/// `pubsub` must already be subscribed to the user's channel (see
+/// `routes::ws`). A task forwards its messages over an mpsc channel, then the
+/// session loops over three arms:
 ///   1. WS messages from the client (ping/close/text)
 ///   2. Redis events forwarded by the subscriber task
 ///   3. Heartbeat tick — disconnect if no client message in `CLIENT_TIMEOUT`
@@ -153,6 +154,7 @@ pub async fn run_ws_session(
     user_id: Uuid,
     mut session: Session,
     mut msg_stream: MessageStream,
+    pubsub: redis::aio::PubSub,
     redis_client: redis::Client,
     db_pool: crate::db::Pool,
     config: crate::config::Config,
@@ -162,27 +164,13 @@ pub async fn run_ws_session(
         .ok();
     let (redis_tx, mut redis_rx) = mpsc::unbounded_channel::<String>();
 
-    // ── Spawn Redis subscriber ────────────────────────────────────────────────
-    let channel = crate::services::redis_pubsub::user_channel(user_id);
-    let subscribe_client = redis_client.clone();
-    tokio::spawn(async move {
-        match crate::services::redis_pubsub::subscribe(&subscribe_client, &[channel.as_str()]).await
-        {
-            Ok(mut pubsub) => {
-                let mut stream = pubsub.on_message();
-                while let Some(msg) = stream.next().await {
-                    let payload: String = msg.get_payload().unwrap_or_default();
-                    if redis_tx.send(payload).is_err() {
-                        break; // receiver (session) has closed
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    %user_id,
-                    "Redis subscribe failed; real-time delivery disabled for this session"
-                );
+    // ── Forward the (already confirmed) Redis subscription ────────────────────
+    let subscriber = tokio::spawn(async move {
+        let mut stream = pubsub.into_on_message();
+        while let Some(msg) = stream.next().await {
+            let payload: String = msg.get_payload().unwrap_or_default();
+            if redis_tx.send(payload).is_err() {
+                break; // receiver (session) has closed
             }
         }
     });
@@ -424,7 +412,14 @@ pub async fn run_ws_session(
             }
 
             // Arm 2: event pushed from Redis pubsub subscriber
-            Some(payload) = redis_rx.recv() => {
+            payload = redis_rx.recv() => {
+                let Some(payload) = payload else {
+                    // The Redis subscription died. Staying connected would
+                    // leave the client deaf to every event; closing makes it
+                    // reconnect (re-subscribe) and resync.
+                    tracing::warn!(%user_id, "Redis subscription ended; closing WS session");
+                    break;
+                };
                 if session.text(payload).await.is_err() {
                     break;
                 }
@@ -462,6 +457,8 @@ pub async fn run_ws_session(
         tracing::info!(%user_id, %call_id, %peer_id, "Ended active call due to session disconnect");
     }
 
+    // Drop the pubsub connection now rather than when the next event arrives.
+    subscriber.abort();
     let _ = session.close(None).await;
     tracing::debug!(%user_id, "WS session closed");
 }

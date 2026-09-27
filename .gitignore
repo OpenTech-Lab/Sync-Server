@@ -118,3 +118,4 @@ fly.toml
 # TLS certs (generated at runtime; never commit private keys)
 nginx/certs/
 .gstack/
+.trees/

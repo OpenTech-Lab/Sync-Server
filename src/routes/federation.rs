@@ -14,6 +14,7 @@ use crate::auth::AuthUser;
 use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
+use crate::outbound_http;
 use crate::services::{federation_service, push_dispatch_service, redis_pubsub};
 
 #[derive(Debug, Deserialize)]
@@ -263,8 +264,9 @@ async fn fetch_actor_public_key(
         }
     }
 
-    let resp = reqwest::Client::new()
-        .get(actor_url)
+    let (validated_url, client) = outbound_http::client_for(actor_url, cfg).await?;
+    let resp = client
+        .get(validated_url)
         .header("accept", "application/activity+json")
         .send()
         .await
@@ -274,9 +276,14 @@ async fn fetch_actor_public_key(
         return Err(AppError::Unauthorized);
     }
 
-    let body: serde_json::Value = resp
-        .json()
+    let body_bytes = resp
+        .bytes()
         .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Invalid actor response: {e}")))?;
+    if body_bytes.len() > federation_service::max_payload_bytes() {
+        return Err(AppError::BadRequest("Actor document is too large".into()));
+    }
+    let body: serde_json::Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Invalid actor JSON: {e}")))?;
 
     let public_key = body
@@ -557,12 +564,13 @@ pub async fn inbox(
 }
 
 async fn post_activity_signed(
+    cfg: &Config,
     destination: &str,
     key_id_value: &str,
     private_pkcs8_b64: &str,
     payload_bytes: &[u8],
 ) -> Result<StatusCode, AppError> {
-    let client = reqwest::Client::new();
+    let (destination_url, client) = outbound_http::client_for(destination, cfg).await?;
     let digest = format!(
         "SHA-256={}",
         federation_service::digest_sha256_base64(payload_bytes)
@@ -570,7 +578,7 @@ async fn post_activity_signed(
     let date = Utc::now().to_rfc2822();
 
     let mut req = client
-        .post(destination)
+        .post(destination_url)
         .header("accept", "application/activity+json")
         .header("content-type", "application/activity+json")
         .header("date", &date)
@@ -661,6 +669,7 @@ pub async fn send_to_remote(
         )?;
 
         match post_activity_signed(
+            &cfg,
             destination,
             &key.key_id,
             &key.private_key_pkcs8,
@@ -804,6 +813,7 @@ pub async fn deliver_direct_message_to_remote(
 
     let started = std::time::Instant::now();
     match post_activity_signed(
+        cfg,
         &destination,
         &key.key_id,
         &key.private_key_pkcs8,

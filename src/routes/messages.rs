@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
 use crate::models::guild::GuildSnapshot;
+use crate::outbound_http;
 use crate::routes::federation;
 use crate::services::user_service;
 use crate::services::{
@@ -75,15 +76,8 @@ fn instance_host(instance_domain: &str) -> String {
         .to_lowercase()
 }
 
-fn normalize_server_url(raw: &str) -> Result<reqwest::Url, AppError> {
-    let parsed = reqwest::Url::parse(raw.trim())
-        .map_err(|e| AppError::BadRequest(format!("Invalid recipient_server_url: {e}")))?;
-    if parsed.host_str().is_none() {
-        return Err(AppError::BadRequest(
-            "recipient_server_url must include host".into(),
-        ));
-    }
-    Ok(parsed)
+fn normalize_server_url(raw: &str, cfg: &Config) -> Result<reqwest::Url, AppError> {
+    outbound_http::parse_federation_url(raw, cfg)
 }
 
 fn canonical_server_url(url: &reqwest::Url) -> String {
@@ -186,7 +180,7 @@ pub async fn resolve_contact(
         return Err(AppError::BadRequest("recipient_id cannot be empty".into()));
     }
 
-    let server_url = normalize_server_url(&body.recipient_server_url)?;
+    let server_url = normalize_server_url(&body.recipient_server_url, &cfg)?;
     let canonical = canonical_server_url(&server_url);
     let local_instance_host = instance_host(&cfg.instance_domain);
     let target_host = server_url.host_str().unwrap_or_default().to_lowercase();
@@ -232,7 +226,7 @@ pub async fn send_message(
     let local_instance_host = instance_host(&cfg.instance_domain);
     let explicit_remote_target = match body.recipient_server_url.as_ref() {
         Some(raw) if !raw.trim().is_empty() => {
-            let parsed = normalize_server_url(raw)?;
+            let parsed = normalize_server_url(raw, &cfg)?;
             let host = parsed.host_str().unwrap_or_default().to_lowercase();
             Some((canonical_server_url(&parsed), host))
         }

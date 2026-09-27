@@ -18,11 +18,18 @@ fn unique_email() -> String {
 /// Helper: register a user and return their access token + user_id.
 async fn register_and_login(client: &Client, base: &str) -> (String, String) {
     let email = unique_email();
+    let username = format!("test{}", &Uuid::new_v4().simple().to_string()[..12]);
     let password = "test_pass_secure!";
+
+    // Registration is capped per client IP per hour; give each test user its
+    // own so the suite can run more than once against the same server.
+    let octets = Uuid::new_v4().into_bytes();
+    let client_ip = format!("10.{}.{}.{}", octets[0], octets[1], octets[2]);
 
     let reg: Value = client
         .post(format!("{base}/auth/register"))
-        .json(&json!({ "email": email, "password": password }))
+        .header("X-Real-IP", client_ip)
+        .json(&json!({ "username": username, "email": email, "password": password }))
         .send()
         .await
         .expect("register failed")
@@ -175,6 +182,81 @@ async fn pagination_before_cursor() {
         ids.contains(&first_id.as_str()),
         "first message must appear in earlier page"
     );
+}
+
+/// Catch-up: ?after=<id> returns only newer messages, oldest-first
+#[tokio::test]
+async fn catch_up_after_cursor() {
+    let Some(base) = base_url() else { return };
+    let client = Client::new();
+
+    let (token_a, _id_a) = register_and_login(&client, &base).await;
+    let (_token_b, id_b) = register_and_login(&client, &base).await;
+
+    let mut sent_ids = Vec::new();
+    for i in 1u8..=4 {
+        let sent: Value = client
+            .post(format!("{base}/api/messages"))
+            .bearer_auth(&token_a)
+            .json(&json!({ "recipient_id": id_b, "content": format!("msg {i}") }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        sent_ids.push(sent["id"].as_str().unwrap().to_owned());
+    }
+
+    let after = |cursor: &str, limit: u8| {
+        client
+            .get(format!(
+                "{base}/api/messages/{id_b}?after={cursor}&limit={limit}"
+            ))
+            .bearer_auth(&token_a)
+            .send()
+    };
+
+    // Everything after the first message, in send order, cursor excluded.
+    let page: Value = after(&sent_ids[0], 10).await.unwrap().json().await.unwrap();
+    let ids: Vec<&str> = page
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, &sent_ids[1..], "after must be exclusive and oldest-first");
+
+    // A short limit returns the oldest of the newer messages, so a client can
+    // page forward without skipping any.
+    let page: Value = after(&sent_ids[0], 2).await.unwrap().json().await.unwrap();
+    let ids: Vec<&str> = page
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, &sent_ids[1..3]);
+
+    // Nothing newer than the latest message.
+    let page: Value = after(&sent_ids[3], 10).await.unwrap().json().await.unwrap();
+    assert!(page.as_array().unwrap().is_empty());
+
+    // Unknown cursor → 404, so the client falls back to a full fetch.
+    let res = after(&Uuid::new_v4().to_string(), 10).await.unwrap();
+    assert_eq!(res.status(), 404);
+
+    // before + after is ambiguous → 400.
+    let res = client
+        .get(format!(
+            "{base}/api/messages/{id_b}?after={}&before={}",
+            sent_ids[0], sent_ids[3]
+        ))
+        .bearer_auth(&token_a)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 400);
 }
 
 /// POST /api/messages/{partner_id}/read → 200 + updates read state

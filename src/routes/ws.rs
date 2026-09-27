@@ -5,7 +5,7 @@ use crate::auth::tokens::verify_access_token;
 use crate::config::Config;
 use crate::db::Pool;
 use crate::errors::AppError;
-use crate::services::user_service;
+use crate::services::{redis_pubsub, user_service};
 use crate::ws::session::run_ws_session;
 
 // ── Request DTO ───────────────────────────────────────────────────────────────
@@ -42,6 +42,14 @@ pub async fn ws_handler(
     // Best-effort last_seen update (non-fatal if it fails)
     let _ = user_service::update_last_seen(&pool, user_id);
 
+    // Subscribe before upgrading: pubsub keeps nothing for absent subscribers,
+    // so anything published between the 101 and a later SUBSCRIBE (a message,
+    // an incoming call) would be lost while the client believes it is live.
+    let channel = redis_pubsub::user_channel(user_id);
+    let pubsub = redis_pubsub::subscribe(redis.get_ref(), &[channel.as_str()])
+        .await
+        .map_err(AppError::Internal)?;
+
     // Perform the HTTP → WebSocket upgrade
     let (response, session, msg_stream) =
         actix_ws::handle(&req, stream).map_err(|e| AppError::Internal(anyhow::anyhow!("{}", e)))?;
@@ -50,7 +58,15 @@ pub async fn ws_handler(
     let db_pool = pool.get_ref().clone();
     // actix_web::rt::spawn does not require Send, which is needed because
     // MessageStream wraps a non-Send payload stream.
-    actix_web::rt::spawn(run_ws_session(user_id, session, msg_stream, redis_client, db_pool, config.get_ref().clone()));
+    actix_web::rt::spawn(run_ws_session(
+        user_id,
+        session,
+        msg_stream,
+        pubsub,
+        redis_client,
+        db_pool,
+        config.get_ref().clone(),
+    ));
 
     Ok(response)
 }

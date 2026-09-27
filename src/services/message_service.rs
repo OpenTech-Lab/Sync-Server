@@ -43,11 +43,14 @@ pub(crate) fn insert_message_conn(
 ///
 /// Returns up to `limit` messages (max 100) ordered newest-first.
 /// Pass `before_id` (a message UUID) to get the page preceding that message.
+/// Pass `after_id` instead to catch up: the messages strictly newer than it,
+/// ordered **oldest-first** so a client can page forward without gaps.
 pub fn get_conversation(
     pool: &Pool,
     user_a: Uuid,
     user_b: Uuid,
     before_id: Option<Uuid>,
+    after_id: Option<Uuid>,
     limit: u8,
 ) -> Result<Vec<Message>, AppError> {
     if moderation_service::is_block_active_between(pool, user_a, user_b)? {
@@ -79,6 +82,25 @@ pub fn get_conversation(
                 .or(created_at.eq(cursor_msg.created_at).and(id.lt(cursor_id))),
         )
         .order((created_at.desc(), id.desc()))
+        .limit(limit)
+        .load::<Message>(&mut conn)?
+    } else if let Some(cursor_id) = after_id {
+        let cursor_msg = crate::schema::messages::table
+            .find(cursor_id)
+            .first::<Message>(&mut conn)
+            .optional()?
+            .filter(|m| {
+                (m.sender_id == user_a && m.recipient_id == user_b)
+                    || (m.sender_id == user_b && m.recipient_id == user_a)
+            })
+            .ok_or(AppError::NotFound)?;
+
+        base.filter(
+            created_at
+                .gt(cursor_msg.created_at)
+                .or(created_at.eq(cursor_msg.created_at).and(id.gt(cursor_id))),
+        )
+        .order((created_at.asc(), id.asc()))
         .limit(limit)
         .load::<Message>(&mut conn)?
     } else {

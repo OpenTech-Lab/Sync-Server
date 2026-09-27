@@ -80,6 +80,12 @@ pub async fn dispatch_new_message(
     let mut ios_targets = Vec::new();
     let mut webhook_targets = Vec::new();
     for target in all_targets {
+        // PushKit VoIP tokens are for incoming calls only: APNs rejects an
+        // alert push to one with DeviceTokenNotForTopic, which failed every
+        // message dispatch for users who also registered a VoIP token.
+        if target.token_kind == "voip" {
+            continue;
+        }
         if target.platform.eq_ignore_ascii_case("ios") {
             ios_targets.push(target);
         } else if is_relay_deliverable_platform(&target.platform) {

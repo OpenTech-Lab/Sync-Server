@@ -26,6 +26,7 @@ pub struct SendMessageRequest {
 #[derive(Debug, Deserialize)]
 pub struct ConversationQuery {
     pub before: Option<Uuid>,
+    pub after: Option<Uuid>,
     pub limit: Option<u8>,
 }
 
@@ -332,6 +333,7 @@ pub async fn unread_counts(
 }
 
 /// GET /api/messages/{partner_id}?before=<UUID>&limit=<u8>
+/// GET /api/messages/{partner_id}?after=<UUID>&limit=<u8>  (oldest-first catch-up)
 pub async fn get_conversation(
     pool: web::Data<Pool>,
     auth: AuthUser,
@@ -340,9 +342,20 @@ pub async fn get_conversation(
 ) -> Result<HttpResponse, AppError> {
     let viewer_id = auth.0.user_id()?;
     let limit = query.limit.unwrap_or(50);
+    if query.before.is_some() && query.after.is_some() {
+        return Err(AppError::BadRequest(
+            "before and after cannot be combined".into(),
+        ));
+    }
 
-    let messages =
-        message_service::get_conversation(&pool, viewer_id, *partner_id, query.before, limit)?;
+    let messages = message_service::get_conversation(
+        &pool,
+        viewer_id,
+        *partner_id,
+        query.before,
+        query.after,
+        limit,
+    )?;
 
     Ok(HttpResponse::Ok().json(messages))
 }

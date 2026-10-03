@@ -5,7 +5,7 @@ use chrono::Utc;
 use diesel::prelude::*;
 use redis::AsyncCommands;
 use ring::digest::{digest, SHA256};
-use ring::rand::SecureRandom;
+use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -94,6 +94,12 @@ pub struct QrLoginSessionQuery {
     pub secret: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct WsTicketResponse {
+    pub ticket: String,
+    pub expires_in: u64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct QrLoginApproveRequest {
     pub session_id: String,
@@ -118,6 +124,7 @@ struct QrLoginSessionRecord {
 }
 
 const QR_LOGIN_TTL_SECS: u64 = 30;
+const WS_TICKET_TTL_SECS: u64 = 30;
 const QR_LOGIN_STATUS_PENDING: &str = "pending";
 const QR_LOGIN_STATUS_APPROVED: &str = "approved";
 const QR_LOGIN_STATUS_EXPIRED: &str = "expired";
@@ -608,6 +615,41 @@ pub async fn login(
     )?;
 
     Ok(HttpResponse::Ok().json(tokens))
+}
+
+/// POST /auth/ws-ticket → a short-lived, single-use WebSocket ticket.
+///
+/// The reusable access token stays in the Authorization header and is never
+/// placed in a URL. The ticket is consumed atomically by the WebSocket route.
+pub async fn create_ws_ticket(
+    redis: web::Data<redis::Client>,
+    auth: AuthUser,
+) -> Result<HttpResponse, AppError> {
+    let user_id = auth.0.user_id()?;
+    let rng = SystemRandom::new();
+    let mut raw = [0u8; 32];
+    rng.fill(&mut raw)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("RNG failed")))?;
+    let ticket = hex::encode(raw);
+
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {e}")))?;
+    conn.set_ex::<_, _, ()>(
+        format!("ws_ticket:{ticket}"),
+        user_id.to_string(),
+        WS_TICKET_TTL_SECS,
+    )
+    .await
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis set: {e}")))?;
+
+    Ok(HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(WsTicketResponse {
+            ticket,
+            expires_in: WS_TICKET_TTL_SECS,
+        }))
 }
 
 /// POST /auth/device-login → 200 TokenResponse
@@ -1113,6 +1155,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/register", web::post().to(register))
         .route("/login", web::post().to(login))
         .route("/device-login", web::post().to(device_login))
+        .route("/ws-ticket", web::post().to(create_ws_ticket))
         .route("/qr-login/session", web::post().to(create_qr_login_session))
         .route(
             "/qr-login/session/{session_id}",

@@ -37,6 +37,10 @@ pub struct AdminOverview {
     pub federation_pending: i64,
     pub federation_failed: i64,
     pub federation_dead_letter: i64,
+    /// WebSocket handshakes accepted via the legacy `?token=` query since
+    /// process start. Watch it fall to zero before setting
+    /// `WS_ALLOW_LEGACY_TOKEN=false`.
+    pub ws_legacy_token_auths: u64,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -210,6 +214,7 @@ pub fn admin_overview(pool: &Pool) -> Result<AdminOverview, AppError> {
         federation_pending,
         federation_failed,
         federation_dead_letter,
+        ws_legacy_token_auths: crate::ws::legacy_token_auth_count(),
     })
 }
 

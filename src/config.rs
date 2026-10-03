@@ -61,6 +61,10 @@ pub struct Config {
     pub push_delivery_mode: PushDeliveryMode,
     /// Optional shared secret for webhook relay calls.
     pub push_relay_shared_secret: Option<String>,
+    /// Transition flag: accept the legacy `GET /ws?token=<access JWT>` handshake
+    /// (installed apps <= 1.3.2) alongside single-use `?ticket=`. Defaults to
+    /// true; set `WS_ALLOW_LEGACY_TOKEN=false` once clients have migrated.
+    pub ws_allow_legacy_token: bool,
     /// HMAC key for generating ALTCHA challenges. If None, ALTCHA is disabled.
     pub altcha_hmac_key: Option<String>,
     /// Shared secret for coturn's --use-auth-secret mode.
@@ -149,6 +153,9 @@ impl Config {
             push_relay_shared_secret: std::env::var("PUSH_RELAY_SHARED_SECRET")
                 .ok()
                 .filter(|v| !v.trim().is_empty()),
+            ws_allow_legacy_token: std::env::var("WS_ALLOW_LEGACY_TOKEN")
+                .map(|v| parse_flag_default_true(&v))
+                .unwrap_or(true),
             altcha_hmac_key: std::env::var("ALTCHA_HMAC_KEY")
                 .ok()
                 .filter(|v| !v.trim().is_empty()),
@@ -211,9 +218,36 @@ impl Config {
     }
 }
 
+/// Parse an on-by-default flag: only an explicit "off" value disables it, so a
+/// typo or empty value cannot silently lock out legacy clients.
+fn parse_flag_default_true(raw: &str) -> bool {
+    !matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "0" | "false" | "no" | "off"
+    )
+}
+
 /// Heuristic: ~100 concurrent sessions per CPU core, bounded by available memory (50 MB/user).
 fn suggest_max_users(cpu_count: usize, total_mem_mb: u64) -> u32 {
     let by_cpu = (cpu_count as u32).saturating_mul(100);
     let by_mem = (total_mem_mb / 50) as u32;
     by_cpu.min(by_mem).max(10)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_flag_default_true;
+
+    #[test]
+    fn ws_legacy_flag_stays_on_unless_explicitly_disabled() {
+        for on in ["true", "1", "yes", "on", "", "  ", "garbage"] {
+            assert!(
+                parse_flag_default_true(on),
+                "{on:?} should keep the flag on"
+            );
+        }
+        for off in ["false", "FALSE", "0", "no", "off", " False "] {
+            assert!(!parse_flag_default_true(off), "{off:?} should turn it off");
+        }
+    }
 }

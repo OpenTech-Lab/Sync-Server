@@ -32,6 +32,7 @@ Edit `.env` at minimum:
   - production HTTPS/federation: set to your real public domain
 
 Optional:
+- `WS_ALLOW_LEGACY_TOKEN` (default `true`): also accept the legacy `GET /ws?token=<access JWT>` handshake used by apps <= 1.3.2 next to the preferred single-use `?ticket=` (from `POST /auth/ws-ticket`). Each legacy use logs `ws_legacy_token_auth` (never the token) and counts toward `ws_legacy_token_auths` in `GET /api/admin/overview`; set to `false` once clients have migrated
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (leave empty in local dev; password-reset emails are skipped)
 - Push delivery mode:
   - `PUSH_DELIVERY_MODE=relay` (default, recommended for open/public servers)

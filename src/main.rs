@@ -4,6 +4,7 @@ mod db;
 mod errors;
 mod models;
 mod outbound_http;
+mod request_logging;
 mod routes;
 mod schema;
 mod services;
@@ -110,7 +111,7 @@ async fn main() -> std::io::Result<()> {
 
         App::new()
             .wrap(cors)
-            .wrap(TracingLogger::default())
+            .wrap(TracingLogger::<request_logging::PathOnlyRootSpanBuilder>::new())
             // Allow larger JSON payloads for admin image upload data URLs.
             .app_data(web::JsonConfig::default().limit(35 * 1024 * 1024))
             .app_data(pool_data.clone())

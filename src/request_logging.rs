@@ -65,13 +65,23 @@ pub mod test_support {
 
         /// Route every event on this thread into the buffer until the guard drops.
         pub fn capture(&self) -> tracing::subscriber::DefaultGuard {
-            tracing::subscriber::set_default(
+            // Callsites cache "never interested" when first hit on a parallel test
+            // thread with no subscriber, and would then skip this buffer. A global
+            // subscriber that is always interested keeps every callsite live; the
+            // thread-local default below still receives this thread's events.
+            static GLOBAL: std::sync::Once = std::sync::Once::new();
+            GLOBAL.call_once(|| {
+                let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry());
+            });
+            let guard = tracing::subscriber::set_default(
                 tracing_subscriber::fmt()
                     .json()
                     .with_max_level(tracing::Level::TRACE)
                     .with_writer(self.clone())
                     .finish(),
-            )
+            );
+            tracing::callsite::rebuild_interest_cache();
+            guard
         }
     }
 

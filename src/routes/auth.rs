@@ -4,7 +4,9 @@ use base64::Engine;
 use chrono::Utc;
 use diesel::prelude::*;
 use redis::AsyncCommands;
+use ring::agreement;
 use ring::digest::{digest, SHA256};
+use ring::hmac;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -13,6 +15,7 @@ use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
 use crate::auth::claims::Claims;
+use crate::auth::legacy;
 use crate::auth::password::{hash_password, verify_password};
 use crate::auth::tokens::{generate_refresh_token, hash_token, issue_access_token};
 use crate::auth::AuthUser;
@@ -47,8 +50,30 @@ pub struct LoginRequest {
 #[derive(Debug, Deserialize)]
 pub struct DeviceLoginRequest {
     pub device_auth_pubkey: String,
+    /// `challenge_id` and `proof` come as a pair (see `DEVICE_LOGIN_CHALLENGE_TTL_SECS`).
+    /// Both absent = legacy body from installed apps <= 1.3.2.
+    pub challenge_id: Option<String>,
+    pub proof: Option<String>,
     pub altcha_payload: Option<String>,
     pub accepted_terms_version: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeviceLoginChallengeRequest {
+    pub device_auth_pubkey: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeviceLoginChallengeResponse {
+    pub challenge_id: String,
+    pub server_ephemeral_pubkey: String,
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DeviceLoginChallengeRecord {
+    device_auth_pubkey: String,
+    proof_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,8 +114,14 @@ pub struct QrLoginSessionPath {
     pub session_id: String,
 }
 
+/// Legacy `GET ...?secret=` poll (installed apps <= 1.3.2).
 #[derive(Debug, Deserialize)]
 pub struct QrLoginSessionQuery {
+    pub secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QrLoginPollRequest {
     pub secret: String,
 }
 
@@ -128,6 +159,7 @@ const WS_TICKET_TTL_SECS: u64 = 30;
 const QR_LOGIN_STATUS_PENDING: &str = "pending";
 const QR_LOGIN_STATUS_APPROVED: &str = "approved";
 const QR_LOGIN_STATUS_EXPIRED: &str = "expired";
+const DEVICE_LOGIN_CHALLENGE_TTL_SECS: u64 = 60;
 
 static QR_LOGIN_FALLBACK_STORE: OnceLock<Mutex<HashMap<String, (QrLoginSessionRecord, i64)>>> =
     OnceLock::new();
@@ -183,6 +215,26 @@ fn record_registration(ip: &str) {
         return;
     };
     store.entry(ip.to_string()).or_default().push(now);
+}
+
+fn decode_device_public_key(encoded: &str) -> Result<Vec<u8>, AppError> {
+    let decoded = BASE64_STANDARD
+        .decode(encoded.trim())
+        .map_err(|_| AppError::BadRequest("device_auth_pubkey must be valid base64".into()))?;
+    if decoded.len() != 32 {
+        return Err(AppError::BadRequest(
+            "device_auth_pubkey must encode a 32-byte X25519 public key".into(),
+        ));
+    }
+    Ok(decoded)
+}
+
+fn device_login_proof_message(challenge_id: &str, device_auth_pubkey: &str) -> String {
+    format!(
+        "device-login:{}:{}",
+        challenge_id,
+        device_auth_pubkey.trim()
+    )
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -617,6 +669,63 @@ pub async fn login(
     Ok(HttpResponse::Ok().json(tokens))
 }
 
+/// POST /auth/device-login/challenge → 200 DeviceLoginChallengeResponse
+///
+/// Creates a short-lived X25519 challenge. The server stores only the derived
+/// proof key for one minute; the ephemeral private key is consumed immediately.
+/// A caller must prove possession of the device's private X25519 key before the
+/// login endpoint will issue tokens.
+pub async fn create_device_login_challenge(
+    redis: web::Data<redis::Client>,
+    body: web::Json<DeviceLoginChallengeRequest>,
+) -> Result<HttpResponse, AppError> {
+    let pubkey = body.device_auth_pubkey.trim();
+    let peer_public_bytes = decode_device_public_key(pubkey)?;
+
+    let rng = SystemRandom::new();
+    let server_private = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &rng)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("X25519 key generation failed")))?;
+    let server_public = server_private
+        .compute_public_key()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("X25519 public key generation failed")))?;
+    let peer_public = agreement::UnparsedPublicKey::new(&agreement::X25519, peer_public_bytes);
+    let proof_key = agreement::agree_ephemeral(server_private, &peer_public, |key_material| {
+        key_material.to_vec()
+    })
+    .map_err(|_| AppError::BadRequest("invalid X25519 device public key".into()))?;
+
+    let mut challenge_bytes = [0u8; 32];
+    rng.fill(&mut challenge_bytes)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("RNG failed")))?;
+    let challenge_id = hex::encode(challenge_bytes);
+    let record = DeviceLoginChallengeRecord {
+        device_auth_pubkey: pubkey.to_string(),
+        proof_key: BASE64_STANDARD.encode(proof_key),
+    };
+    let record_json = serde_json::to_string(&record)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("challenge serialization: {e}")))?;
+
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {e}")))?;
+    conn.set_ex::<_, _, ()>(
+        format!("device_login_challenge:{challenge_id}"),
+        record_json,
+        DEVICE_LOGIN_CHALLENGE_TTL_SECS,
+    )
+    .await
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis set: {e}")))?;
+
+    Ok(HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(DeviceLoginChallengeResponse {
+            challenge_id,
+            server_ephemeral_pubkey: BASE64_STANDARD.encode(server_public.as_ref()),
+            expires_in: DEVICE_LOGIN_CHALLENGE_TTL_SECS,
+        }))
+}
+
 /// POST /auth/ws-ticket → a short-lived, single-use WebSocket ticket.
 ///
 /// The reusable access token stays in the Authorization header and is never
@@ -652,6 +761,101 @@ pub async fn create_ws_ticket(
         }))
 }
 
+async fn verify_device_login_proof(
+    redis: &redis::Client,
+    device_auth_pubkey: &str,
+    challenge_id: &str,
+    proof: &str,
+) -> Result<(), AppError> {
+    if challenge_id.len() != 64 || !challenge_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(AppError::Unauthorized);
+    }
+
+    let mut conn = redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis: {e}")))?;
+    // GETDEL makes each challenge single-use, including failed proof attempts.
+    let record_json: Option<String> = conn
+        .get_del(format!("device_login_challenge:{challenge_id}"))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis getdel: {e}")))?;
+    let record_json = record_json.ok_or(AppError::Unauthorized)?;
+    let record: DeviceLoginChallengeRecord =
+        serde_json::from_str(&record_json).map_err(|_| AppError::Unauthorized)?;
+
+    if record.device_auth_pubkey != device_auth_pubkey.trim() {
+        return Err(AppError::Unauthorized);
+    }
+    let proof_key = BASE64_STANDARD
+        .decode(record.proof_key)
+        .map_err(|_| AppError::Unauthorized)?;
+    let proof = BASE64_STANDARD
+        .decode(proof.trim())
+        .map_err(|_| AppError::Unauthorized)?;
+    let key = hmac::Key::new(hmac::HMAC_SHA256, &proof_key);
+    hmac::verify(
+        &key,
+        device_login_proof_message(challenge_id, device_auth_pubkey).as_bytes(),
+        &proof,
+    )
+    .map_err(|_| AppError::Unauthorized)
+}
+
+/// Decide how a device-login request may proceed, before any account lookup.
+///
+/// - `challenge_id` + `proof` together: verified strictly (single-use challenge).
+/// - neither: the legacy body of installed apps <= 1.3.2. Accepted (and counted
+///   and logged, never the key) unless `DEVICE_LOGIN_REQUIRE_CHALLENGE` is on.
+/// - exactly one of them: always rejected, so a request can never be silently
+///   downgraded to the legacy path.
+async fn authorize_device_login(
+    req: &HttpRequest,
+    redis: &redis::Client,
+    config: &Config,
+    body: &DeviceLoginRequest,
+) -> Result<(), AppError> {
+    let pubkey = body.device_auth_pubkey.trim();
+    match (body.challenge_id.as_deref(), body.proof.as_deref()) {
+        (Some(challenge_id), Some(proof)) => {
+            decode_device_public_key(pubkey)?;
+            verify_device_login_proof(redis, pubkey, challenge_id, proof).await
+        }
+        (None, None) if !config.device_login_require_challenge => {
+            if pubkey.is_empty() {
+                return Err(AppError::BadRequest(
+                    "device_auth_pubkey is required".into(),
+                ));
+            }
+            legacy::record_device_login();
+            tracing::warn!(
+                user_agent = user_agent(req),
+                "device_login_legacy: accepted device-login without a challenge; client should use /auth/device-login/challenge"
+            );
+            Ok(())
+        }
+        (None, None) => {
+            tracing::warn!(
+                user_agent = user_agent(req),
+                "device_login_legacy_rejected: device-login without a challenge refused (DEVICE_LOGIN_REQUIRE_CHALLENGE is on)"
+            );
+            Err(AppError::BadRequest(
+                "challenge_id and proof are required".into(),
+            ))
+        }
+        _ => Err(AppError::BadRequest(
+            "challenge_id and proof must be sent together".into(),
+        )),
+    }
+}
+
+fn user_agent(req: &HttpRequest) -> &str {
+    req.headers()
+        .get("User-Agent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+}
+
 /// POST /auth/device-login → 200 TokenResponse
 ///
 /// Authenticates by a device-generated public key. If this key has never been
@@ -659,15 +863,12 @@ pub async fn create_ws_ticket(
 pub async fn device_login(
     req: HttpRequest,
     pool: web::Data<Pool>,
+    redis: web::Data<redis::Client>,
     config: web::Data<Config>,
     body: web::Json<DeviceLoginRequest>,
 ) -> Result<HttpResponse, AppError> {
     let pubkey = body.device_auth_pubkey.trim();
-    if pubkey.is_empty() {
-        return Err(AppError::BadRequest(
-            "device_auth_pubkey is required".into(),
-        ));
-    }
+    authorize_device_login(&req, &redis, &config, &body).await?;
     // Extract client IP early; we'll apply the registration limiter only when
     // this is a *new* device (i.e. account creation, not re-login).
     let client_ip = extract_client_ip(&req);
@@ -795,42 +996,70 @@ pub async fn create_qr_login_session(
     }))
 }
 
-/// GET /auth/qr-login/session/{session_id}?secret=... → 200 QrLoginStatusResponse
-pub async fn poll_qr_login_session(
-    redis: web::Data<redis::Client>,
-    path: web::Path<QrLoginSessionPath>,
-    query: web::Query<QrLoginSessionQuery>,
-) -> Result<HttpResponse, AppError> {
-    let session_id = path.session_id.trim();
-    if session_id.is_empty() || query.secret.trim().is_empty() {
+/// Shared by the POST and legacy GET polls: `secret` has already been taken
+/// from the body or the query string.
+async fn qr_login_status(
+    redis: &redis::Client,
+    session_id: &str,
+    secret: &str,
+) -> Result<QrLoginStatusResponse, AppError> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() || secret.trim().is_empty() {
         return Err(AppError::BadRequest(
             "session_id and secret are required".into(),
         ));
     }
 
-    let Some(record) = load_qr_login_record(&redis, session_id).await? else {
-        return Ok(HttpResponse::Ok().json(QrLoginStatusResponse {
+    let Some(record) = load_qr_login_record(redis, session_id).await? else {
+        return Ok(QrLoginStatusResponse {
             status: QR_LOGIN_STATUS_EXPIRED.to_string(),
             access_token: None,
             refresh_token: None,
             expires_in: None,
-        }));
+        });
     };
 
-    if record.secret != query.secret {
+    if record.secret != secret {
         return Err(AppError::Unauthorized);
     }
 
     if record.status == QR_LOGIN_STATUS_APPROVED {
-        delete_qr_login_record(&redis, session_id).await?;
+        delete_qr_login_record(redis, session_id).await?;
     }
 
-    Ok(HttpResponse::Ok().json(QrLoginStatusResponse {
+    Ok(QrLoginStatusResponse {
         status: record.status,
         access_token: record.access_token,
         refresh_token: record.refresh_token,
         expires_in: record.expires_in,
-    }))
+    })
+}
+
+/// POST /auth/qr-login/session/{session_id} → 200 QrLoginStatusResponse
+///
+/// Body `{ "secret": ... }`, so the secret stays out of URLs and access logs.
+pub async fn poll_qr_login_session(
+    redis: web::Data<redis::Client>,
+    path: web::Path<QrLoginSessionPath>,
+    body: web::Json<QrLoginPollRequest>,
+) -> Result<HttpResponse, AppError> {
+    let status = qr_login_status(&redis, &path.session_id, &body.secret).await?;
+    Ok(HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(status))
+}
+
+/// GET /auth/qr-login/session/{session_id}?secret=... → 200 QrLoginStatusResponse
+///
+/// Deprecated poll from installed apps <= 1.3.2; counted as `qr_poll_legacy`.
+pub async fn poll_qr_login_session_legacy(
+    redis: web::Data<redis::Client>,
+    path: web::Path<QrLoginSessionPath>,
+    query: web::Query<QrLoginSessionQuery>,
+) -> Result<HttpResponse, AppError> {
+    let status = qr_login_status(&redis, &path.session_id, &query.secret).await?;
+    legacy::record_qr_poll();
+    Ok(HttpResponse::Ok().json(status))
 }
 
 /// POST /auth/qr-login/approve → 200 { status: "approved" }
@@ -1154,12 +1383,20 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/setup-admin", web::post().to(setup_admin))
         .route("/register", web::post().to(register))
         .route("/login", web::post().to(login))
+        .route(
+            "/device-login/challenge",
+            web::post().to(create_device_login_challenge),
+        )
         .route("/device-login", web::post().to(device_login))
         .route("/ws-ticket", web::post().to(create_ws_ticket))
         .route("/qr-login/session", web::post().to(create_qr_login_session))
         .route(
             "/qr-login/session/{session_id}",
-            web::get().to(poll_qr_login_session),
+            web::post().to(poll_qr_login_session),
+        )
+        .route(
+            "/qr-login/session/{session_id}",
+            web::get().to(poll_qr_login_session_legacy),
         )
         .route("/qr-login/approve", web::post().to(approve_qr_login))
         .route("/me", web::get().to(me))
@@ -1172,7 +1409,14 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_valid_username;
+    use actix_web::{http::StatusCode, test as actix_test, App};
+    use diesel::r2d2::{self, ConnectionManager};
+    use serde_json::Value;
+    use tracing_actix_web::TracingLogger;
+
+    use super::*;
+    use crate::request_logging::test_support::LogBuffer;
+    use crate::request_logging::PathOnlyRootSpanBuilder;
 
     #[test]
     fn username_allows_two_characters_and_trims() {
@@ -1190,5 +1434,449 @@ mod tests {
     fn username_rejects_control_characters() {
         assert!(!is_valid_username("hello\nworld"));
         assert!(!is_valid_username("name\u{0}test"));
+    }
+
+    // ── device-login challenge / QR poll ─────────────────────────────────────
+
+    /// Nothing listens here, so a test that reaches Redis or Postgres by
+    /// accident fails (or, for QR, uses the in-memory fallback on purpose).
+    const DEAD_REDIS: &str = "redis://127.0.0.1:1";
+
+    /// Redis for the tests that need a real one; set `TEST_REDIS_URL` to run them.
+    fn live_redis() -> Option<(String, redis::Client)> {
+        let url = std::env::var("TEST_REDIS_URL").ok()?;
+        let client = redis::Client::open(url.as_str()).expect("TEST_REDIS_URL");
+        Some((url, client))
+    }
+
+    /// One request through the real `/auth` routes. The database is deliberately
+    /// unreachable: a request that gets past authentication surfaces as a 500.
+    async fn send(
+        redis_url: &str,
+        require_challenge: bool,
+        req: actix_test::TestRequest,
+    ) -> (StatusCode, Value) {
+        let pool: Pool = r2d2::Pool::builder()
+            .connection_timeout(std::time::Duration::from_millis(200))
+            .build_unchecked(ConnectionManager::new(
+                "postgres://unused@127.0.0.1:1/unused",
+            ));
+        let config = Config {
+            device_login_require_challenge: require_challenge,
+            ..Config::for_tests()
+        };
+        let app = actix_test::init_service(
+            App::new()
+                .wrap(TracingLogger::<PathOnlyRootSpanBuilder>::new())
+                .app_data(web::Data::new(config))
+                .app_data(web::Data::new(pool))
+                .app_data(web::Data::new(redis::Client::open(redis_url).unwrap()))
+                .service(web::scope("/auth").configure(configure)),
+        )
+        .await;
+        let resp = actix_test::call_service(&app, req.to_request()).await;
+        let status = resp.status();
+        let body = actix_test::read_body(resp).await;
+        (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    /// The device side of the protocol, as the mobile client implements it.
+    struct TestDevice {
+        private: agreement::EphemeralPrivateKey,
+        public_b64: String,
+    }
+
+    impl TestDevice {
+        fn new() -> Self {
+            let private =
+                agreement::EphemeralPrivateKey::generate(&agreement::X25519, &SystemRandom::new())
+                    .unwrap();
+            let public_b64 = BASE64_STANDARD.encode(private.compute_public_key().unwrap());
+            Self {
+                private,
+                public_b64,
+            }
+        }
+
+        /// proof = base64(HMAC-SHA256(X25519(device_priv, server_pub),
+        ///                            "device-login:<challenge_id>:<device_pub_b64>"))
+        fn proof(self, challenge_id: &str, server_pubkey_b64: &str) -> String {
+            let server_public = BASE64_STANDARD.decode(server_pubkey_b64).unwrap();
+            let shared = agreement::agree_ephemeral(
+                self.private,
+                &agreement::UnparsedPublicKey::new(&agreement::X25519, server_public),
+                |material| material.to_vec(),
+            )
+            .unwrap();
+            let tag = hmac::sign(
+                &hmac::Key::new(hmac::HMAC_SHA256, &shared),
+                format!("device-login:{challenge_id}:{}", self.public_b64).as_bytes(),
+            );
+            BASE64_STANDARD.encode(tag.as_ref())
+        }
+    }
+
+    async fn request_challenge(redis_url: &str, device_pubkey: &str) -> (StatusCode, Value) {
+        send(
+            redis_url,
+            false,
+            actix_test::TestRequest::post()
+                .uri("/auth/device-login/challenge")
+                .set_json(json!({ "device_auth_pubkey": device_pubkey })),
+        )
+        .await
+    }
+
+    fn login_request(body: Value) -> actix_test::TestRequest {
+        actix_test::TestRequest::post()
+            .uri("/auth/device-login")
+            .insert_header(("User-Agent", "Sync/1.3.2 (test)"))
+            .set_json(body)
+    }
+
+    /// Mints a challenge for `device` and returns `(challenge_id, proof)`.
+    async fn challenge_and_proof(redis_url: &str, device: TestDevice) -> (String, String) {
+        let (status, challenge) = request_challenge(redis_url, &device.public_b64).await;
+        assert_eq!(status, StatusCode::OK, "{challenge}");
+        let challenge_id = challenge["challenge_id"].as_str().unwrap().to_string();
+        let proof = device.proof(
+            &challenge_id,
+            challenge["server_ephemeral_pubkey"].as_str().unwrap(),
+        );
+        (challenge_id, proof)
+    }
+
+    #[actix_web::test]
+    async fn challenge_response_has_the_documented_shape() {
+        let Some((url, redis)) = live_redis() else {
+            eprintln!("skipped: TEST_REDIS_URL not set");
+            return;
+        };
+        let device = TestDevice::new();
+        let (status, body) = request_challenge(&url, &device.public_b64).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["expires_in"], 60);
+        assert_eq!(body["challenge_id"].as_str().unwrap().len(), 64);
+        let server_pub = BASE64_STANDARD
+            .decode(body["server_ephemeral_pubkey"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(server_pub.len(), 32);
+        let mut keys = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.sort();
+        assert_eq!(
+            keys,
+            ["challenge_id", "expires_in", "server_ephemeral_pubkey"]
+        );
+    }
+
+    #[actix_web::test]
+    async fn challenge_request_rejects_malformed_device_keys() {
+        for bad in [
+            "",
+            "not base64!!",
+            "AAAA",
+            &BASE64_STANDARD.encode([7u8; 31]),
+        ] {
+            let (status, _) = request_challenge(DEAD_REDIS, bad).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad:?}");
+        }
+    }
+
+    #[actix_web::test]
+    async fn valid_proof_verifies_exactly_once() {
+        let Some((url, redis)) = live_redis() else {
+            eprintln!("skipped: TEST_REDIS_URL not set");
+            return;
+        };
+        let device = TestDevice::new();
+        let pubkey = device.public_b64.clone();
+        let (challenge_id, proof) = challenge_and_proof(&url, device).await;
+
+        verify_device_login_proof(&redis, &pubkey, &challenge_id, &proof)
+            .await
+            .expect("first use of a valid proof");
+        assert!(
+            matches!(
+                verify_device_login_proof(&redis, &pubkey, &challenge_id, &proof).await,
+                Err(AppError::Unauthorized)
+            ),
+            "a replayed challenge must be rejected"
+        );
+    }
+
+    #[actix_web::test]
+    async fn failed_proof_attempt_burns_the_challenge() {
+        let Some((url, redis)) = live_redis() else {
+            eprintln!("skipped: TEST_REDIS_URL not set");
+            return;
+        };
+        let device = TestDevice::new();
+        let pubkey = device.public_b64.clone();
+        let (challenge_id, proof) = challenge_and_proof(&url, device).await;
+
+        let wrong = BASE64_STANDARD.encode([0u8; 32]);
+        assert!(matches!(
+            verify_device_login_proof(&redis, &pubkey, &challenge_id, &wrong).await,
+            Err(AppError::Unauthorized)
+        ));
+        assert!(
+            matches!(
+                verify_device_login_proof(&redis, &pubkey, &challenge_id, &proof).await,
+                Err(AppError::Unauthorized)
+            ),
+            "the right proof must not work after a failed attempt"
+        );
+    }
+
+    #[actix_web::test]
+    async fn proof_is_bound_to_the_key_the_challenge_was_issued_for() {
+        let Some((url, redis)) = live_redis() else {
+            eprintln!("skipped: TEST_REDIS_URL not set");
+            return;
+        };
+        let (challenge_id, proof) = challenge_and_proof(&url, TestDevice::new()).await;
+        let other = TestDevice::new().public_b64;
+        assert!(matches!(
+            verify_device_login_proof(&redis, &other, &challenge_id, &proof).await,
+            Err(AppError::Unauthorized)
+        ));
+    }
+
+    #[actix_web::test]
+    async fn challenge_expires_after_its_ttl() {
+        let Some((url, redis)) = live_redis() else {
+            eprintln!("skipped: TEST_REDIS_URL not set");
+            return;
+        };
+        let device = TestDevice::new();
+        let pubkey = device.public_b64.clone();
+        let (challenge_id, proof) = challenge_and_proof(&url, device).await;
+
+        // The key carries a TTL of at most 60s; deleting it is what Redis does
+        // when that TTL runs out.
+        let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
+        let key = format!("device_login_challenge:{challenge_id}");
+        let ttl: i64 = redis::cmd("TTL")
+            .arg(&key)
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        assert!((1..=60).contains(&ttl), "ttl was {ttl}");
+        let _: () = conn.del(&key).await.unwrap();
+
+        assert!(matches!(
+            verify_device_login_proof(&redis, &pubkey, &challenge_id, &proof).await,
+            Err(AppError::Unauthorized)
+        ));
+    }
+
+    #[actix_web::test]
+    async fn malformed_challenge_ids_are_unauthorized_before_redis_is_touched() {
+        let redis = redis::Client::open(DEAD_REDIS).unwrap();
+        for bad in [
+            "",
+            "short",
+            &"g".repeat(64),
+            &"a".repeat(63),
+            &"a".repeat(65),
+        ] {
+            assert!(
+                matches!(
+                    verify_device_login_proof(&redis, "key", bad, "proof").await,
+                    Err(AppError::Unauthorized)
+                ),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[actix_web::test]
+    async fn device_login_with_both_fields_never_falls_back_to_the_legacy_path() {
+        let device = TestDevice::new();
+        let (status, _) = send(
+            DEAD_REDIS,
+            false,
+            login_request(json!({
+                "device_auth_pubkey": device.public_b64,
+                "challenge_id": "ab".repeat(32),
+                "proof": BASE64_STANDARD.encode([1u8; 32]),
+            })),
+        )
+        .await;
+        // Redis is unreachable here, so this is an internal error rather than a
+        // silent fall-through to the legacy path; the live-Redis cases above and
+        // the end-to-end run cover the 401.
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[actix_web::test]
+    async fn device_login_with_only_one_of_challenge_id_and_proof_is_rejected() {
+        let pubkey = TestDevice::new().public_b64;
+        for require_challenge in [false, true] {
+            for body in [
+                json!({ "device_auth_pubkey": pubkey, "challenge_id": "ab".repeat(32) }),
+                json!({ "device_auth_pubkey": pubkey, "proof": "AAAA" }),
+            ] {
+                let (status, _) = send(DEAD_REDIS, require_challenge, login_request(body)).await;
+                assert_eq!(
+                    status,
+                    StatusCode::BAD_REQUEST,
+                    "require_challenge={require_challenge}"
+                );
+            }
+        }
+    }
+
+    #[actix_web::test]
+    async fn legacy_device_login_is_counted_when_allowed_and_refused_when_required() {
+        let logs = LogBuffer::default();
+        let _guard = logs.capture();
+        let pubkey = TestDevice::new().public_b64;
+        let body = || json!({ "device_auth_pubkey": pubkey, "accepted_terms_version": 1 });
+
+        // Flag on: refused like a body that is missing required fields, and not counted.
+        let before = legacy::device_login_count();
+        let (status, _) = send(DEAD_REDIS, true, login_request(body())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(legacy::device_login_count(), before);
+
+        // Flag off (default): the legacy body passes authentication. The database
+        // is unreachable, so the request then fails there with a 500, which is how
+        // this test tells "accepted" from "rejected" (400/401).
+        let (status, _) = send(DEAD_REDIS, false, login_request(body())).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(legacy::device_login_count(), before + 1);
+
+        let out = logs.contents();
+        assert!(out.contains("device_login_legacy:"), "no legacy log: {out}");
+        assert!(
+            out.contains("device_login_legacy_rejected"),
+            "no rejection log: {out}"
+        );
+        assert!(
+            out.contains("Sync/1.3.2 (test)"),
+            "user agent missing: {out}"
+        );
+        assert!(
+            !out.contains(&pubkey),
+            "device public key leaked into logs: {out}"
+        );
+    }
+
+    #[actix_web::test]
+    async fn legacy_device_login_still_requires_a_key() {
+        let (status, body) = send(
+            DEAD_REDIS,
+            false,
+            login_request(json!({ "device_auth_pubkey": "  " })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "Bad request: device_auth_pubkey is required");
+    }
+
+    #[actix_web::test]
+    async fn challenge_login_rejects_a_malformed_device_key_before_touching_redis() {
+        let (status, _) = send(
+            DEAD_REDIS,
+            false,
+            login_request(json!({
+                "device_auth_pubkey": "AAAA",
+                "challenge_id": "ab".repeat(32),
+                "proof": "AAAA",
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn qr_session_can_be_polled_with_post_and_with_the_legacy_get() {
+        let logs = LogBuffer::default();
+        let _guard = logs.capture();
+        // Redis is unreachable on purpose: QR sessions use the in-process store
+        // then, which keeps this test independent of any service.
+        let (status, created) = send(
+            DEAD_REDIS,
+            false,
+            actix_test::TestRequest::post().uri("/auth/qr-login/session"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let session_id = created["session_id"].as_str().unwrap().to_string();
+        let payload: Value = serde_json::from_str(created["qr_payload"].as_str().unwrap()).unwrap();
+        let secret = payload["secret"].as_str().unwrap().to_string();
+        let uri = format!("/auth/qr-login/session/{session_id}");
+
+        let before = legacy::qr_poll_count();
+        let (status, body) = send(
+            DEAD_REDIS,
+            false,
+            actix_test::TestRequest::post()
+                .uri(&uri)
+                .set_json(json!({ "secret": secret })),
+        )
+        .await;
+        assert_eq!(
+            (status, body["status"].as_str()),
+            (StatusCode::OK, Some("pending"))
+        );
+        assert_eq!(legacy::qr_poll_count(), before, "POST is not a legacy poll");
+
+        let (status, body) = send(
+            DEAD_REDIS,
+            false,
+            actix_test::TestRequest::get().uri(&format!("{uri}?secret={secret}")),
+        )
+        .await;
+        assert_eq!(
+            (status, body["status"].as_str()),
+            (StatusCode::OK, Some("pending"))
+        );
+        assert_eq!(legacy::qr_poll_count(), before + 1, "GET is counted");
+
+        // A wrong secret is refused on both methods and does not count.
+        let (status, _) = send(
+            DEAD_REDIS,
+            false,
+            actix_test::TestRequest::post()
+                .uri(&uri)
+                .set_json(json!({ "secret": "wrong" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, _) = send(
+            DEAD_REDIS,
+            false,
+            actix_test::TestRequest::get().uri(&format!("{uri}?secret=wrong")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(legacy::qr_poll_count(), before + 1);
+
+        let out = logs.contents();
+        assert!(!out.contains(&secret), "QR secret leaked into logs: {out}");
+        assert!(
+            !out.contains("?secret"),
+            "query string leaked into logs: {out}"
+        );
+    }
+
+    #[actix_web::test]
+    async fn qr_poll_without_a_secret_is_a_bad_request() {
+        let (status, _) = send(
+            DEAD_REDIS,
+            false,
+            actix_test::TestRequest::post()
+                .uri("/auth/qr-login/session/some-session")
+                .set_json(json!({ "secret": " " })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

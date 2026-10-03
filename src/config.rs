@@ -65,6 +65,10 @@ pub struct Config {
     /// (installed apps <= 1.3.2) alongside single-use `?ticket=`. Defaults to
     /// true; set `WS_ALLOW_LEGACY_TOKEN=false` once clients have migrated.
     pub ws_allow_legacy_token: bool,
+    /// Transition flag: refuse `POST /auth/device-login` bodies that carry no
+    /// `challenge_id` + `proof` (installed apps <= 1.3.2). Defaults to false;
+    /// set `DEVICE_LOGIN_REQUIRE_CHALLENGE=true` once clients have migrated.
+    pub device_login_require_challenge: bool,
     /// HMAC key for generating ALTCHA challenges. If None, ALTCHA is disabled.
     pub altcha_hmac_key: Option<String>,
     /// Shared secret for coturn's --use-auth-secret mode.
@@ -156,6 +160,9 @@ impl Config {
             ws_allow_legacy_token: std::env::var("WS_ALLOW_LEGACY_TOKEN")
                 .map(|v| parse_flag_default_true(&v))
                 .unwrap_or(true),
+            device_login_require_challenge: std::env::var("DEVICE_LOGIN_REQUIRE_CHALLENGE")
+                .map(|v| parse_flag_default_false(&v))
+                .unwrap_or(false),
             altcha_hmac_key: std::env::var("ALTCHA_HMAC_KEY")
                 .ok()
                 .filter(|v| !v.trim().is_empty()),
@@ -218,12 +225,63 @@ impl Config {
     }
 }
 
+#[cfg(test)]
+impl Config {
+    /// Development-shaped config for handler tests: nothing points at a live
+    /// service, so every test states which dependencies it actually needs.
+    pub fn for_tests() -> Self {
+        Config {
+            app_env: "development".into(),
+            enforce_https: false,
+            database_url: String::new(),
+            redis_url: String::new(),
+            jwt_secret: "unit-test-jwt-secret-0123456789abcdef".into(),
+            jwt_access_expiry_secs: 3600,
+            jwt_refresh_expiry_secs: 3600,
+            server_host: "127.0.0.1".into(),
+            server_port: 0,
+            instance_name: "test".into(),
+            instance_domain: "localhost".into(),
+            admin_email: "admin@example.com".into(),
+            max_users: None,
+            federation_denylist: vec![],
+            federation_signature_window_secs: 300,
+            federation_max_delivery_attempts: 5,
+            federation_key_cache_ttl_secs: 300,
+            federation_inbox_rps: 20,
+            federation_inbox_burst: 40,
+            resend_api_key: None,
+            resend_from_email: "noreply@localhost".into(),
+            apns_team_id: None,
+            apns_key_id: None,
+            apns_bundle_id: None,
+            apns_private_key_p8: None,
+            apns_use_sandbox: false,
+            push_delivery_mode: PushDeliveryMode::Relay,
+            push_relay_shared_secret: None,
+            ws_allow_legacy_token: true,
+            device_login_require_challenge: false,
+            altcha_hmac_key: None,
+            turn_secret: None,
+        }
+    }
+}
+
 /// Parse an on-by-default flag: only an explicit "off" value disables it, so a
 /// typo or empty value cannot silently lock out legacy clients.
 fn parse_flag_default_true(raw: &str) -> bool {
     !matches!(
         raw.trim().to_ascii_lowercase().as_str(),
         "0" | "false" | "no" | "off"
+    )
+}
+
+/// Parse an off-by-default flag: only an explicit "on" value enables it, so a
+/// typo or empty value cannot silently lock out legacy clients.
+fn parse_flag_default_false(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
     )
 }
 
@@ -236,7 +294,7 @@ fn suggest_max_users(cpu_count: usize, total_mem_mb: u64) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_flag_default_true;
+    use super::{parse_flag_default_false, parse_flag_default_true};
 
     #[test]
     fn ws_legacy_flag_stays_on_unless_explicitly_disabled() {
@@ -248,6 +306,19 @@ mod tests {
         }
         for off in ["false", "FALSE", "0", "no", "off", " False "] {
             assert!(!parse_flag_default_true(off), "{off:?} should turn it off");
+        }
+    }
+
+    #[test]
+    fn device_login_flag_stays_off_unless_explicitly_enabled() {
+        for off in ["false", "0", "no", "off", "", "  ", "garbage"] {
+            assert!(
+                !parse_flag_default_false(off),
+                "{off:?} should keep the flag off"
+            );
+        }
+        for on in ["true", "TRUE", "1", "yes", "on", " On "] {
+            assert!(parse_flag_default_false(on), "{on:?} should turn it on");
         }
     }
 }

@@ -33,6 +33,7 @@ Edit `.env` at minimum:
 
 Optional:
 - `WS_ALLOW_LEGACY_TOKEN` (default `true`): also accept the legacy `GET /ws?token=<access JWT>` handshake used by apps <= 1.3.2 next to the preferred single-use `?ticket=` (from `POST /auth/ws-ticket`). Each legacy use logs `ws_legacy_token_auth` (never the token) and counts toward `ws_legacy_token_auths` in `GET /api/admin/overview`; set to `false` once clients have migrated
+- `DEVICE_LOGIN_REQUIRE_CHALLENGE` (default `false`): newer apps (>= 1.3.3) call `POST /auth/device-login/challenge` first and send `challenge_id` + `proof` to `POST /auth/device-login`, and poll QR login with `POST /auth/qr-login/session/{id}`. While this is off, apps <= 1.3.2 keep working: a body without `challenge_id`/`proof` is accepted (logged as `device_login_legacy`, never the key) and `GET /auth/qr-login/session/{id}?secret=` still answers; both are counted as `device_login_legacy` and `qr_poll_legacy` in `GET /api/admin/overview`. Set it to `true` once those counters stay at 0
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (leave empty in local dev; password-reset emails are skipped)
 - Push delivery mode:
   - `PUSH_DELIVERY_MODE=relay` (default, recommended for open/public servers)

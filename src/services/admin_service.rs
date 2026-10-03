@@ -41,6 +41,13 @@ pub struct AdminOverview {
     /// process start. Watch it fall to zero before setting
     /// `WS_ALLOW_LEGACY_TOKEN=false`.
     pub ws_legacy_token_auths: u64,
+    /// `POST /auth/device-login` bodies accepted without a challenge/proof since
+    /// process start. Watch it fall to zero before setting
+    /// `DEVICE_LOGIN_REQUIRE_CHALLENGE=true`.
+    pub device_login_legacy: u64,
+    /// Legacy `GET /auth/qr-login/session/{id}?secret=` polls served since
+    /// process start; the replacement is `POST` with the secret in the body.
+    pub qr_poll_legacy: u64,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -215,6 +222,8 @@ pub fn admin_overview(pool: &Pool) -> Result<AdminOverview, AppError> {
         federation_failed,
         federation_dead_letter,
         ws_legacy_token_auths: crate::ws::legacy_token_auth_count(),
+        device_login_legacy: crate::auth::legacy::device_login_count(),
+        qr_poll_legacy: crate::auth::legacy::qr_poll_count(),
     })
 }
 

@@ -148,7 +148,6 @@ mod tests {
     use super::*;
     use crate::auth::claims::Claims;
     use crate::auth::tokens::issue_access_token;
-    use crate::config::PushDeliveryMode;
     use crate::request_logging::test_support::LogBuffer;
     use crate::request_logging::PathOnlyRootSpanBuilder;
 
@@ -156,37 +155,8 @@ mod tests {
 
     fn test_config(ws_allow_legacy_token: bool) -> Config {
         Config {
-            app_env: "development".into(),
-            enforce_https: false,
-            database_url: String::new(),
-            redis_url: String::new(),
-            jwt_secret: JWT_SECRET.into(),
-            jwt_access_expiry_secs: 3600,
-            jwt_refresh_expiry_secs: 3600,
-            server_host: "127.0.0.1".into(),
-            server_port: 0,
-            instance_name: "test".into(),
-            instance_domain: "localhost".into(),
-            admin_email: "admin@example.com".into(),
-            max_users: None,
-            federation_denylist: vec![],
-            federation_signature_window_secs: 300,
-            federation_max_delivery_attempts: 5,
-            federation_key_cache_ttl_secs: 300,
-            federation_inbox_rps: 20,
-            federation_inbox_burst: 40,
-            resend_api_key: None,
-            resend_from_email: "noreply@localhost".into(),
-            apns_team_id: None,
-            apns_key_id: None,
-            apns_bundle_id: None,
-            apns_private_key_p8: None,
-            apns_use_sandbox: false,
-            push_delivery_mode: PushDeliveryMode::Relay,
-            push_relay_shared_secret: None,
             ws_allow_legacy_token,
-            altcha_hmac_key: None,
-            turn_secret: None,
+            ..Config::for_tests()
         }
     }
 

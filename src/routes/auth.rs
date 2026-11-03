@@ -176,22 +176,10 @@ fn registration_limiter() -> &'static Mutex<HashMap<String, Vec<i64>>> {
     REGISTRATION_LIMITER.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Extract the real client IP, respecting `X-Forwarded-For` set by nginx.
+/// The real client IP; see `crate::client_ip` for why this is not `X-Forwarded-For`.
 fn extract_client_ip(req: &HttpRequest) -> String {
-    if let Some(xff) = req.headers().get("X-Forwarded-For") {
-        if let Ok(val) = xff.to_str() {
-            if let Some(first) = val.split(',').next() {
-                return first.trim().to_string();
-            }
-        }
-    }
-    if let Some(xri) = req.headers().get("X-Real-IP") {
-        if let Ok(val) = xri.to_str() {
-            return val.trim().to_string();
-        }
-    }
-    req.peer_addr()
-        .map(|a| a.ip().to_string())
+    crate::client_ip::resolve(req.peer_addr().map(|addr| addr.ip()), req.headers())
+        .map(|ip| ip.to_string())
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -202,10 +190,17 @@ fn is_registration_rate_limited(ip: &str) -> bool {
     let Ok(mut store) = registration_limiter().lock() else {
         return false; // fail-open on lock poisoning
     };
-    let timestamps = store.entry(ip.to_string()).or_default();
+    // Only a successful registration creates an entry; a check must not.
+    let Some(timestamps) = store.get_mut(ip) else {
+        return false;
+    };
     // Keep only timestamps within the window.
     timestamps.retain(|&ts| now - ts < window);
-    timestamps.len() >= REGISTRATION_MAX_PER_HOUR
+    let limited = timestamps.len() >= REGISTRATION_MAX_PER_HOUR;
+    if timestamps.is_empty() {
+        store.remove(ip);
+    }
+    limited
 }
 
 /// Record a successful new-account creation from this IP.
@@ -1253,7 +1248,14 @@ pub async fn forgot_password(
 pub async fn reset_password_form(
     query: web::Query<std::collections::HashMap<String, String>>,
 ) -> HttpResponse {
+    // The token is interpolated into the page below, so anything other than the
+    // format forgot_password generates must never reach it.
     let token = query.get("token").cloned().unwrap_or_default();
+    if !is_well_formed_reset_token(&token) {
+        return HttpResponse::BadRequest()
+            .content_type("text/plain; charset=utf-8")
+            .body("This password reset link is invalid.");
+    }
 
     let html = format!(
         r#"<!DOCTYPE html>
@@ -1298,7 +1300,17 @@ pub async fn reset_password_form(
 
     HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
+        .insert_header((
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; \
+             form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        ))
         .body(html)
+}
+
+/// Reset tokens are 32 random bytes, hex-encoded (see `forgot_password`).
+fn is_well_formed_reset_token(token: &str) -> bool {
+    token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// POST /auth/reset-password
@@ -1341,9 +1353,21 @@ pub async fn reset_password(
     // Hash new password and update DB.
     let pw_hash = hash_password(new_password.to_string()).await?;
     let mut db_conn = pool.get()?;
-    diesel::update(crate::schema::users::table.find(user_id))
-        .set(crate::schema::users::password_hash.eq(&pw_hash))
-        .execute(&mut db_conn)?;
+    // A reset is how a user recovers a compromised account, so every existing
+    // session has to end together with the old password.
+    db_conn.transaction::<_, AppError, _>(|conn| {
+        diesel::update(crate::schema::users::table.find(user_id))
+            .set(crate::schema::users::password_hash.eq(&pw_hash))
+            .execute(conn)?;
+        diesel::update(
+            rt_dsl::refresh_tokens
+                .filter(rt_dsl::user_id.eq(user_id))
+                .filter(rt_dsl::revoked.eq(false)),
+        )
+        .set(rt_dsl::revoked.eq(true))
+        .execute(conn)?;
+        Ok(())
+    })?;
 
     // Delete the Redis key (single-use token).
     conn.del::<_, ()>(&redis_key)

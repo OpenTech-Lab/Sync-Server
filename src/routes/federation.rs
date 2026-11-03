@@ -767,14 +767,18 @@ pub async fn deliver_direct_message_to_remote(
     recipient_server_url: &str,
     content: &str,
 ) -> Result<(), AppError> {
-    let mut conn = pool.get()?;
     use crate::schema::users::dsl as user_dsl;
     use diesel::prelude::*;
 
-    let sender_username = user_dsl::users
-        .filter(user_dsl::id.eq(sender_id))
-        .select(user_dsl::username)
-        .first::<String>(&mut conn)?;
+    // Scoped so the connection is back in the pool before the calls below take
+    // another one and before the POST to a remote server, which can take seconds.
+    let sender_username = {
+        let mut conn = pool.get()?;
+        user_dsl::users
+            .filter(user_dsl::id.eq(sender_id))
+            .select(user_dsl::username)
+            .first::<String>(&mut conn)?
+    };
 
     let key = ensure_actor_key_material(pool, cfg, &sender_username)?;
     let destination = build_remote_inbox_url(recipient_server_url, recipient_id)?;

@@ -59,7 +59,10 @@ pub async fn ws_handler(
     };
 
     // Ensure the user exists and is active
-    user_service::find_by_id(&pool, user_id)?.ok_or(AppError::Unauthorized)?;
+    let user = user_service::find_by_id(&pool, user_id)?.ok_or(AppError::Unauthorized)?;
+    if !user.is_active {
+        return Err(AppError::Unauthorized);
+    }
 
     if via_legacy_token {
         record_legacy_token_auth();

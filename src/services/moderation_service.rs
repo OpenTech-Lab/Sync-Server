@@ -14,7 +14,9 @@ use crate::models::moderation::{
     ModerationReport, NewModerationReport, NewUserBlock, UserBlock, UserSafetyStatePublic,
 };
 use crate::models::user::User;
-use crate::schema::{messages, moderation_reports, room_messages, user_blocks, users};
+use crate::schema::{
+    messages, moderation_reports, room_members, room_messages, user_blocks, users,
+};
 
 pub const CURRENT_SAFETY_TERMS_VERSION: i32 = 1;
 
@@ -653,6 +655,7 @@ fn create_report_conn(
     let reporter_note = normalize_optional_text(input.reporter_note.as_deref());
     let validated_excerpt = content_excerpt_conn(
         conn,
+        reporter_user_id,
         input.reported_user_id,
         content_kind,
         content_id.as_deref(),
@@ -812,8 +815,12 @@ fn reports_to_admin_views(
         .collect())
 }
 
+/// The stored excerpt of the reported content. A message can only be reported by
+/// someone who can see it: the excerpt goes back in the response, and resolving
+/// the report removes the message.
 fn content_excerpt_conn(
     conn: &mut PgConnection,
+    reporter_user_id: Uuid,
     reported_user_id: Uuid,
     content_kind: &str,
     content_id: Option<&str>,
@@ -845,6 +852,9 @@ fn content_excerpt_conn(
             if message.sender_id != reported_user_id || message.deleted_at.is_some() {
                 return Err(AppError::NotFound);
             }
+            if reporter_user_id != message.sender_id && reporter_user_id != message.recipient_id {
+                return Err(AppError::NotFound);
+            }
             Ok(Some(message.content))
         }
         REPORT_KIND_ROOM_MESSAGE => {
@@ -861,6 +871,15 @@ fn content_excerpt_conn(
                 .optional()?
                 .ok_or(AppError::NotFound)?;
             if message.sender_id != reported_user_id || message.deleted_at.is_some() {
+                return Err(AppError::NotFound);
+            }
+            let reporter_in_room = diesel::select(diesel::dsl::exists(
+                room_members::table
+                    .filter(room_members::room_id.eq(message.room_id))
+                    .filter(room_members::user_id.eq(reporter_user_id)),
+            ))
+            .get_result::<bool>(conn)?;
+            if !reporter_in_room {
                 return Err(AppError::NotFound);
             }
             Ok(Some(message.content))

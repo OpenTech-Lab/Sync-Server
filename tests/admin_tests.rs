@@ -6,8 +6,16 @@ fn base_url() -> Option<String> {
     std::env::var("TEST_BASE_URL").ok()
 }
 
+/// Registration is capped per client IP per hour; give each test user its
+/// own so the suite can run more than once against the same server.
+fn unique_client_ip() -> String {
+    let octets = Uuid::new_v4().into_bytes();
+    format!("10.{}.{}.{}", octets[0], octets[1], octets[2])
+}
+
+/// Usernames are capped at 32 characters.
 fn unique_username() -> String {
-    format!("admin_test_{}", Uuid::new_v4().simple())
+    format!("admin_{}", &Uuid::new_v4().simple().to_string()[..12])
 }
 
 fn unique_email() -> String {
@@ -21,6 +29,7 @@ async fn register_user(client: &Client, base: &str) -> (String, String) {
 
     let res = client
         .post(format!("{base}/auth/register"))
+        .header("X-Real-IP", unique_client_ip())
         .json(&json!({
             "username": username,
             "email": email,

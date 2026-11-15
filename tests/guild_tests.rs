@@ -14,6 +14,18 @@ fn base_url() -> Option<String> {
     std::env::var("TEST_BASE_URL").ok()
 }
 
+/// Usernames are capped at 32 characters.
+fn unique_username() -> String {
+    format!("guild_{}", &Uuid::new_v4().simple().to_string()[..12])
+}
+
+/// Registration is capped per client IP per hour; give each test user its
+/// own so the suite can run more than once against the same server.
+fn unique_client_ip() -> String {
+    let octets = Uuid::new_v4().into_bytes();
+    format!("10.{}.{}.{}", octets[0], octets[1], octets[2])
+}
+
 fn admin_token() -> Option<String> {
     std::env::var("TEST_ADMIN_TOKEN").ok()
 }
@@ -29,7 +41,8 @@ async fn register_and_login(client: &Client, base: &str) -> (String, String) {
 
     let reg: Value = client
         .post(format!("{base}/auth/register"))
-        .json(&json!({ "email": email, "password": password }))
+        .header("X-Real-IP", unique_client_ip())
+        .json(&json!({ "username": unique_username(), "email": email, "password": password }))
         .send()
         .await
         .expect("register request failed")
@@ -277,8 +290,32 @@ async fn dismiss_report_penalises_reporter_score() {
     let (_subject_token, subject_id) = register_and_login(&client, &base).await;
     let reference_id = format!("report-{}", Uuid::new_v4());
 
+    // The score never drops below 0, so give the new reporter points to lose
+    // with an earlier verified report (+25).
+    let verify_res = client
+        .post(format!(
+            "{base}/api/admin/users/{subject_id}/guild/verify-report"
+        ))
+        .bearer_auth(&admin_tok)
+        .json(&json!({
+            "reporter_user_id": reporter_id,
+            "report_reference_id": format!("report-{}", Uuid::new_v4()),
+        }))
+        .send()
+        .await
+        .expect("setup verify-report request failed");
+    assert_eq!(
+        verify_res.status().as_u16(),
+        200,
+        "setup verify-report should return 200"
+    );
+
     let guild_before = get_guild_snapshot(&client, &base, &reporter_token).await;
     let score_before = guild_before["contribution_score"].as_i64().unwrap_or(0);
+    assert!(
+        score_before >= 10,
+        "setup: reporter needs at least 10 points; got {score_before}"
+    );
 
     let res: Value = client
         .post(format!(

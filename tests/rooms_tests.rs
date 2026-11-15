@@ -11,6 +11,18 @@ fn base_url() -> Option<String> {
     std::env::var("TEST_BASE_URL").ok()
 }
 
+/// Usernames are capped at 32 characters.
+fn unique_username() -> String {
+    format!("room_{}", &Uuid::new_v4().simple().to_string()[..12])
+}
+
+/// Registration is capped per client IP per hour; give each test user its
+/// own so the suite can run more than once against the same server.
+fn unique_client_ip() -> String {
+    let octets = Uuid::new_v4().into_bytes();
+    format!("10.{}.{}.{}", octets[0], octets[1], octets[2])
+}
+
 fn unique_email() -> String {
     format!("room-test-{}@example.com", Uuid::new_v4())
 }
@@ -22,7 +34,8 @@ async fn register_and_login(client: &Client, base: &str) -> (String, String) {
 
     let reg: Value = client
         .post(format!("{base}/auth/register"))
-        .json(&json!({ "email": email, "password": password }))
+        .header("X-Real-IP", unique_client_ip())
+        .json(&json!({ "username": unique_username(), "email": email, "password": password }))
         .send()
         .await
         .expect("register failed")
@@ -393,7 +406,9 @@ async fn room_owner_can_remove_member_after_create() {
         .send()
         .await
         .expect("removed member get room failed");
-    assert_eq!(removed_room_res.status(), 404);
+    // A removed member is a non-member of a room that still exists: 403, as
+    // in `non_member_cannot_access_room`.
+    assert_eq!(removed_room_res.status(), 403);
 
     let removed_rooms: Value = client
         .get(format!("{base}/api/rooms"))

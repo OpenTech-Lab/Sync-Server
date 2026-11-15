@@ -11,6 +11,18 @@ fn base_url() -> Option<String> {
     std::env::var("TEST_BASE_URL").ok()
 }
 
+/// Usernames are capped at 32 characters.
+fn unique_username() -> String {
+    format!("auth_{}", &Uuid::new_v4().simple().to_string()[..12])
+}
+
+/// Registration is capped per client IP per hour; give each test user its
+/// own so the suite can run more than once against the same server.
+fn unique_client_ip() -> String {
+    let octets = Uuid::new_v4().into_bytes();
+    format!("10.{}.{}.{}", octets[0], octets[1], octets[2])
+}
+
 fn unique_email() -> String {
     format!("test-{}@example.com", Uuid::new_v4())
 }
@@ -24,7 +36,8 @@ async fn register_returns_201() {
 
     let res = client
         .post(format!("{base}/auth/register"))
-        .json(&json!({ "username": "testuser", "email": email, "password": "hunter2_secure!" }))
+        .header("X-Real-IP", unique_client_ip())
+        .json(&json!({ "username": unique_username(), "email": email, "password": "hunter2_secure!" }))
         .send()
         .await
         .expect("request failed");
@@ -45,18 +58,25 @@ async fn duplicate_register_returns_409() {
     let Some(base) = base_url() else { return };
     let client = Client::new();
     let email = unique_email();
-    let payload = json!({ "email": email, "password": "hunter2_secure!" });
+    let payload =
+        json!({ "username": unique_username(), "email": email, "password": "hunter2_secure!" });
 
     client
         .post(format!("{base}/auth/register"))
+        .header("X-Real-IP", unique_client_ip())
         .json(&payload)
         .send()
         .await
         .expect("first request failed");
 
+    // Same email under a new username, so the 409 can only come from the email.
+    let mut duplicate = payload.clone();
+    duplicate["username"] = json!(unique_username());
+
     let res = client
         .post(format!("{base}/auth/register"))
-        .json(&payload)
+        .header("X-Real-IP", unique_client_ip())
+        .json(&duplicate)
         .send()
         .await
         .expect("second request failed");
@@ -79,7 +99,8 @@ async fn login_returns_tokens() {
     // Register first
     client
         .post(format!("{base}/auth/register"))
-        .json(&json!({ "email": email, "password": password }))
+        .header("X-Real-IP", unique_client_ip())
+        .json(&json!({ "username": unique_username(), "email": email, "password": password }))
         .send()
         .await
         .expect("register failed");
@@ -113,7 +134,8 @@ async fn login_wrong_password_returns_401() {
 
     client
         .post(format!("{base}/auth/register"))
-        .json(&json!({ "email": email, "password": "correct-pass" }))
+        .header("X-Real-IP", unique_client_ip())
+        .json(&json!({ "username": unique_username(), "email": email, "password": "correct-pass" }))
         .send()
         .await
         .expect("register failed");
@@ -137,7 +159,8 @@ async fn refresh_returns_new_tokens() {
 
     client
         .post(format!("{base}/auth/register"))
-        .json(&json!({ "email": email, "password": "hunter2_secure!" }))
+        .header("X-Real-IP", unique_client_ip())
+        .json(&json!({ "username": unique_username(), "email": email, "password": "hunter2_secure!" }))
         .send()
         .await
         .unwrap();
@@ -178,7 +201,8 @@ async fn refresh_replay_revokes_family() {
 
     client
         .post(format!("{base}/auth/register"))
-        .json(&json!({ "email": email, "password": "hunter2_secure!" }))
+        .header("X-Real-IP", unique_client_ip())
+        .json(&json!({ "username": unique_username(), "email": email, "password": "hunter2_secure!" }))
         .send()
         .await
         .unwrap();
@@ -223,7 +247,8 @@ async fn logout_invalidates_session() {
 
     client
         .post(format!("{base}/auth/register"))
-        .json(&json!({ "email": email, "password": "hunter2_secure!" }))
+        .header("X-Real-IP", unique_client_ip())
+        .json(&json!({ "username": unique_username(), "email": email, "password": "hunter2_secure!" }))
         .send()
         .await
         .unwrap();

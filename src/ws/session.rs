@@ -142,6 +142,19 @@ struct RelayIceCandidate {
 
 // ── Session driver ────────────────────────────────────────────────────────────
 
+/// Whether `caller` may ring `callee`: a suspended account keeps an open socket
+/// until it reconnects, and a block between the two applies to calls as well.
+fn call_offer_allowed(
+    pool: &crate::db::Pool,
+    caller: Uuid,
+    callee: Uuid,
+) -> Result<bool, crate::errors::AppError> {
+    let caller_active =
+        crate::services::user_service::find_by_id(pool, caller)?.is_some_and(|user| user.is_active);
+    Ok(caller_active
+        && !crate::services::moderation_service::is_block_active_between(pool, caller, callee)?)
+}
+
 /// Drive a WebSocket session for `user_id`.
 ///
 /// `pubsub` must already be subscribed to the user's channel (see
@@ -224,6 +237,20 @@ pub async fn run_ws_session(
                                     }
                                 }
                                 ClientEvent::CallOffer { callee_id, call_type, sdp_offer } => {
+                                    // REST messaging enforces these; a call must not get
+                                    // around them. Reject silently, so a caller can't tell
+                                    // they were blocked from the callee not answering.
+                                    match call_offer_allowed(&db_pool, user_id, callee_id) {
+                                        Ok(true) => {}
+                                        Ok(false) => {
+                                            tracing::info!(%user_id, %callee_id, "CallOffer rejected: caller suspended or block between users");
+                                            continue;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(%user_id, %callee_id, error = ?e, "CallOffer rejected: could not check permission");
+                                            continue;
+                                        }
+                                    }
                                     let record = crate::services::call_service::create(
                                         &db_pool, user_id, callee_id, &call_type,
                                     );

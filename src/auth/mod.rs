@@ -1,4 +1,5 @@
 pub mod claims;
+pub mod legacy;
 pub mod middleware;
 pub mod password;
 pub mod tokens;

@@ -51,7 +51,9 @@ impl actix_web::ResponseError for AppError {
             AppError::Conflict(_) => HttpResponse::Conflict().json(body),
             AppError::TooManyRequests(_) => HttpResponse::TooManyRequests().json(body),
             _ => {
-                tracing::error!(error = %self, "Unhandled internal error");
+                // Debug, not Display: Internal's Display is the masked message sent to
+                // the client, which would leave nothing to diagnose a 500 with.
+                tracing::error!(error = ?self, "Unhandled internal error");
                 HttpResponse::InternalServerError().json(ErrorBody {
                     error: "Internal server error".to_string(),
                 })

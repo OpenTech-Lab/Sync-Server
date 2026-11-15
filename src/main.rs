@@ -1,4 +1,5 @@
 mod auth;
+mod client_ip;
 mod config;
 mod db;
 mod errors;
@@ -16,6 +17,7 @@ use actix_web::{http::header, web, App, HttpServer};
 use tracing_actix_web::TracingLogger;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use client_ip::ClientIpKeyExtractor;
 use config::Config;
 use services::geoip_service::PlanetGeoInfo;
 
@@ -65,8 +67,11 @@ async fn main() -> std::io::Result<()> {
     );
 
     // ── Rate-limit configurations ──────────────────────────────────────────────
+    // Keyed on the real client: the default key is the TCP peer, which behind
+    // nginx is one address shared by every user.
     // /auth/*: 5 req/s per IP, burst 10  (brute-force protection)
     let auth_governor = GovernorConfigBuilder::default()
+        .key_extractor(ClientIpKeyExtractor)
         .requests_per_second(5)
         .burst_size(10)
         .finish()
@@ -76,6 +81,7 @@ async fn main() -> std::io::Result<()> {
     // POST /api/messages is covered here; stricter per-route limiting can be
     // layered on top via custom middleware in a future phase if needed.
     let api_governor = GovernorConfigBuilder::default()
+        .key_extractor(ClientIpKeyExtractor)
         .requests_per_second(60)
         .burst_size(100)
         .finish()
@@ -83,6 +89,7 @@ async fn main() -> std::io::Result<()> {
 
     // /users/*/inbox: federated inbound traffic, limited per source IP
     let federation_inbox_governor = GovernorConfigBuilder::default()
+        .key_extractor(ClientIpKeyExtractor)
         .requests_per_second(config.federation_inbox_rps)
         .burst_size(config.federation_inbox_burst)
         .finish()

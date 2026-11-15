@@ -53,12 +53,15 @@ jobs:
 
       # SECURITY: aquasecurity/trivy-action tags were compromised 2026-03-19.
       # Install Trivy directly from a pinned GitHub release binary instead.
-      # Before running: set TRIVY_VERSION and TRIVY_DEB_SHA256 to values you have
-      # verified from https://github.com/aquasecurity/trivy/releases (use any version < 0.69.4).
+      # Never use 0.69.4 (the compromised release, GHSA-69fq-xp46-6x23).
+      # TRIVY_VERSION has no "v"; the URL below adds it. TRIVY_DEB_SHA256 is the
+      # trivy_${TRIVY_VERSION}_Linux-64bit.deb line of trivy_${TRIVY_VERSION}_checksums.txt
+      # from https://github.com/aquasecurity/trivy/releases, checked against the
+      # downloaded .deb before you change it.
       - name: Install Trivy
         env:
-          TRIVY_VERSION: "REPLACE_ME"     # e.g. 0.59.1
-          TRIVY_DEB_SHA256: "REPLACE_ME"  # SHA256 of trivy_${TRIVY_VERSION}_Linux-64bit.deb
+          TRIVY_VERSION: "0.76.1"  # released 2026-10-21
+          TRIVY_DEB_SHA256: "3350f4fac96ed099590c4a353bddb226f86311a0a2e7a8c626c162790d947f10"
         run: |
           DEB="trivy_${TRIVY_VERSION}_Linux-64bit.deb"
           curl -sLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${DEB}"

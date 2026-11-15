@@ -424,6 +424,10 @@ pub fn freeze_guild_progression(
 ) -> Result<(), AppError> {
     let mut conn = pool.get()?;
     let now = Utc::now();
+    // The stats row is created lazily on the user's first guild read. Without
+    // it the update below matches nothing and the freeze is silently lost.
+    let policy = load_guild_policy_conn(&mut conn)?;
+    ensure_user_guild_stats(&mut conn, &policy, target_user_id)?;
     diesel::update(user_guild_stats::table.find(target_user_id))
         .set((
             user_guild_stats::automation_review_state.eq(AUTOMATION_REVIEW_STATE_FROZEN),
